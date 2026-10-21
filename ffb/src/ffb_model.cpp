@@ -10,6 +10,40 @@ float Smoothstep(float a, float b, float x) {
     float t = Clampf((x - a) / (b - a), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
+
+// The least grip of the grounded wheels in [first, last]; 1 when the game's tyre state is
+// unavailable, so the model stays exactly as it was. The least-gripping wheel is the one that
+// decides where the axle lets go; averaging with a still-gripping wheel hides the loss.
+float GroundedGrip(const Telemetry& t, int first, int last) {
+    if (!t.tireStateValid) return 1.0f;
+    float grip = 1.0f;
+    bool any = false;
+    for (int i = first; i <= last; ++i) {
+        if (!t.tireOnGround[i]) continue;
+        grip = fminf(grip, Clampf(t.tireGrip[i], 0.0f, 1.0f));
+        any = true;
+    }
+    return any ? grip : 1.0f;
+}
+
+// The game's tyre slip angle (radians) with the geometric estimate's sign. The game reports the
+// angle of the tyre's travel relative to the wheel; the model's FrontSlipAngle is the angle of the
+// wheel relative to the travel, so only the magnitude is taken from the game. The proven geometric
+// sign keeps the countersteer cue pointing the right way.
+float TireSlip(const Telemetry& t, const WheelState& w, const ModelParams& p, float roadLock) {
+    float geom = FrontSlipAngle(t, w, p, roadLock);
+    if (!p.tireSlipSource || !t.tireStateValid || t.frontOnGround <= 0) return geom;
+    float sum = 0;
+    int n = 0;
+    for (int i = 0; i < 2; ++i) {
+        if (!t.tireOnGround[i]) continue;
+        sum += fabsf(t.tireSlipAngle[i]);
+        ++n;
+    }
+    if (!n || !(sum > 0.0f)) return geom;
+    float mag = sum / n;
+    return geom < 0.0f ? -mag : mag;
+}
 }
 
 float FrontSlipAngle(const Telemetry& t, const WheelState& w, const ModelParams& p, float roadLock) {
@@ -50,14 +84,35 @@ ForceParts Model::Compute(const Telemetry& t, const WheelState& w, const ModelPa
         }
         float loadRatio = loadRef_ > 0 ? t.frontLoad / loadRef_ : 0.5f * t.frontOnGround;
         float load = Clampf(1.0f + p.loadSensitivity * (loadRatio - 1.0f), 0.3f, 1.6f);
+        // The tyres' own grip: 1 while gripping, lower past the limit. It moves the SAT peak to a
+        // smaller slip angle and scales the force, so the wheel goes light as the front lets go.
+        // Gated by the front's slip angle so hard straight-line braking (which also lowers the
+        // traction ratio) does not lighten the wheel by itself.
+        float slip = TireSlip(t, w, p, roadLock_);
+        float basePeakRad = Clampf(p.gripPeakDeg, 1.0f, 30.0f) * kPi / 180.0f;
+        float gripGate = Smoothstep(0.1f, 0.5f, fabsf(slip) / basePeakRad);
+        float grip = GroundedGrip(t, 0, 1);
+        float over = Clampf(1.0f - grip, 0.0f, 1.0f);
+        float g = Clampf(p.gripLoss, 0.0f, 1.0f) * over * gripGate;
+        float peakDeg = Clampf(p.gripPeakDeg * (1.0f - 0.35f * g), 1.0f, 30.0f);
+        float peakRad = peakDeg * kPi / 180.0f;
         // Brush-model shape: rises to 1 at the grip peak, then falls away (the wheel goes light
         // as the front lets go); a smaller pull toward the travel direction stays in a slide.
-        float x = FrontSlipAngle(t, w, p, roadLock_) / (Clampf(p.gripPeakDeg, 1.0f, 30.0f) * kPi / 180.0f);
+        float x = slip / peakRad;
         float shape = x * expf(0.5f * (1.0f - x * x)) + p.driftAlign * tanhf(0.5f * x);
+        float amp = 1.0f - 0.55f * g;
+        // The game's understeer cue, only once the front is already past its peak (its fallback
+        // can be non-zero while gripping).
+        if (p.understeerFeel > 0.0f && t.tireStateValid && speed > 5.0f && fabsf(slip) > peakRad)
+            amp *= 1.0f - Clampf(p.understeerFeel, 0.0f, 1.0f) * Clampf(t.understeer, 0.0f, 1.0f);
+        // The rear tyres past their limit too: a big slide, lighter still.
+        if (p.rearGripLoss > 0.0f && t.tireStateValid)
+            amp *= 1.0f - Clampf(p.rearGripLoss, 0.0f, 1.0f) * (1.0f - GroundedGrip(t, 2, 3));
+        amp = Clampf(amp, 0.25f, 1.0f);
         // None when parked, building with speed; weaker in reverse.
         float speedGain = Smoothstep(0.5f, 6.0f, speed) * (0.55f + 0.45f * Clampf(speed / 45.0f, 0.0f, 1.0f));
         if (t.vLong < -0.5f) speedGain *= 0.3f;
-        f.aligning = -p.aligning * shape * load * speedGain * drive;
+        f.aligning = -p.aligning * shape * amp * load * speedGain * drive;
     }
 
     if (!w.known) return f;

@@ -593,9 +593,6 @@ void __fastcall Hook_RBBeginFrame(uint8_t* rb, void*, float dT) {
         s_dt.rbMax = std::max(s_dt.rbMax, dT);
         s_dt.steps++;
         if (Now() - s_dt.since > 10.0) {
-            if (s_dt.since > 0)
-                Log("physics: %d steps in %.0f s, step %.5f..%.5f s, suspension step %.5f..%.5f s", s_dt.steps,
-                    Now() - s_dt.since, s_dt.rbMin, s_dt.rbMax, s_dt.suspMin, s_dt.suspMax);
             s_dt = {};
             s_dt.since = Now();
         }

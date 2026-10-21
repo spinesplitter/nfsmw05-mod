@@ -4,10 +4,12 @@
 // clock, no globals, so the tests can check every sign and shape.
 //
 //   aligning   the front tyres' self-aligning torque. The front axle's direction of travel versus
-//              where the front wheels point gives the tyres' slip angle; the tyre pulls the wheel
-//              back toward the direction of travel, harder with grip and load, and lets go past
-//              the grip limit (understeer goes light). In a slide the travel direction is
-//              sideways, so the wheel pulls into the countersteer by itself.
+//              where the front wheels point gives the tyres' slip angle; the game's own tyre slip
+//              angle can replace its magnitude, and the tyres' traction makes the wheel lighter
+//              past the limit (GripLoss). The tyre pulls the wheel back toward the direction of
+//              travel, harder with grip and load, and lets go past the grip limit (understeer goes
+//              light). In a slide the travel direction is sideways, so the wheel pulls into the
+//              countersteer by itself.
 //   centering  a speed-sensitive spring toward straight ahead, for the arcade side of the game,
 //              and the centre weight: a firm hold around straight ahead once moving, so the wheel
 //              doesn't just stay wherever it is left
@@ -32,6 +34,10 @@ struct ModelParams {
     float gripPeakDeg = 7.0f;       // front slip angle where the tyres grip hardest (heaviest wheel)
     float driftAlign = 0.3f;        // pull toward the direction of travel that stays past the grip limit
     float loadSensitivity = 0.5f;   // how much front tyre load scales the aligning torque
+    float gripLoss = 0.5f;          // 0 = no grip-state lightening, 1 = strong
+    float understeerFeel = 0.0f;    // extra lightening from the game's understeer factor (0 = off)
+    float rearGripLoss = 0.5f;      // extra lightening when the rear tyres are past their limit (0 = off)
+    bool  tireSlipSource = false;   // true = the game's tyre slip angle, false = the geometric estimate
     float centering = 0.3f;         // spring toward centre at CenteringSpeed and above
     float centeringParked = 0.25f;  // share of it at standstill
     float centeringSpeed = 120.0f;  // km/h

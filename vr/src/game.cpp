@@ -367,12 +367,6 @@ bool s_depthSplit = false;
 uint32_t NearArg(void* cam) {
     if (!(g_cfg.nearZ > 0.0f)) return s_setupArgs[0];
     float nearZ = s_depthSplit ? g_cfg.worldNearZ : g_cfg.nearZ;
-    static float logged = -1;
-    if (nearZ != logged) {
-        float game = s_setupArgs[0] ? *(const float*)&s_setupArgs[0] : cam ? At<float>(cam, kCamNearZ) : 0.0f;
-        Log("game: near plane %.3f m (game's %.3f m)%s", nearZ, game, s_depthSplit ? ", the world's (depth split)" : "");
-        logged = nearZ;
-    }
     uint32_t bits;
     memcpy(&bits, &nearZ, sizeof(bits));
     return bits;
@@ -824,13 +818,8 @@ void UpdateHiddenTextures() {
 }
 
 void* RvmSurface() {
-    static int logged = -1;
     int active = *(uint8_t*)kRvmViewActive != 0;
     void* surface = *(void**)(kRvmTarget + kTargetSurface);
-    if (active != logged) {
-        logged = active;
-        Log("game: rear view %s (surface %p)", active ? "rendering" : "not rendering", surface);
-    }
     return active ? surface : nullptr;
 }
 
@@ -884,61 +873,6 @@ void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
         s_tanX = 1.0f / fabsf(p00);
         s_tanY = 1.0f / fabsf(p11);
     }
-}
-
-// The PC build's eView table, once per session: which passes exist, which are active this frame and
-// which use the player's Camera. Logged the first time the eyes render, to check the view setup
-// against an object that differs between the eyes.
-void LogViewTableOnChange() {
-    struct Row {
-        int8_t active;
-        int playerCam;
-        int have;
-        int w, h, id;
-        void* rt;
-    };
-    static Row last[kNumViews];
-    Row now[kNumViews];
-    memset(now, 0, sizeof(now));
-    void* pcam = At<void*>((void*)kPlayerView, kViewCamera);
-    bool changed = false;
-    for (int i = 0; i < kNumViews; i++) {
-        void* v = (void*)(kViews + i * kViewStride);
-        int8_t active = At<int8_t>(v, kViewActive);
-        void* rt = active ? At<void*>(v, kViewRenderTarget) : nullptr;
-        now[i].active = active;
-        now[i].playerCam = At<void*>(v, kViewCamera) == pcam;
-        now[i].have = s_viewArgs[i].have;
-        now[i].w = rt ? At<int>(rt, kRtWidth) : 0;
-        now[i].h = rt ? At<int>(rt, kRtHeight) : 0;
-        now[i].rt = rt;
-        now[i].id = At<int>(v, kViewId);
-        if (now[i].active != last[i].active || now[i].playerCam != last[i].playerCam || now[i].have != last[i].have ||
-            now[i].w != last[i].w || now[i].h != last[i].h)
-            changed = true;
-    }
-    if (!changed) return;
-    memcpy(last, now, sizeof(now));
-    for (int i = 0; i < kNumViews; i++)
-        Log("view %2d: id %2d active %d playerCam %d args %d rt %p %dx%d", i, now[i].id, now[i].active, now[i].playerCam,
-            now[i].have, now[i].rt, now[i].w, now[i].h);
-}
-
-// The views the second eye reused instead of rendering (see the eye rules above): logged whenever
-// the list changes, so the log shows which passes are treated as eye-independent.
-void LogSharedViews(const int* index, int count) {
-    static int last[kNumViews];
-    static int lastCount = -1;
-    bool same = count == lastCount;
-    for (int i = 0; same && i < count; i++)
-        if (last[i] != index[i]) same = false;
-    if (same) return;
-    lastCount = count;
-    for (int i = 0; i < count; i++) last[i] = index[i];
-    char line[256];
-    int m = snprintf(line, sizeof(line), "shared (rendered for the first eye, reused by the second):");
-    for (int i = 0; i < count && m < (int)sizeof(line); i++) m += snprintf(line + m, sizeof(line) - m, " %d", index[i]);
-    Log("%s", line);
 }
 
 void __cdecl hkRenderScene() {
@@ -1028,7 +962,6 @@ void __cdecl hkRenderScene() {
 
     double tEyes = D3D_ProfNow();
     float gazePos[3] = {}, gazeDir[3] = {};
-    LogViewTableOnChange();
     PickViewsThisFrame();
     s_shadowFirstEyeSet = false;
     s_shadowFrame++;
@@ -1093,7 +1026,6 @@ void __cdecl hkRenderScene() {
             sharedCount++;
             active = 0;
         }
-        if (reuseAll) LogSharedViews(sharedIndex, sharedCount);
         double tScene = D3D_ProfNow();
         oRenderScene();
         D3D_EyeRenderProfile(eye, D3D_ProfNow() - tScene);
@@ -1142,13 +1074,6 @@ void __cdecl hkRenderScene() {
     D3D_ProfAdd(PROF_EYES, D3D_ProfNow() - tEyes);
     D3D_BeginHudPhase();
     s_stereoFrame = true;
-    // The flare pool's size after each eye culled and drew (see kFlarePool): the same number twice
-    // means both eyes collected their own flares; a larger second number is the pool being reused.
-    static DWORD lastFlareLog;
-    if (GetTickCount() - lastFlareLog >= 1000) {
-        lastFlareLog = GetTickCount();
-        Log("flares: pool %d entries after eye 1, %d after eye 2", s_flarePoolAfterEye[0], s_flarePoolAfterEye[1]);
-    }
 }
 
 // A totaled car (drag race crash, or an engine blown by the H-shifter mod's engine wear) cuts
@@ -1364,16 +1289,10 @@ void EnlargeFrameMemory() {
 
 } // namespace
 
-// Logs frame memory use when it reaches a new high (and any frame that ran out).
+// Logs any frame that ran out of frame memory.
 void Game_CheckFrameMemory() {
-    static int logged;
     static uint32_t loggedFail;
-    int largest = *(int*)kFrameMemLargest;
     uint32_t fail = *(uint32_t*)kFrameMemMaxFail;
-    if (largest > logged + 32 * 1024) {
-        logged = largest;
-        Log("game: frame memory peak %d KB", largest / 1024);
-    }
     if (fail > loggedFail) {
         loggedFail = fail;
         Log("game: WARNING frame memory ran out (%u KB short in one frame): some objects were not drawn", fail / 1024);

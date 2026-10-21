@@ -50,6 +50,9 @@ extern "C" float* __cdecl NfsmwFfb_Setting(const char* name) {
         {"NosLighter", &g_cfg.nosLighter},
         {"SpinLighter", &g_cfg.spinLighter},
         {"ParkingFriction", &g_cfg.parkingFriction},
+        {"GripLoss", &g_cfg.gripLoss}, {"UndersteerFeel", &g_cfg.understeerFeel},
+        {"RearGripLoss", &g_cfg.rearGripLoss}, {"TyreScrub", &g_cfg.tyreScrub},
+        {"TireSlipSource", &g_cfg.tireSlipSource},
     };
     for (auto& s : kSettings)
         if (!strcmp(name, s.key)) return s.value;

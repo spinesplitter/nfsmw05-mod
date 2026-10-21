@@ -25,6 +25,7 @@ In game, pick your wheel as the controller. The in-game force feedback option do
 | Force | From |
 |---|---|
 | Steering weight (self-aligning torque) | the front axle's direction of travel vs. where the front wheels point (the tyres' slip angle), scaled by front tyre load; heaviest at `GripPeakAngle`, light past it (understeer) |
+| Grip loss | the game's own per-tyre traction: as the front tyres go past their friction limit, the weight's peak moves earlier and the force drops (`GripLoss`); optional extra cues from the game's understeer factor and the rear tyres' grip (`UndersteerFeel`, `RearGripLoss`) |
 | Countersteer in a slide | the same: the front axle travels sideways, the wheel is pulled that way (`DriftAlign`) |
 | Centring | a spring that grows with speed (`Centering`, `CenteringParked`, `CenteringSpeed`), and a firm hold around straight ahead once moving (`CentreWeight`) |
 | Damping and friction | the wheel's own speed: weight against fast movement, scrub when parked; the friction is smooth through standstill, so a wheel held still doesn't buzz |
@@ -37,11 +38,22 @@ In game, pick your wheel as the controller. The in-game force feedback option do
 | Wall scrapes | contact sliding along a wall: grinding and a pull toward it (`Scrapes`) |
 | Off-road | the surface's own name under each front tyre (grass, dirt, mud, gravel, sand...): an uneven rumble with random bumps, half with one wheel off, growing with speed (`OffroadVibration`) |
 | Nitrous | the steering goes lighter while the nitrous is on, eased in and out (`NosLighter`) |
+| Tyre scrub | a fine vibration once any tyre is past its grip limit (`TyreScrub`) |
 | Breakable objects | the game's own breakable props (Smackables: benches, sign posts, fences, bins), recognised by their class in the collision report or when one is knocked loose where the car is: a sharp knock toward that side (`Breakables`) |
 
 The tyres' slip angle uses the game's actual front wheel lock (with speed-sensitive steering only
 a few degrees at speed), so the steering keeps getting heavier as you turn in instead of going
 light halfway.
+
+Grip loss is the only part that reads the game's per-tyre state directly: `GetWheelTraction` is 1
+while a tyre grips and drops as it goes past its friction limit. `GripLoss=0` (or
+`TireSlipSource=0` with `GripLoss=0`) reproduces the older geometric-only behaviour exactly.
+`TireSlipSource=0` keeps the proven geometric slip shape; `TireSlipSource=1` uses the game's own
+slip angle for the magnitude (its geometric sign is kept). `GripLoss` and `RearGripLoss` default to
+0.5 and `TyreScrub` to 0.2; `UndersteerFeel` stays off. In a rear-wheel-drive car whose front tyres
+stay gripped while the rear slides, `RearGripLoss` is the cue that lights the wheel. With
+`LogTelemetry=1`, the log's `tyre:` line shows each wheel's grip, slip angle (degrees) and skid,
+plus the game's understeer/oversteer factors. Set all three to 0 for the older geometric-only feel.
 
 Next steps (not in this version yet): jump lightening and landings.
 

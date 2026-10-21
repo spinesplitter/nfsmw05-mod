@@ -3,6 +3,24 @@
 - **VR: SMAA removed:** the headset's SMAA anti-aliasing (`[VR] Smaa`, `SmaaEdges` and their F4
   entries) is gone, with the SMAA shaders it shipped. Anisotropic filtering stays. The widescreen
   fix's own SMAA (flat screen only) is unaffected.
+- **VR: the Clio's steering wheel is found:** its low-poly, thick rim spread over the wheel search's
+  2 cm slices, so no wheel was found (no turning wheel, no in-car dashboard, which is placed from
+  the wheel). A wheel the usual search misses is looked for again with 4 cm slices; every other car
+  in the game is found by the usual search, as before.
+- **VR: rear view mirrors on the CTS and the Eclipse:** the search region now starts 15 cm ahead of
+  the head (the CTS's driver sits close to the mirror). The Eclipse's glass is a shallow faceted
+  shell whose triangles don't share edges, and the back of its housing is a few millimetres behind
+  it: growing a patch from shared edges found only a single facet, or a patch folded together with
+  the housing. Now the largest triangle facing the driver seeds a flat patch of everything lying in
+  its plane, either winding, and the patch must still look like the mirror. A piece elsewhere in
+  that plane (a scrap of the Punto's dashboard) leaves the glass to the connected search, which
+  stays as the fallback for every other car. The glass is drawn as its outline, fanned from its
+  convex hull, so overlapping or folded triangles can't make a broken shape.
+- **Logs: debug chatter removed:** the VR perf / hitch / pass / eye scene reports, view table and
+  shared view dumps, flare pool counts, texture filter statistics, frame memory peaks and the
+  host's XR timing lines; the gameplay mod's shift, engine wear and heat, input block, menu, save,
+  picking, icon and physics step lines. Setup results, warnings and errors stay. The frame trace
+  key (`[VR] KeyTrace`) is off by default; `[FFB] LogTelemetry` and `[VR] LogPasses` stay opt-in.
 
 ### v0.21.0: new F4 menu, ABS and traction control, physics presets, SMAA and smoother frames in VR
 

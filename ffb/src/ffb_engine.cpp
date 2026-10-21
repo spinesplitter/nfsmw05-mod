@@ -73,6 +73,10 @@ public:
         p.gripPeakDeg = c.gripPeakDeg;
         p.driftAlign = c.driftAlign;
         p.loadSensitivity = c.loadSensitivity;
+        p.gripLoss = c.gripLoss;
+        p.understeerFeel = c.understeerFeel;
+        p.rearGripLoss = c.rearGripLoss;
+        p.tireSlipSource = c.tireSlipSource > 0.5f;
         p.centering = c.centering;
         p.centeringParked = c.centeringParked;
         p.centeringSpeed = c.centeringSpeed;
@@ -96,6 +100,7 @@ public:
         ep.carHits = c.carHits;
         ep.hardJerk = c.hardImpactJerk;
         ep.offroad = c.offroadVibration;
+        ep.tyreScrub = c.tyreScrub;
         s.effects = effects_.Step(t, drive_, now, dt, ep);
         float hitPriority;
         float fx = PrioritizedEffectSum(s.effects, &hitPriority);
@@ -230,12 +235,19 @@ DWORD WINAPI FfbThread(LPVOID) {
             ffb::PrioritizedEffectSum(s.effects, &hitPriority);
             Log("tel: drv=%.2f v=%.1f vlong=%.1f vlatF=%.2f yaw=%.2f loadF=%.0f onF=%d wheel=%.3f/%.2f roadlock=%.1f(%.1f/%.1f) "
                 "rpm=%.0f bump=%.2f/%.2f surf=%.2f@%.0f | align=%.3f(%.3f) centre=%.3f damp=%.3f fric=%.3f lock=%.3f "
-                "spin=%.2f fx: eng=%.3f kerb=%.3f surf=%.3f crash=%.3f scrape=%.3f break=%.3f car=%.3f hard=%.3f priority=%.2f | guard=%.2f raw=%.3f out=%.3f",
+                "spin=%.2f fx: eng=%.3f kerb=%.3f surf=%.3f crash=%.3f scrape=%.3f break=%.3f car=%.3f hard=%.3f scrub=%.3f priority=%.2f | guard=%.2f raw=%.3f out=%.3f",
                 engine.Drive(), t.speed, t.vLong, t.vLatFront, t.yawRate, t.frontLoad, t.frontOnGround, pos, engine.WheelVel(),
                 engine.RoadLock(), t.maxSteerDeg, t.steerDeg, t.rpm, t.bump[0], t.bump[1], t.surfaceRumble, t.surfaceHz,
                 s.parts.aligning, s.aligningSmoothed, s.parts.centering, s.parts.damping, s.parts.friction, s.parts.softLock,
                 t.wheelSpin, s.effects.engine, s.effects.kerb, s.effects.surface, s.effects.crash, s.effects.scrape, s.effects.breakable,
-                s.effects.carHit, s.effects.hardJerk, hitPriority, s.guard, s.raw, s.out);
+                s.effects.carHit, s.effects.hardJerk, s.effects.scrub, hitPriority, s.guard, s.raw, s.out);
+            const float radToDeg = 57.2957795f;
+            Log("tyre: FL %.2f %.1f %.2f | FR %.2f %.1f %.2f | RL %.2f %.1f %.2f | RR %.2f %.1f %.2f | U %.2f O %.2f valid %d",
+                t.tireGrip[0], t.tireSlipAngle[0] * radToDeg, t.tireSkid[0],
+                t.tireGrip[1], t.tireSlipAngle[1] * radToDeg, t.tireSkid[1],
+                t.tireGrip[2], t.tireSlipAngle[2] * radToDeg, t.tireSkid[2],
+                t.tireGrip[3], t.tireSlipAngle[3] * radToDeg, t.tireSkid[3],
+                t.understeer, t.oversteer, t.tireStateValid ? 1 : 0);
         }
         if (now - statTime > 30.0) {
             if (engine.Limiting() > engine.Ticks() / 10)
