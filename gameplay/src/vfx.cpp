@@ -163,7 +163,7 @@ static void __fastcall SmokeUpdate(void* eff, void*, const float* mtx, uint32_t 
         // A rear- or mid-engined car: the smoke comes out that much further back, along the car's
         // forward axis (its render matrix's first row: the car's local X is forward).
         float back = Physics_EngineSmokeBack();
-        if (back > 0.0f) {
+        if (back != 0.0f) {
             static float moved[16];
             memcpy(moved, mtx, sizeof(moved));
             float len = sqrtf(mtx[0] * mtx[0] + mtx[1] * mtx[1] + mtx[2] * mtx[2]);

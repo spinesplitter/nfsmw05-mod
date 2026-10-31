@@ -58,6 +58,9 @@ struct Telemetry {
     // Front suspension, [0] = left, [1] = right: compression speed with the slow part (body roll,
     // pitch, hills) taken out, m/s, + = compressing. Kerbs and bumps show up here.
     float bump[2];
+    uint32_t kerbSeq;       // latched on physics thread; survives a missed output sample
+    float kerbHit, kerbDir;
+    double kerbTime;
     // Road surface under the front tyres (not off-road ones: OffroadVibration has those): the
     // game's own rumble for it (0..1: rumble strips, cobbles...) and its frequency in Hz.
     float surfaceRumble;

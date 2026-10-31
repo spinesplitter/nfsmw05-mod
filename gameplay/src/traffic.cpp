@@ -7,6 +7,25 @@
 #include "traffic.h"
 #include "common.h"
 #include "patch.h"
+#include <math.h>
+
+// Scale at read time, not when the setting is stored: live edits cannot compound
+// and returning to 1x restores the original race/free-roam request immediately.
+static float ScaleTrafficDensity(float stock, float multiplier) {
+    if (!isfinite(multiplier)) multiplier = 1.0f;
+    return Clamp(stock * Clamp(multiplier, 0.0f, 10.0f), 0.0f, 1.0f);
+}
+static float(__cdecl* s_density)() = nullptr;
+static float __cdecl TrafficDensity() {
+    const float stock = s_density();
+    const float scaled = ScaleTrafficDensity(stock, g_cfg.trafficMultiplier);
+    static float lastMultiplier = -1.0f;
+    if (lastMultiplier != g_cfg.trafficMultiplier) {
+        lastMultiplier = g_cfg.trafficMultiplier;
+        Log("traffic: live density %.3f -> %.3f (%.1fx)", stock, scaled, lastMultiplier);
+    }
+    return scaled;
+}
 
 namespace {
 
@@ -110,7 +129,74 @@ static const float* __fastcall HkGetTunings(uint8_t* vehicle, void* edx) {
     return kStock;
 }
 
+static float __fastcall RacerCatchup(void* racer, void* edx) {
+    if (g_cfg.disableRubberband) return 0.0f;
+    return ((float(__fastcall*)(void*, void*))0x409390)(racer, edx);
+}
+
+// ProcessStartRace calls GRaceStatus::StartRace (602010), which resets the master
+// timer and mBonusTime through 5FFD80. Hook this call only: no frame polling,
+// checkpoint awards, or stale race-pointer latch. A restart runs the reset again.
+static void(__fastcall* s_startRace)(void*, void*) = (void(__fastcall*)(void*, void*))0x602010;
+static int(__fastcall* s_raceType)(void*, void*) = (int(__fastcall*)(void*, void*))kGetRaceType;
+
+static void ApplyTollboothBonus(uint8_t* race, int type) {
+    if (type == 4 && *(int*)(race + 0x1964) != 1) // never online
+        *(float*)(race + 0x1980) += g_cfg.tollboothTimeBonus;
+}
+
+static void __fastcall RaceStart(uint8_t* race, void* edx) {
+    s_startRace(race, edx);
+    void* parms = *(void**)(race + 0x1968);
+    if (parms) ApplyTollboothBonus(race, s_raceType(parms, nullptr));
+}
+
+// AIVehiclePid::OnGasBrake (42A0B0) reads mDriveSpeed at +84 for its
+// throttle/brake controller. Both racer host and racer goal have this slot.
+// Scale only while that controller runs, then restore the target, so repeated
+// updates never compound and the path planner retains its stock target.
+static void(__fastcall* s_racerGasBrake)(void*, void*, float) =
+    (void(__fastcall*)(void*, void*, float))0x42A0B0;
+
+static void RacerGasBrakeTarget(uint8_t* ai, void* edx, float dt, bool player) {
+    float& target = *(float*)(ai + 0x84);
+    const float original = target;
+    if (!player && target > 0.0f) target *= g_cfg.opponentSpeed;
+    s_racerGasBrake(ai, edx, dt);
+    target = original;
+}
+
+static void __fastcall RacerGasBrake(uint8_t* ai, void* edx, float dt) {
+    void* iv = ai + 0x4C;
+    uintptr_t* vt = *(uintptr_t**)iv;
+    void* vehicle = ((void*(__fastcall*)(void*, void*))vt[2])(iv, nullptr);
+    if (!vehicle) { s_racerGasBrake(ai, edx, dt); return; }
+    bool player = *(int*)((uint8_t*)vehicle + kIV_DriverClass) == 0;
+    RacerGasBrakeTarget(ai, edx, dt, player);
+}
+
 void Traffic_Install() {
+    // Live normalized density, including free roam. The race parameter getter
+    // at 0x5FABB0 is only consumed at race start and cannot implement a live slider.
+    // Seven whole relocatable bytes; leave the NIS/disabled zero requests alone.
+    if (Expect(0x41EC20, {0xA1, 0xC8, 0x85, 0x98, 0x00, 0x85, 0xC0})) {
+        s_density = (float(__cdecl*)())Detour(0x41EC20, 7, (void*)&TrafficDensity);
+        Log("traffic: live race/free-roam density hook %s (capped at 100%%)", s_density ? "installed" : "failed");
+    } else Log("traffic: density multiplier unavailable (unexpected getter code)");
+    if (!RetargetCall(0x60DBF9, 0x602010, (void*)&RaceStart))
+        Log("races: tollbooth starting bonus unavailable (unexpected race-start call)");
+    // Check both racer slots first; do not alter cop/traffic vtables or shared code.
+    if (ExpectPtr(0x892760, 0x42A0B0) && ExpectPtr(0x892B10, 0x42A0B0)) {
+        SetSlot(0x892760, 0x42A0B0, (void*)&RacerGasBrake);
+        SetSlot(0x892B10, 0x42A0B0, (void*)&RacerGasBrake);
+        Log("races: opponent speed controller hooks installed");
+    } else {
+        Log("races: opponent speed unavailable (unexpected racer controller slots)");
+    }
+    // Racer ICheater's GetCatchupCheat (AIVehicleRacecar, not the cop/perp vtable).
+    // Verified stock slot and function against this executable; leave other mods' hooks alone.
+    if (!SetSlot(0x8925C8, 0x409390, (void*)&RacerCatchup))
+        Log("races: racer catch-up hook unavailable (unexpected slot); rubberband unchanged");
     if (!SetSlot(kSlotGetTunings, kGetTunings, (void*)&HkGetTunings))
         Log("traffic: unexpected vehicle code, the game's performance tuning left as it is");
     if (!RetargetCall(kCallTurboRaceType, kGetRaceType, (void*)&HkTurboRaceType))

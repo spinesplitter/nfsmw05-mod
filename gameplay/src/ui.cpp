@@ -525,7 +525,6 @@ const Item kItems[] = {
     {NUMBER, "Vehicle hits", "FFB", "CarHits", &s_ext[FFB_CARHITS], 0.0f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     {NUMBER, "Offroad vibration", "FFB", "OffroadVibration", &s_ext[FFB_OFFROAD], 0.0f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     {NUMBER, "Kerbs and bumps", "FFB", "Kerbs", &s_ext[FFB_KERBS], 0.0f, 2.0f, 0.05f, 100, "%.0f%%", 0},
-    {NUMBER, "Road rumble", "FFB", "SurfaceRumble", &s_ext[FFB_SURFACE], 0.0f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     {NUMBER, "Tyre scrub", "FFB", "TyreScrub", &s_ext[FFB_TYRESCRUB], 0.0f, 0.5f, 0.05f, 100, "%.0f%%", 0},
     RESET_,
 
@@ -563,10 +562,13 @@ const Item kItems[] = {
     BACK_,
     HEADER_("CAR DAMAGE"),
     {TOGGLE, "Car damage", "Damage", "Damage", &g_cfg.damage, 0, 0, 0, 0, nullptr, 0},
+    {NUMBER, "Minimum damaging impact", "Damage", "MinImpact", &g_cfg.damageMinImpact, 0.0f, 100.0f, 0.5f, 1, "%.1f m/s", 0},
     {NUMBER, "Damage strength", "Damage", "Strength", &g_cfg.damageStrength, 0.1f, 5.0f, 0.1f, 1, "%.1fx", 0},
     {NUMBER, "Power loss from", "Damage", "PowerLossStart", &g_cfg.damageLossStart, 0.0f, 0.95f, 0.05f, 100, "%.0f%% damage", 0},
     {NUMBER, "Power lost at full damage", "Damage", "PowerLoss", &g_cfg.damageLoss, 0.0f, 1.0f, 0.05f, 100, "%.0f%%", 0},
     {TOGGLE, "Engine smoke when damaged", "Damage", "Smoke", &g_cfg.damageSmoke, 0, 0, 0, 0, nullptr, 0},
+    {NUMBER, "Engine smoke trail speed", "Damage", "SmokeTrail", &g_cfg.smokeTrail, 0.0f, 5.0f, 0.05f, 100, "%.0f%%", 0},
+    {NUMBER, "Engine smoke position (per car, +back)", "Smoke", "Back", &g_cfg.engineSmokeBack, -5.0f, 5.0f, 0.05f, 1, "%.2f m", 0},
     HEADER_("POPPED TIRES"),
     {TOGGLE, "Drivable popped tires", "Tires", "PoppedTires", &g_cfg.poppedTires, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Popped tire handicap", "Tires", "Handicap", &g_cfg.tireHandicap, 0.0f, 3.0f, 0.05f, 1, "%.2fx", 0},
@@ -626,9 +628,13 @@ const Item kItems[] = {
     PAGE_("TRAFFIC AND HUD"),
     BACK_,
     HEADER_("TRAFFIC"),
+    {NUMBER, "Traffic multiplier", "Traffic", "Multiplier", &g_cfg.trafficMultiplier, 0.0f, 10.0f, 0.1f, 1, "%.1fx", 0},
     {TOGGLE, "No head-on ramming SUVs", "Traffic", "NoHeavySupport", &g_cfg.noHeavySupport, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Drive drag races normally", "Races", "NormalDragRaces", &g_cfg.normalDragRaces, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Normal HUD in drag races", "Races", "NormalDragHud", &g_cfg.normalDragHud, 0, 0, 0, 0, nullptr, 0},
+    {TOGGLE, "Disable racer rubberband", "Races", "DisableRubberband", &g_cfg.disableRubberband, 0, 0, 0, 0, nullptr, 0},
+    {NUMBER, "Tollbooth starting time bonus", "Races", "TollboothTimeBonus", &g_cfg.tollboothTimeBonus, 0, 300, 5, 1, "+%.0f s", 0},
+    {NUMBER, "Opponent speed", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     HEADER_("HUD"),
     {TOGGLE, "Damage / heat meter", "HUD", "Meter", &g_cfg.hudMeter, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Speedbreaker", "HUD", "Speedbreaker", &g_cfg.speedbreaker, 0, 0, 0, 0, nullptr, 0},
@@ -746,6 +752,7 @@ const Item kItems[] = {
     {ACTION, "Pick triangles (the menu hides)", nullptr, "EdPick", nullptr, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Selection size", "VR", "EditMode", &s_ext[VR_EDITMODE], 0.0f, 5.0f, 1.0f, 1, "%.0f", 0},
     HEADER_("DO WITH THE SELECTION"),
+    {ACTION, "Copy triangle IDs to clipboard", nullptr, "EdCopy", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Hide", nullptr, "EdHide", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1210,6 +1217,10 @@ void Unbind(const Item& it) {
 // The default of a setting, from a default Config (or the FFB mod's defaults). False for items
 // without one (bindings, actions, per-mod values outside g_cfg).
 bool DefaultOf(const Item& it, float* f, bool* b, uint32_t* u) {
+    if (it.value == &g_cfg.engineSmokeBack) {
+        *f = Physics_DefaultEngineSmokeBack();
+        return true;
+    }
     static const Config def;
     const char* base = (const char*)&g_cfg;
     const char* p = (const char*)it.value;
@@ -1245,7 +1256,8 @@ const struct {
     {&g_cfg.physics, 0}, {&s_tcMode, 1}, {&g_cfg.stability, 1}, {&g_cfg.driftAssist, 1},
     {&g_cfg.grip, 1}, {&g_cfg.character, 0}, {&g_cfg.realWeight, 0}, {&g_cfg.gripBalance, 0}, {&g_cfg.suspFirmness, 1}, {&g_cfg.rollBalance, 0}, {&g_cfg.abs, 0}, {&g_cfg.offroadGrip, 1},
     {&g_cfg.tyreSlideGrip, 1}, {&g_cfg.rainGrip, 1}, {&g_cfg.downforce, 1}, {&g_cfg.downforceSquared, 0}, {&g_cfg.wallBounce, 1}, {&g_cfg.frictionCircle, 0}, {&g_cfg.slideWheelspin, 0}, {&g_cfg.gravity, 1}, {&g_cfg.gravityAll, 0},
-    {&g_cfg.noHeavySupport, 0}, {&g_cfg.normalDragRaces, 0}, {&g_cfg.normalDragHud, 0},
+    {&g_cfg.trafficMultiplier, 1}, {&g_cfg.noHeavySupport, 0}, {&g_cfg.normalDragRaces, 0}, {&g_cfg.normalDragHud, 0},
+    {&g_cfg.disableRubberband, 0}, {&g_cfg.tollboothTimeBonus, 0}, {&g_cfg.opponentSpeed, 1},
     {&g_cfg.hudMeter, 0}, {&g_cfg.speedbreaker, 1},
 };
 
@@ -1593,7 +1605,8 @@ void Change(int index, int dir) {
             static const struct { const char* key; int cmd; const char* note; } kEd[] = {
                 {"EdHide", 1, "Hidden"}, {"EdBlack", 2, "Drawn black"}, {"EdWheel", 3, "On the steering wheel"},
                 {"EdNoWheel", 4, "Off the steering wheel"}, {"EdRestore", 5, "Restored"}, {"EdUndo", 6, "Undone"},
-                {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"}};
+                {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"},
+                {"EdCopy", 12, "Copy requested (check clipboard)"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
@@ -1691,6 +1704,10 @@ void Save() {
             snprintf(buf, sizeof(buf), "%g", g_cfg.tractionControl);
             writes.push_back({IniPath(), Physics_Section(), "TractionControl", buf});
             writes.push_back({IniPath(), "Physics", "TC", g_cfg.tc ? "1" : "0"});
+            continue;
+        }
+        if (it.value == &g_cfg.engineSmokeBack) {
+            if (*Physics_Car()) writes.push_back({IniPath(), std::string("Smoke.") + Physics_Car(), "Back", text});
             continue;
         }
         std::string section = Physics_IsPerCar(it.value) ? Physics_Section() : it.section;
@@ -2004,8 +2021,7 @@ const struct {
     {&s_ext[VR_HIDEARMS], "Leaves out the driver model's arms and hands in the cockpit: they don't follow your hands or the wheel."},
     {&s_ext[VR_WHEELOVERHUD], "On: the car's steering wheel is drawn in front of the HUD while driving. In the pause menu, other menus and this menu the HUD is on top again."},
     {&s_ext[FFB_OFFROAD], "The wheel vibrates while the front wheels are off the road: grass, dirt, mud, gravel, sand. Stronger with both wheels off and with speed."},
-    {&s_ext[FFB_KERBS], "A kick and a short shake when a front wheel is hit from below: kerbs, bumps, potholes, a kerb on one side kicking the wheel toward that side. From the front suspension compressing quickly, so body roll and hills don't count. 0% = off (the default)."},
-    {&s_ext[FFB_SURFACE], "The game's own rumble for the road surface under the front tyres, at the surface's own frequency: rumble strips, cobbles and the like. Grass, dirt and gravel are Offroad vibration's. Fades in with speed. 0% = off (the default)."},
+    {&s_ext[FFB_KERBS], "A vehicle-hit-style shove and shake from quick front suspension compression: kerbs, bumps and potholes. More sensitive to small hits; kicks toward the side hit. Rebound and sustained compression do not repeatedly trigger it. 0% = off (the default)."},
     {&s_ext[FFB_CARHITS], "A hard kick and a short shake when you hit another vehicle (traffic, cops, racers), toward the side you were pushed, full strength from 150 km/h. Only vehicles: the game tells them apart by their own object type."},
     {&s_ext[FFB_LANDING], "A hard kick and a short shake in the wheel when the car lands after a jump, stronger the longer it was in the air."},
     {&s_ext[FFB_PARKINGFRICTION], "Stationary friction: the tyres scrubbing on the road when the car stands still, so the wheel is heavy to turn when parked. Full at a standstill, gone by 18 km/h."},
@@ -2065,6 +2081,8 @@ const struct {
     {&g_cfg.engineBrakeFade, "Throttle at which the engine stops braking the car. The game fades engine braking out only at full throttle, so the first 25-40% of the pedal did nothing. 100% = the game's. Every game mode and gearbox."},
     {&g_cfg.damage, "Crashes damage the car; at 100% it is totaled."},
     {&g_cfg.damageStrength, "Damage per hit."},
+    {&g_cfg.damageMinImpact, "Minimum impact-induced speed change (impulse divided by car mass), not driving speed. Hits at or below this cause no damage. Default: 8 m/s (28.8 km/h speed change)."},
+    {&g_cfg.smokeTrail, "How much of the car's velocity engine smoke keeps. 0% leaves it behind; 100% matches the car's initial velocity; up to 500% compensates for smoke slowing down. Default: 80%. Saved live."},
     {&g_cfg.damageLossStart, "Damage where the engine starts losing power."},
     {&g_cfg.damageLoss, "Torque lost at 100% damage."},
     {&g_cfg.damageSmoke, "A damaged engine smokes."},
@@ -2107,7 +2125,10 @@ const struct {
     {&g_cfg.gravity, "Gravity in g. Grip scales with it."},
     {&g_cfg.gravityAll, "Gravity applies to AI and traffic too."},
     {&g_cfg.noHeavySupport, "No heavy support: the SUVs a pursuit sends to ram you head-on out of oncoming traffic don't come. SUV patrols and SUVs in roadblocks still do."},
+    {&g_cfg.trafficMultiplier, "Civilian traffic density request: 1x = stock, 0x = off. Scales the race/free-roam density getter without changing its stored value. Live when the game next reads density; existing cars are not removed immediately. Density is capped at 100 (stock Quick Race Maximum is 50, so 2x reaches that cap). Does not expand active-car pools or force traffic in events with zero density."},
     {&g_cfg.normalDragHud, "Drag races show the normal race HUD (tachometer, speedometer, minimap, damage meter) instead of the drag HUD. Applies from the next race."},
+    {&g_cfg.tollboothTimeBonus, "Extra seconds at the start of a tollbooth race. Applies once per start/restart, never at checkpoints. Change before starting or restarting the race."},
+    {&g_cfg.opponentSpeed, "AI racer target speed: 100% is stock, lower is slower. Live and independent of Disable racer rubberband. Does not change your car, police, traffic or world time; actual speed still depends on corners and vehicle performance."},
     {&g_cfg.normalDragRaces, "Drag races without the drag mechanics for your car: you steer (no automatic lane changes), the normal engine, shifting and damage, so the wheel, shifter, engine wear and damage mods work. Opponents and the race itself are unchanged. Applies from the next race."},
     {&g_cfg.hudMeter, "The speedbreaker meter shows car damage, with engine heat in red."},
     {&g_cfg.speedbreaker, "Keep the game's speedbreaker."},

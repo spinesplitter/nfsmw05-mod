@@ -1,0 +1,21 @@
+﻿Explicit roster targets: 146
+1 opponents: 1 races
+3 opponents: 3 races
+5 opponents: 17 races
+7 opponents: 15 races
+9 opponents: 14 races
+11 opponents: 94 races
+15 opponents: 2 races
+Final explicit nulls:
+Final scalar writes of interest:
+add_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel
+update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 10
+add_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap
+update_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap 2
+add_field gameplay race_bin_15/15_2_1_sprint PursuitLevel
+update_field gameplay race_bin_15/15_2_1_sprint PursuitLevel 10
+update_field gameplay race_bin_15/15_2_1_sprint MaxHeatLevel 10
+delete_field gameplay race_bin_15/15_2_1_sprint PursuitLevel
+update_field gameplay race_bin_05/7_4_2_r_tollbooth TimeLimit 100
+update_field gameplay race_bin_12/12_7_3_drag TrafficLevel 0
+update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 5

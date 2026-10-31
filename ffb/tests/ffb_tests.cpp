@@ -5,6 +5,7 @@
 #include "../src/ffb_device.cpp"
 #include "../src/ffb_model.cpp"
 #include "../src/ffb_effects.cpp"
+#include "../src/kerb_detector.h"
 #include "../src/ffb_engine.cpp"
 #include <assert.h>
 #include <stdio.h>
@@ -385,6 +386,51 @@ static void TestModel() {
 
 // --- effects --------------------------------------------------------------------------------------
 static void TestEffects() {
+    // Exercise the production physics-thread detector, not just synthetic effects.
+    {
+        KerbDetector detector;
+        float bump[2] = {0.1f, 0};
+        detector.Sample(bump, false, 1.0); // discontinuity/teleport seeds only
+        assert(detector.seq == 0);
+        detector.Sample(bump, true, 1.02);
+        assert(detector.seq == 1 && detector.dir == -1);
+        detector.Sample(bump, true, 1.20); // sustained left compression
+        assert(detector.seq == 1);
+        bump[1] = 0.12f;
+        detector.Sample(bump, true, 1.22); // right hits while left stays compressed
+        assert(detector.seq == 2 && detector.dir == 1);
+        bump[1] = -0.5f;
+        detector.Sample(bump, true, 1.24); // rebound rearms, never hits
+        assert(detector.seq == 2);
+        bump[1] = 0.12f;
+        detector.Sample(bump, true, 1.25); // wheel-local debounce
+        assert(detector.seq == 2);
+        detector.Sample(bump, true, 1.30);
+        assert(detector.seq == 3);
+        bump[0] = bump[1] = 0;
+        detector.Sample(bump, true, 1.40);
+        bump[0] = bump[1] = 0.1f;
+        detector.Sample(bump, true, 1.50);
+        assert(detector.seq == 4 && detector.dir == 0);
+
+        EffectParams params;
+        params.kerbs = 1;
+        Telemetry t = Car(20);
+        t.seq = 10;
+        t.kerbSeq = detector.seq;
+        t.kerbHit = detector.hit;
+        t.kerbDir = 1;
+        t.kerbTime = 1.50;
+        // Current bump is already zero: output skipped the actual impact sample.
+        Effects fx;
+        fx.Step(t, 1, 1.52, 0.0025f, params);
+        assert(fx.Step(t, 1, 1.545, 0.0025f, params).kerb > 0.1f);
+        ++t.seq;
+        assert(NearZero(fx.Step(t, 1, 2.0, 0.0025f, params).kerb));
+        Effects stale;
+        stale.Step(t, 1, 2.0, 0.0025f, params);
+        assert(NearZero(stale.Step(t, 1, 2.025, 0.0025f, params).kerb));
+    }
     EffectParams p;
     float dt = 0.0025f;
     double now = 100;
@@ -398,14 +444,51 @@ static void TestEffects() {
         EffectParams k = p;
         assert(NearZero(off.Step(t, 1.0f, now, dt, p).kerb));
         k.kerbs = 1.0f;
-        float first = on.Step(t, 1.0f, now, dt, k).kerb;
+        on.Step(t, 1.0f, now, dt, k); // starts at zero, like vehicle hits
+        float first = on.Step(t, 1.0f, now + 0.025, dt, k).kerb;
         assert(first > 0.2f);
         t.bump[1] = 0.0f;
         float later = 0;
         for (int i = 0; i < 200; i++) later = on.Step(t, 1.0f, now + (i + 1) * dt, dt, k).kerb;   // 0.5 s
         assert(fabsf(later) < 0.01f);
     }
-    // Road rumble: the surface's own rumble, at speed; off (the default) nothing.
+    // Kerbs: same waveform as a full-strength vehicle hit, left/right direction,
+    // no retrigger from repeated telemetry, no rebound jolt, smaller bumps felt.
+    {
+        EffectParams k = p;
+        k.kerbs = k.carHits = 1.0f;
+        Telemetry t = Car(150.0f / 3.6f);
+        t.seq = t.carHitSeq = 1;
+        t.bump[1] = 1.0f;
+        t.carHitLat = 1.0f;
+        t.carHitSpeed = t.speed;
+        Effects fx;
+        Telemetry baseline = Car(t.speed);
+        fx.Step(baseline, 1.0f, now - dt, dt, k); // seed collision counters before the hit
+        for (int i = 0; i < 160; ++i) {
+            ++t.seq; // sustained compression does not restart the jolt
+            EffectParts e = fx.Step(t, 1.0f, now + i * dt, dt, k);
+            if (fabsf(e.kerb - e.carHit) >= 0.00001f)
+                fprintf(stderr, "kerb waveform sample %d: kerb=%g vehicle=%g\n", i, e.kerb, e.carHit);
+            assert(fabsf(e.kerb - e.carHit) < 0.00001f);
+        }
+        assert(NearZero(fx.Step(t, 1.0f, now + 0.5, dt, k).kerb));
+        ++t.seq;
+        t.bump[1] = -1.0f; // extension rearms but cannot trigger
+        assert(NearZero(fx.Step(t, 1.0f, now + 0.51, dt, k).kerb));
+        ++t.seq;
+        t.bump[0] = 0.12f;
+        t.bump[1] = 0;
+        fx.Step(t, 1.0f, now + 0.52, dt, k);
+        assert(fx.Step(t, 1.0f, now + 0.55, dt, k).kerb < -0.1f);
+        k.kerbs = 0;
+        assert(NearZero(fx.Step(t, 1.0f, now + 0.56, dt, k).kerb));
+        k.kerbs = 1;
+        t.valid = false;
+        ++t.seq;
+        assert(NearZero(fx.Step(t, 1.0f, now + 0.57, dt, k).kerb));
+    }
+    // Road rumble is removed, even with a legacy nonzero setting.
     {
         Telemetry t = Car(20);
         t.frontOnGround = 2;
@@ -419,7 +502,7 @@ static void TestEffects() {
             assert(NearZero(off.Step(t, 1.0f, now + i * dt, dt, p).surface));
             peak = fmaxf(peak, fabsf(on.Step(t, 1.0f, now + i * dt, dt, r).surface));
         }
-        assert(peak > 0.2f);
+        assert(NearZero(peak));
     }
     // Engine: a vibration (both ways) that stops without revs.
     {

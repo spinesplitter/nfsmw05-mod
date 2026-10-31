@@ -1,0 +1,374 @@
+﻿FINAL ROSTER COUNTS
+1 opponents: 1 races
+11 opponents: 89 races
+15 opponents: 2 races
+3 opponents: 2 races
+5 opponents: 13 races
+7 opponents: 11 races
+9 opponents: 10 races
+NON ROSTER COMMANDS
+45: update_field gameplay 16_1_1_circuit CashValue 50000
+60: update_field gameplay race_bin_14/14_3_1_lapknockout CashValue 30000
+74: add_field gameplay race_bin_14/14_3_1_lapknockout NumLaps
+75: update_field gameplay race_bin_14/14_3_1_lapknockout NumLaps 15
+77: update_field gameplay race_bin_14/14_3_1_lapknockout TrafficLevel 100
+78: update_field gameplay race_bin_14/14_3_1_lapknockout CatchUpSkill 10
+159: add_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps
+160: update_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps 15
+173: update_field gameplay race_bin_06/14_3_1_r_lap_ko CashValue 180000
+174: update_field gameplay race_bin_06/14_3_1_r_lap_ko TrafficLevel 100
+176: update_field gameplay race_bin_05/5_1_1_circuit TrafficLevel 100
+189: update_field gameplay race_bin_04/9_1_1_r_circuit TrafficLevel 100
+203: update_field gameplay race_bin_04/4_1_1_circuit TrafficLevel 100
+217: update_field gameplay race_bin_03/3_1_2_r_circuit TrafficLevel 100
+218: update_field gameplay race_bin_03/3_1_2_circuit TrafficLevel 100
+219: update_field gameplay race_bin_03/3_1_1_circuit TrafficLevel 100
+233: update_field gameplay race_bin_02/5_1_1_r_Circuit TrafficLevel 100
+247: update_field gameplay race_bin_02/3_1_1_r_circuit TrafficLevel 100
+248: update_field gameplay race_bin_02/2_1_1_r_circuit TrafficLevel 100
+262: update_field gameplay race_bin_02/2_1_1_circuit TrafficLevel 100
+276: update_field gameplay race_bin_01/1_1_2_circuit TrafficLevel 100
+277: update_field gameplay race_bin_01/1_1_1_circuit TrafficLevel 100
+278: update_field gameplay race_bin_15/15_3_1_knockout TrafficLevel 100
+279: add_field gameplay race_bin_15/15_3_1_knockout NumLaps
+281: update_field gameplay race_bin_15/15_3_1_knockout NumLaps 15
+294: update_field gameplay race_bin_15/15_3_1_knockout CashValue 22500
+295: update_field gameplay race_bin_06/14_3_1_r_lap_ko CashValue 240000
+296: update_field gameplay race_bin_15/15_3_1_knockout CashValue 30000
+297: update_field gameplay race_bin_13/13_3_2_lap_ko CashValue 50000
+298: update_field gameplay race_bin_13/13_3_2_lap_ko TrafficLevel 100
+300: update_field gameplay race_bin_13/13_3_2_lap_ko NumLaps 15
+313: update_field gameplay race_bin_13/13_3_1_r_knockout CashValue 50000
+314: update_field gameplay race_bin_13/13_3_1_r_knockout TrafficLevel 100
+328: update_field gameplay race_bin_13/13_3_1_lap_ko CashValue 50000
+329: update_field gameplay race_bin_13/13_3_1_lap_ko TrafficLevel 100
+343: update_field gameplay race_bin_13/13_3_1_r_knockout NumLaps 15
+344: update_field gameplay race_bin_13/13_3_1_lap_ko NumLaps 15
+345: update_field gameplay race_bin_10/10_3_2_knockout CashValue 100000
+346: update_field gameplay race_bin_10/10_3_2_knockout TrafficLevel 100
+347: update_field gameplay race_bin_10/10_3_2_knockout NumLaps 15
+361: update_field gameplay race_bin_10/10_3_1_knockout CashValue 100000
+362: update_field gameplay race_bin_10/10_3_1_knockout TrafficLevel 100
+363: add_field gameplay race_bin_10/10_3_1_knockout NumLaps
+365: update_field gameplay race_bin_10/10_3_1_knockout NumLaps 15
+378: update_field gameplay race_bin_09/9_3_1_lapknockout CashValue 120000
+379: add_field gameplay race_bin_09/9_3_1_lapknockout NumLaps
+381: add_field gameplay race_bin_09/9_3_1_lapknockout TrafficLevel
+382: update_field gameplay race_bin_09/9_3_1_lapknockout NumLaps 15
+383: update_field gameplay race_bin_09/9_3_1_lapknockout TrafficLevel 100
+396: update_field gameplay race_bin_08/8_3_1_lap_ko NumLaps 15
+397: update_field gameplay race_bin_08/8_3_1_lap_ko TrafficLevel 100
+411: update_field gameplay race_bin_08/8_3_1_lap_ko CashValue 160000
+412: update_field gameplay race_bin_08/13_3_1_r_lap_ko CashValue 160000
+413: update_field gameplay race_bin_08/13_3_1_r_lap_ko TrafficLevel 100
+414: add_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps
+416: update_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps 15
+429: update_field gameplay race_bin_07/7_3_1_lap_ko CashValue 200000
+430: update_field gameplay race_bin_07/7_3_1_lap_ko TrafficLevel 100
+431: update_field gameplay race_bin_07/7_3_1_lap_ko NumLaps 15
+445: update_field gameplay race_bin_06/6_3_1_lap_ko CashValue 240000
+446: update_field gameplay race_bin_06/6_3_1_lap_ko NumLaps 15
+447: update_field gameplay race_bin_06/6_3_1_lap_ko TrafficLevel 100
+461: update_field gameplay race_bin_05/5_3_1_lap_ko CashValue 280000
+462: update_field gameplay race_bin_05/5_3_1_lap_ko TrafficLevel 100
+463: add_field gameplay race_bin_05/5_3_1_lap_ko NumLaps
+465: update_field gameplay race_bin_05/5_3_1_lap_ko NumLaps 15
+478: update_field gameplay race_bin_04/6_3_1_r_knockout TrafficLevel 100
+479: update_field gameplay race_bin_04/6_3_1_r_knockout CashValue 320000
+480: add_field gameplay race_bin_04/6_3_1_r_knockout NumLaps
+482: update_field gameplay race_bin_04/6_3_1_r_knockout NumLaps 15
+495: update_field gameplay race_bin_04/4_3_1_lapknockout CashValue 320000
+496: update_field gameplay race_bin_04/4_3_1_lapknockout TrafficLevel 100
+497: update_field gameplay race_bin_04/4_3_1_lapknockout NumLaps 15
+512: add_field gameplay race_bin_03/4_3_1_r_knockout NumLaps
+514: update_field gameplay race_bin_03/4_3_1_r_knockout CashValue 360000
+515: update_field gameplay race_bin_03/4_3_1_r_knockout TrafficLevel 100
+516: update_field gameplay race_bin_03/4_3_1_r_knockout NumLaps 15
+529: update_field gameplay race_bin_03/3_3_2_lap_ko CashValue 360000
+530: update_field gameplay race_bin_03/3_3_2_lap_ko TrafficLevel 100
+531: add_field gameplay race_bin_03/3_3_2_lap_ko NumLaps
+533: update_field gameplay race_bin_03/3_3_2_lap_ko NumLaps 15
+546: update_field gameplay race_bin_03/3_3_1_lap_ko CashValue 360000
+547: update_field gameplay race_bin_03/3_3_1_lap_ko TrafficLevel 100
+548: update_field gameplay race_bin_03/3_3_1_lap_ko NumLaps 15
+562: update_field gameplay race_bin_02/3_3_2_r_knockout CashValue 400000
+563: update_field gameplay race_bin_02/3_3_2_r_knockout TrafficLevel 100
+564: add_field gameplay race_bin_02/3_3_2_r_knockout NumLaps
+566: update_field gameplay race_bin_02/3_3_2_r_knockout NumLaps 15
+579: update_field gameplay race_bin_02/3_3_1_r_knockout CashValue 400000
+580: update_field gameplay race_bin_02/3_3_1_r_knockout TrafficLevel 100
+581: add_field gameplay race_bin_02/3_3_1_r_knockout NumLaps
+583: update_field gameplay race_bin_02/3_3_1_r_knockout NumLaps 15
+597: update_field gameplay race_bin_01/1_3_1_lapknockout CashValue 1000000
+598: update_field gameplay race_bin_01/1_3_1_lapknockout TrafficLevel 100
+599: add_field gameplay race_bin_01/1_3_1_lapknockout NumLaps
+601: add_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel
+602: update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 10
+603: update_field gameplay race_bin_01/1_3_1_lapknockout NumLaps 15
+631: add_field gameplay race_bin_01/1_3_1_lapknockout RollingStart
+632: update_field gameplay race_bin_01/1_3_1_lapknockout RollingStart True
+633: update_field gameplay race_bin_01/1_3_1_lapknockout RollingStart False
+634: add_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap
+635: update_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap 2
+636: update_field gameplay race_bin_15/15_2_1_sprint TrafficLevel 100
+637: update_field gameplay race_bin_14/15_2_1_sprint_reverse TrafficLevel 100
+638: update_field gameplay race_bin_14/14_2_4_sprint TrafficLevel 100
+639: update_field gameplay race_bin_14/14_2_3_cellphone_sprint TrafficLevel 100
+640: update_field gameplay race_bin_14/14_2_2_sprint TrafficLevel 100
+641: update_field gameplay race_bin_14/14_2_1_sprint TrafficLevel 100
+642: update_field gameplay race_bin_13/14_2_2_r_sprint TrafficLevel 100
+643: update_field gameplay race_bin_13/13_2_3_sprint TrafficLevel 100
+644: update_field gameplay race_bin_13/13_2_2_r_sprint TrafficLevel 100
+648: update_field gameplay race_bin_13/13_2_1_sprint TrafficLevel 100
+652: update_field gameplay race_bin_12/14_2_3_r_sprint TrafficLevel 100
+656: update_field gameplay race_bin_12/13_2_2_r_Sprint TrafficLevel 100
+661: update_field gameplay race_bin_12/12_2_1_sprint TrafficLevel 100
+662: update_field gameplay race_bin_11/12_2_1_r_sprint TrafficLevel 100
+664: update_field gameplay race_bin_11/11_2_1_sprint TrafficLevel 100
+671: update_field gameplay race_bin_10/11_2_1_r_sprint TrafficLevel 100
+676: update_field gameplay race_bin_10/10_2_2_sprint TrafficLevel 100
+682: update_field gameplay race_bin_10/10_2_1_sprint TrafficLevel 100
+683: update_field gameplay race_bin_09/9_2_2_sprint TrafficLevel 100
+691: update_field gameplay race_bin_09/9_2_1_sprint TrafficLevel 100
+692: update_field gameplay race_bin_08/8_2_2_sprint TrafficLevel 100
+700: update_field gameplay race_bin_08/8_2_1_sprint TrafficLevel 100
+701: update_field gameplay race_bin_07/8_2_1_r_sprint TrafficLevel 100
+711: update_field gameplay race_bin_07/7_2_3_p2p TrafficLevel 100
+712: update_field gameplay race_bin_07/7_2_2_p2p TrafficLevel 100
+714: update_field gameplay race_bin_07/7_2_1_sprint TrafficLevel 100
+723: update_field gameplay race_bin_06/6_2_3_sprint TrafficLevel 100
+733: update_field gameplay race_bin_06/6_2_2_p2p TrafficLevel 100
+743: update_field gameplay race_bin_06/6_2_1_p2p TrafficLevel 100
+753: update_field gameplay race_bin_05/5_2_3_sprint TrafficLevel 100
+765: update_field gameplay race_bin_05/5_2_2_sprint TrafficLevel 100
+767: add_field gameplay race_bin_05/5_2_1_sprint TrafficLevel
+768: update_field gameplay race_bin_05/5_2_1_sprint TrafficLevel 100
+779: update_field gameplay race_bin_05/5_2_1_r_sprint TrafficLevel 100
+780: update_field gameplay race_bin_04/7_2_2_r_sprint TrafficLevel 100
+793: update_field gameplay race_bin_03/7_2_1_r_sprint TrafficLevel 100
+807: update_field gameplay race_bin_03/4_2_1_r_sprint_race TrafficLevel 100
+821: update_field gameplay race_bin_03/3_2_2_sprint TrafficLevel 100
+822: update_field gameplay race_bin_03/3_2_1_sprint TrafficLevel 100
+836: update_field gameplay race_bin_02/9_2_2_r_sprint TrafficLevel 100
+837: update_field gameplay race_bin_02/3_2_1_r_sprint TrafficLevel 100
+851: update_field gameplay race_bin_02/2_2_1_sprint TrafficLevel 100
+852: update_field gameplay race_bin_01/2_2_1_r_sprint TrafficLevel 100
+866: update_field gameplay race_bin_01/1_2_4_sprint TrafficLevel 100
+880: update_field gameplay race_bin_01/1_2_3_sprint TrafficLevel 100
+881: update_field gameplay race_bin_01/1_2_2_sprint TrafficLevel 100
+895: update_field gameplay race_bin_01/1_2_1_sprint TrafficLevel 100
+910: add_field gameplay race_bin_15/15_2_1_sprint PursuitLevel
+911: add_field gameplay race_bin_15/15_2_1_sprint RollingStart
+912: update_field gameplay race_bin_15/15_2_1_sprint RollingStart True
+913: update_field gameplay race_bin_15/15_2_1_sprint PursuitLevel 10
+929: delete_field gameplay race_bin_15/15_2_1_sprint IntroMovie
+930: delete_field gameplay race_bin_15/15_2_1_sprint IntroNIS
+931: update_field gameplay race_bin_15/15_2_1_sprint RollingStart False
+932: update_field gameplay race_bin_15/15_2_1_sprint MaxHeatLevel 10
+933: delete_field gameplay race_bin_15/15_2_1_sprint RollingStart
+934: delete_field gameplay race_bin_15/15_2_1_sprint PursuitLevel
+935: add_field gameplay race_bin_15/15_2_1_sprint RollingStart
+936: update_field gameplay race_bin_15/15_2_1_sprint RollingStart True
+937: update_field gameplay race_bin_15/15_2_1_sprint RollingStart False
+965: update_field gameplay race_bin_13/13_5_2_speedtrap TrafficLevel 100
+969: update_field gameplay race_bin_13/13_5_1_speedtrap TrafficLevel 100
+973: update_field gameplay race_bin_12/12_5_1_speedtrap TrafficLevel 100
+978: update_field gameplay race_bin_11/11_5_2_speedtrap TrafficLevel 100
+983: update_field gameplay race_bin_11/11_5_1_speedtrap_race TrafficLevel 100
+989: update_field gameplay race_bin_10/11_5_1_r_speedtrap TrafficLevel 100
+995: update_field gameplay race_bin_09/9_5_3_speedtrap_race TrafficLevel 100
+996: update_field gameplay race_bin_09/9_5_2_speedtrap TrafficLevel 100
+1012: update_field gameplay race_bin_08/8_5_2_speedtrap TrafficLevel 100
+1019: update_field gameplay race_bin_08/8_5_1_speedtrap TrafficLevel 100
+1027: update_field gameplay race_bin_07/7_5_1_speedtrap TrafficLevel 100
+1038: update_field gameplay race_bin_06/6_5_3_speedtrap TrafficLevel 100
+1047: update_field gameplay race_bin_06/6_5_2_speedtraprace TrafficLevel 100
+1048: update_field gameplay race_bin_06/6_5_1_speedtraprace TrafficLevel 100
+1058: update_field gameplay race_bin_05/5_5_4_speedtrap TrafficLevel 100
+1060: update_field gameplay race_bin_05/5_5_3_speedtrap TrafficLevel 100
+1072: update_field gameplay race_bin_05/5_5_2_speedtrap TrafficLevel 100
+1083: update_field gameplay race_bin_05/5_5_1_speedtrap TrafficLevel 100
+1096: update_field gameplay race_bin_04/5_5_2_r_speedtrap TrafficLevel 100
+1109: update_field gameplay race_bin_04/4_5_3_speedtrap TrafficLevel 100
+1123: update_field gameplay race_bin_04/4_5_2_speedtrap TrafficLevel 100
+1124: update_field gameplay race_bin_04/4_5_1_speedtrap TrafficLevel 100
+1138: update_field gameplay race_bin_04/4_5_1_r_speedtrap TrafficLevel 100
+1140: update_field gameplay race_bin_03/3_5_2_speedtrap TrafficLevel 100
+1154: update_field gameplay race_bin_03/3_5_1_speedtrap TrafficLevel 100
+1168: update_field gameplay race_bin_02/5_5_1_r_speedtrap TrafficLevel 100
+1182: update_field gameplay race_bin_02/2_5_1_speedtrap TrafficLevel 100
+1196: update_field gameplay race_bin_01/1_5_3_speedtrap TrafficLevel 100
+1218: update_field gameplay race_bin_01/1_5_2_speedtraprace TrafficLevel 100
+1232: update_field gameplay race_bin_14/14_4_1_tollbooth TrafficLevel 100
+1233: update_field gameplay race_bin_13/13_4_2_tollbooth TrafficLevel 100
+1234: update_field gameplay race_bin_13/13_4_1_tollbooth TrafficLevel 100
+1235: add_field gameplay race_bin_14/14_4_1_tollbooth Opponents 3
+1239: add_field gameplay race_bin_13/13_4_2_tollbooth Opponents 5
+1248: add_field gameplay race_bin_13/13_4_1_tollbooth Opponents 5
+1257: update_field gameplay race_bin_12/12_4_2_tollbooth TrafficLevel 100
+1258: add_field gameplay race_bin_12/12_4_2_tollbooth Opponents 5
+1267: update_field gameplay race_bin_12/12_4_1_tollbooth TrafficLevel 100
+1268: add_field gameplay race_bin_12/12_4_1_tollbooth Opponents 5
+1277: update_field gameplay race_bin_11/11_4_2_tollbooth TrafficLevel 100
+1278: add_field gameplay race_bin_11/11_4_2_tollbooth Opponents 7
+1297: add_field gameplay race_bin_11/11_4_1_tollbooth Opponents 7
+1309: update_field gameplay race_bin_10/10_4_2_tollbooth TrafficLevel 100
+1310: add_field gameplay race_bin_10/10_4_2_tollbooth Opponents 7
+1322: add_field gameplay race_bin_10/10_4_1_tollbooth Opponents 7
+1323: update_field gameplay race_bin_10/10_4_1_tollbooth TrafficLevel 100
+1335: add_field gameplay race_bin_09/9_4_2_tollbooth Opponents 9
+1345: update_field gameplay race_bin_09/9_4_2_tollbooth TrafficLevel 100
+1352: update_field gameplay race_bin_09/9_4_1_tollbooth TrafficLevel 100
+1353: add_field gameplay race_bin_09/9_4_1_tollbooth Opponents 9
+1369: update_field gameplay race_bin_08/9_4_1_r_tollbooth TrafficLevel 100
+1370: add_field gameplay race_bin_08/9_4_1_r_tollbooth Opponents 9
+1386: add_field gameplay race_bin_08/10_4_2_r_tollbooth Opponents 9
+1387: update_field gameplay race_bin_08/10_4_2_r_tollbooth TrafficLevel 100
+1403: add_field gameplay race_bin_07/7_4_3_tollbooth Opponents 11
+1404: update_field gameplay race_bin_07/7_4_3_tollbooth TrafficLevel 100
+1423: add_field gameplay race_bin_07/7_4_2_tollbooth Opponents 11
+1424: update_field gameplay race_bin_07/7_4_2_tollbooth TrafficLevel 100
+1443: add_field gameplay race_bin_07/7_4_1_tollbooth Opponents 11
+1444: update_field gameplay race_bin_07/7_4_1_tollbooth TrafficLevel 100
+1463: add_field gameplay race_bin_06/7_4_1_r_tollbooth Opponents 29
+1464: update_field gameplay race_bin_06/7_4_1_r_tollbooth TrafficLevel 100
+1484: add_field gameplay race_bin_06/6_4_2_tollbooth Opponents 11
+1503: update_field gameplay race_bin_06/6_4_2_tollbooth TrafficLevel 100
+1504: add_field gameplay race_bin_06/6_4_1_tollbooth Opponents 11
+1523: update_field gameplay race_bin_06/6_4_1_tollbooth TrafficLevel 100
+1524: update_field gameplay race_bin_05/7_4_2_r_tollbooth TimeLimit 100
+1525: add_field gameplay race_bin_05/7_4_2_r_tollbooth Opponents 13
+1547: copy_fields gameplay race_bin_05/7_4_2_r_tollbooth race_bin_05/6_4_1_r_tollbooth optional
+1548: delete_field gameplay race_bin_05/6_4_1_r_tollbooth Shortcuts
+1549: copy_fields gameplay race_bin_05/6_4_1_r_tollbooth race_bin_05/5_4_1_tollbooth optional
+1550: update_field gameplay race_bin_05/6_4_1_r_tollbooth TrafficLevel 100
+1551: update_field gameplay race_bin_05/5_4_1_tollbooth TrafficLevel 100
+1552: add_field gameplay race_bin_04/7_4_3_r_tollbooth Opponents 13
+1553: update_field gameplay race_bin_04/7_4_3_r_tollbooth TrafficLevel 100
+1575: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/5_4_1_r_tollbooth optional
+1576: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/4_4_1_tollbooth optional
+1577: update_field gameplay race_bin_04/4_4_1_tollbooth TrafficLevel 100
+1578: update_field gameplay race_bin_04/5_4_1_r_tollbooth TrafficLevel 100
+1579: add_field gameplay race_bin_03/4_4_1_r_tollbooth Opponents 15
+1580: update_field gameplay race_bin_03/4_4_1_r_tollbooth TrafficLevel 100
+1596: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_tollbooth optional
+1597: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_r_tollbooth optional
+1598: update_field gameplay race_bin_03/3_4_1_tollbooth TrafficLevel 100
+1599: update_field gameplay race_bin_03/3_4_1_r_tollbooth TrafficLevel 100
+1600: add_field gameplay race_bin_02/2_4_3_tollbooth Opponents 15
+1601: update_field gameplay race_bin_02/2_4_3_tollbooth TrafficLevel 100
+1657: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_2_tollbooth optional
+1658: update_field gameplay race_bin_02/2_4_2_tollbooth TrafficLevel 100
+1659: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_1_tollbooth optional
+1660: add_field gameplay race_bin_01/2_4_3_r_tollbooth Opponents 15
+1661: update_field gameplay race_bin_01/2_4_3_r_tollbooth TrafficLevel 100
+1662: update_field gameplay race_bin_02/2_4_1_tollbooth TrafficLevel 100
+1688: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_2_tollbooth optional
+1689: update_field gameplay race_bin_01/1_4_2_tollbooth TrafficLevel 100
+1690: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_1_tollbooth optional
+1691: update_field gameplay race_bin_01/1_4_1_tollbooth TrafficLevel 100
+1692: update_field gameplay race_bin_12/12_7_3_drag TrafficLevel 100
+1693: update_field gameplay race_bin_12/12_7_3_drag TrafficLevel 0
+1834: update_field gameplay race_bin_11/11_2_1_sprint Name race_bin_11/11_2_1_sprint
+1843: update_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps 10
+1846: update_field gameplay race_bin_01/1_3_1_lapknockout NumLaps 10
+1847: update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 5
+1849: update_field gameplay race_bin_02/3_3_1_r_knockout NumLaps 10
+1851: update_field gameplay race_bin_02/3_3_2_r_knockout NumLaps 10
+1853: update_field gameplay race_bin_03/3_3_1_lap_ko NumLaps 10
+1855: update_field gameplay race_bin_03/3_3_2_lap_ko NumLaps 10
+1857: update_field gameplay race_bin_03/4_3_1_r_knockout NumLaps 10
+1859: update_field gameplay race_bin_04/4_3_1_lapknockout NumLaps 10
+1861: update_field gameplay race_bin_04/6_3_1_r_knockout NumLaps 10
+1863: update_field gameplay race_bin_05/5_3_1_lap_ko NumLaps 10
+1866: update_field gameplay race_bin_06/6_3_1_lap_ko NumLaps 10
+1867: update_field gameplay race_bin_07/7_3_1_lap_ko NumLaps 10
+1869: update_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps 10
+1872: update_field gameplay race_bin_08/8_3_1_lap_ko NumLaps 10
+1873: update_field gameplay race_bin_09/9_3_1_lapknockout NumLaps 10
+1875: update_field gameplay race_bin_10/10_3_1_knockout NumLaps 10
+1877: update_field gameplay race_bin_10/10_3_2_knockout NumLaps 10
+1879: update_field gameplay race_bin_13/13_3_1_lap_ko NumLaps 10
+1881: update_field gameplay race_bin_13/13_3_1_r_knockout NumLaps 10
+1883: update_field gameplay race_bin_13/13_3_2_lap_ko NumLaps 10
+1885: update_field gameplay race_bin_15/15_3_1_knockout NumLaps 10
+1932: update_field gameplay race_bin_04/4_3_1_lapknockout MaxHeatLevel 5
+1933: update_field gameplay race_bin_06/6_3_1_lap_ko MaxHeatLevel 5
+1934: update_field gameplay race_bin_13/13_3_1_lap_ko MaxHeatLevel 5
+1935: update_field gameplay race_bin_13/13_3_1_r_knockout MaxHeatLevel 5
+1936: update_field gameplay race_bin_04/4_1_1_circuit MaxHeatLevel 5
+1937: update_field gameplay race_bin_06/6_1_1_circuit MaxHeatLevel 5
+1938: update_field gameplay race_bin_12/12_1_1_circuit MaxHeatLevel 5
+1939: update_field gameplay race_bin_12/12_1_2_circuit MaxHeatLevel 5
+1940: update_field gameplay race_bin_14/14_1_1_circuit MaxHeatLevel 5
+1941: update_field gameplay race_bin_14/14_3_1_lapknockout NumLaps 10
+1942: delete_field gameplay race_bin_02/2_4_1_tollbooth BarrierExemptions
+1943: delete_field gameplay race_bin_02/2_4_2_tollbooth BarrierExemptions
+FINAL NULL ASSIGNMENTS (BEFORE FINAL RESIZE FILTER)
+DUPLICATED RESIZE TARGETS
+race_bin_01/1_1_1_circuit
+race_bin_15/15_2_1_sprint
+16_2_3_sprint
+race_bin_15/15_1_1_circuit
+race_bin_14/14_1_2_cellphone_circuit
+race_bin_14/14_1_1_circuit
+race_bin_07/7_1_1_circuit
+race_bin_07/16_1_1_r_circuit
+race_bin_06/14_3_1_r_lap_ko
+race_bin_05/5_1_1_circuit
+race_bin_04/9_1_1_r_circuit
+race_bin_04/4_1_1_circuit
+race_bin_03/3_1_1_circuit
+race_bin_02/5_1_1_r_Circuit
+race_bin_02/2_1_1_r_circuit
+race_bin_02/2_1_1_circuit
+race_bin_15/15_3_1_knockout
+race_bin_13/13_3_2_lap_ko
+race_bin_13/13_3_1_r_knockout
+race_bin_13/13_3_1_lap_ko
+race_bin_10/10_3_2_knockout
+race_bin_10/10_3_1_knockout
+race_bin_09/9_3_1_lapknockout
+race_bin_08/8_3_1_lap_ko
+race_bin_08/13_3_1_r_lap_ko
+race_bin_07/7_3_1_lap_ko
+race_bin_06/6_3_1_lap_ko
+race_bin_05/5_3_1_lap_ko
+race_bin_04/6_3_1_r_knockout
+race_bin_04/4_3_1_lapknockout
+race_bin_03/4_3_1_r_knockout
+race_bin_03/3_3_2_lap_ko
+race_bin_03/3_3_1_lap_ko
+race_bin_02/3_3_2_r_knockout
+race_bin_02/3_3_1_r_knockout
+race_bin_01/1_3_1_lapknockout
+race_bin_12/13_2_2_r_Sprint
+race_bin_05/5_2_3_sprint
+race_bin_05/5_2_1_sprint
+race_bin_04/7_2_2_r_sprint
+race_bin_03/7_2_1_r_sprint
+race_bin_03/4_2_1_r_sprint_race
+race_bin_03/3_2_1_sprint
+race_bin_02/3_2_1_r_sprint
+race_bin_01/2_2_1_r_sprint
+race_bin_01/1_2_4_sprint
+race_bin_01/1_2_2_sprint
+race_bin_01/1_2_1_sprint
+race_bin_05/5_5_3_speedtrap
+race_bin_05/5_5_2_speedtrap
+race_bin_05/5_5_1_speedtrap
+race_bin_04/5_5_2_r_speedtrap
+race_bin_04/4_5_3_speedtrap
+race_bin_04/4_5_1_speedtrap
+race_bin_03/3_5_2_speedtrap
+race_bin_03/3_5_1_speedtrap
+race_bin_02/5_5_1_r_speedtrap
+race_bin_02/2_5_1_speedtrap
+race_bin_01/1_5_3_speedtrap
+race_bin_01/1_5_1_speedtraprace
+race_bin_04/4_7_2_drag
+race_bin_03/3_7_3_drag
+race_bin_03/3_7_2_drag
+race_bin_02/2_7_1_drag
+race_bin_01/1_7_1_r_drag
+race_bin_01/1_7_1_drag

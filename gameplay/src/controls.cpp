@@ -53,6 +53,16 @@ constexpr int kVehicle_GetTunings = 0xCC;            // vtable slot: const Physi
 
 constexpr uintptr_t kDoFetchInput = 0x6E8AC0;       // void SimSystem::DoFetchInput(IInputPlayer*)
 constexpr uintptr_t kReceiveAction = 0x6440B0;      // bool ActionQueue::ReceiveAction(const ActionData&)
+constexpr uintptr_t kCallAutoBrake = 0x6A8D92;      // InputPlayer::FetchInput, after DoAutoReverse
+constexpr uintptr_t kAutoBrake = 0x69CD70;          // void __thiscall(float gas, float brake), ret 8
+bool s_modFetch = false;
+
+void __fastcall Hook_AutoBrake(void* ip, void*, float gas, float brake) {
+    // Only omit the stock idle/low-speed brake during our input fetch. The original pedal
+    // processing has already run; do not write brake values or touch engine braking.
+    if (!s_modFetch)
+        ((void(__thiscall*)(void*, float, float))kAutoBrake)(ip, gas, brake);
+}
 constexpr int kIP_Queue = 0x10;                     // IInputPlayer: ActionQueue
 constexpr int kAQ_Port = 0x268;                     // ActionQueue: device index (-1 = none)
 
@@ -233,7 +243,10 @@ void __cdecl Hook_DoFetchInput(void* ip) {
         return;
     }
     Inject(ip);
+    bool previous = s_modFetch;
+    s_modFetch = true;
     ((void(__thiscall*)(void*))(*(void***)ip)[4])(ip);   // IInputPlayer::FetchInput
+    s_modFetch = previous;
 }
 
 }  // namespace
@@ -244,6 +257,12 @@ void Controls_Install() {
         return;
     }
     WriteRel(kDoFetchInput, 0xE9, (void*)&Hook_DoFetchInput);
+    if (Expect(kCallAutoBrake, {0xE8, 0xD9, 0x3F, 0xFF, 0xFF})) {
+        WriteRel(kCallAutoBrake, 0xE8, (void*)&Hook_AutoBrake);
+        Log("controls: stock automatic brake bypassed for mod input (classic input unchanged)");
+    } else {
+        Log("controls: unexpected automatic brake call, left unchanged");
+    }
     if (Expect(kSteerTypePush, {0x53, 0x55, 0x8B, 0xCE, 0xE8}) &&
         kCallMaxSteering + 5 + *(const int32_t*)(kCallMaxSteering + 1) == kCalculateMaxSteering)
     {

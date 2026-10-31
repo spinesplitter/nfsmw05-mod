@@ -1,0 +1,2525 @@
+﻿{
+    "lines":  1943,
+    "commands":  {
+                     "resize_field":  201,
+                     "copy_fields":  10,
+                     "add_field":  45,
+                     "update_field":  1680,
+                     "delete_field":  7
+                 },
+    "resizes":  [
+                    {
+                        "race":  "race_bin_01/1_1_1_circuit",
+                        "count":  15,
+                        "line":  1
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  15,
+                        "line":  14
+                    },
+                    {
+                        "race":  "16_2_3_sprint",
+                        "count":  2,
+                        "line":  29
+                    },
+                    {
+                        "race":  "16_1_1_circuit",
+                        "count":  15,
+                        "line":  31
+                    },
+                    {
+                        "race":  "race_bin_15/15_1_1_circuit",
+                        "count":  15,
+                        "line":  46
+                    },
+                    {
+                        "race":  "race_bin_14/14_3_1_lapknockout",
+                        "count":  15,
+                        "line":  59
+                    },
+                    {
+                        "race":  "16_2_3_sprint",
+                        "count":  1,
+                        "line":  76
+                    },
+                    {
+                        "race":  "race_bin_14/14_1_2_cellphone_circuit",
+                        "count":  15,
+                        "line":  79
+                    },
+                    {
+                        "race":  "race_bin_14/14_1_1_circuit",
+                        "count":  15,
+                        "line":  92
+                    },
+                    {
+                        "race":  "race_bin_15/15_1_1_circuit",
+                        "count":  3,
+                        "line":  93
+                    },
+                    {
+                        "race":  "race_bin_14/14_1_2_cellphone_circuit",
+                        "count":  5,
+                        "line":  94
+                    },
+                    {
+                        "race":  "race_bin_14/14_1_1_circuit",
+                        "count":  5,
+                        "line":  95
+                    },
+                    {
+                        "race":  "race_bin_12/12_1_1_circuit",
+                        "count":  7,
+                        "line":  98
+                    },
+                    {
+                        "race":  "race_bin_11/11_1_1_circuit",
+                        "count":  9,
+                        "line":  104
+                    },
+                    {
+                        "race":  "race_bin_10/11_1_2_r_circuit",
+                        "count":  9,
+                        "line":  111
+                    },
+                    {
+                        "race":  "race_bin_09/9_1_1_circuit",
+                        "count":  11,
+                        "line":  118
+                    },
+                    {
+                        "race":  "race_bin_09/12_1_1_r_circuit",
+                        "count":  11,
+                        "line":  127
+                    },
+                    {
+                        "race":  "race_bin_07/7_1_1_circuit",
+                        "count":  13,
+                        "line":  136
+                    },
+                    {
+                        "race":  "race_bin_07/16_1_1_r_circuit",
+                        "count":  13,
+                        "line":  147
+                    },
+                    {
+                        "race":  "race_bin_06/14_3_1_r_lap_ko",
+                        "count":  15,
+                        "line":  158
+                    },
+                    {
+                        "race":  "race_bin_05/5_1_1_circuit",
+                        "count":  15,
+                        "line":  175
+                    },
+                    {
+                        "race":  "race_bin_04/9_1_1_r_circuit",
+                        "count":  15,
+                        "line":  190
+                    },
+                    {
+                        "race":  "race_bin_04/4_1_1_circuit",
+                        "count":  15,
+                        "line":  204
+                    },
+                    {
+                        "race":  "race_bin_03/3_1_1_circuit",
+                        "count":  15,
+                        "line":  220
+                    },
+                    {
+                        "race":  "race_bin_02/5_1_1_r_Circuit",
+                        "count":  15,
+                        "line":  234
+                    },
+                    {
+                        "race":  "race_bin_02/2_1_1_r_circuit",
+                        "count":  15,
+                        "line":  249
+                    },
+                    {
+                        "race":  "race_bin_02/2_1_1_circuit",
+                        "count":  15,
+                        "line":  263
+                    },
+                    {
+                        "race":  "race_bin_15/15_3_1_knockout",
+                        "count":  15,
+                        "line":  280
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_2_lap_ko",
+                        "count":  15,
+                        "line":  299
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_1_r_knockout",
+                        "count":  15,
+                        "line":  315
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_1_lap_ko",
+                        "count":  15,
+                        "line":  330
+                    },
+                    {
+                        "race":  "race_bin_10/10_3_2_knockout",
+                        "count":  15,
+                        "line":  348
+                    },
+                    {
+                        "race":  "race_bin_10/10_3_1_knockout",
+                        "count":  15,
+                        "line":  364
+                    },
+                    {
+                        "race":  "race_bin_09/9_3_1_lapknockout",
+                        "count":  15,
+                        "line":  380
+                    },
+                    {
+                        "race":  "race_bin_08/8_3_1_lap_ko",
+                        "count":  15,
+                        "line":  398
+                    },
+                    {
+                        "race":  "race_bin_08/13_3_1_r_lap_ko",
+                        "count":  15,
+                        "line":  415
+                    },
+                    {
+                        "race":  "race_bin_07/7_3_1_lap_ko",
+                        "count":  15,
+                        "line":  432
+                    },
+                    {
+                        "race":  "race_bin_06/6_3_1_lap_ko",
+                        "count":  15,
+                        "line":  448
+                    },
+                    {
+                        "race":  "race_bin_05/5_3_1_lap_ko",
+                        "count":  15,
+                        "line":  464
+                    },
+                    {
+                        "race":  "race_bin_04/6_3_1_r_knockout",
+                        "count":  15,
+                        "line":  481
+                    },
+                    {
+                        "race":  "race_bin_04/4_3_1_lapknockout",
+                        "count":  15,
+                        "line":  498
+                    },
+                    {
+                        "race":  "race_bin_03/4_3_1_r_knockout",
+                        "count":  15,
+                        "line":  513
+                    },
+                    {
+                        "race":  "race_bin_03/3_3_2_lap_ko",
+                        "count":  15,
+                        "line":  532
+                    },
+                    {
+                        "race":  "race_bin_03/3_3_1_lap_ko",
+                        "count":  15,
+                        "line":  549
+                    },
+                    {
+                        "race":  "race_bin_02/3_3_2_r_knockout",
+                        "count":  15,
+                        "line":  565
+                    },
+                    {
+                        "race":  "race_bin_02/3_3_1_r_knockout",
+                        "count":  15,
+                        "line":  582
+                    },
+                    {
+                        "race":  "race_bin_01/1_3_1_lapknockout",
+                        "count":  15,
+                        "line":  600
+                    },
+                    {
+                        "race":  "race_bin_01/1_3_1_lapknockout",
+                        "count":  29,
+                        "line":  604
+                    },
+                    {
+                        "race":  "race_bin_13/13_2_2_r_sprint",
+                        "count":  5,
+                        "line":  645
+                    },
+                    {
+                        "race":  "race_bin_13/13_2_1_sprint",
+                        "count":  5,
+                        "line":  649
+                    },
+                    {
+                        "race":  "race_bin_12/14_2_3_r_sprint",
+                        "count":  5,
+                        "line":  653
+                    },
+                    {
+                        "race":  "race_bin_12/13_2_2_r_Sprint",
+                        "count":  15,
+                        "line":  657
+                    },
+                    {
+                        "race":  "race_bin_12/13_2_2_r_Sprint",
+                        "count":  5,
+                        "line":  658
+                    },
+                    {
+                        "race":  "race_bin_11/12_2_1_r_sprint",
+                        "count":  7,
+                        "line":  663
+                    },
+                    {
+                        "race":  "race_bin_11/11_2_1_sprint",
+                        "count":  7,
+                        "line":  665
+                    },
+                    {
+                        "race":  "race_bin_10/11_2_1_r_sprint",
+                        "count":  7,
+                        "line":  670
+                    },
+                    {
+                        "race":  "race_bin_10/10_2_2_sprint",
+                        "count":  7,
+                        "line":  677
+                    },
+                    {
+                        "race":  "race_bin_09/9_2_2_sprint",
+                        "count":  9,
+                        "line":  684
+                    },
+                    {
+                        "race":  "race_bin_08/8_2_2_sprint",
+                        "count":  9,
+                        "line":  693
+                    },
+                    {
+                        "race":  "race_bin_07/8_2_1_r_sprint",
+                        "count":  11,
+                        "line":  702
+                    },
+                    {
+                        "race":  "race_bin_07/7_2_1_sprint",
+                        "count":  11,
+                        "line":  713
+                    },
+                    {
+                        "race":  "race_bin_06/6_2_3_sprint",
+                        "count":  11,
+                        "line":  724
+                    },
+                    {
+                        "race":  "race_bin_06/6_2_2_p2p",
+                        "count":  11,
+                        "line":  734
+                    },
+                    {
+                        "race":  "race_bin_06/6_2_1_p2p",
+                        "count":  11,
+                        "line":  744
+                    },
+                    {
+                        "race":  "race_bin_05/5_2_3_sprint",
+                        "count":  13,
+                        "line":  754
+                    },
+                    {
+                        "race":  "race_bin_05/5_2_1_sprint",
+                        "count":  13,
+                        "line":  766
+                    },
+                    {
+                        "race":  "race_bin_04/7_2_2_r_sprint",
+                        "count":  13,
+                        "line":  781
+                    },
+                    {
+                        "race":  "race_bin_03/7_2_1_r_sprint",
+                        "count":  15,
+                        "line":  794
+                    },
+                    {
+                        "race":  "race_bin_03/4_2_1_r_sprint_race",
+                        "count":  15,
+                        "line":  808
+                    },
+                    {
+                        "race":  "race_bin_03/3_2_1_sprint",
+                        "count":  15,
+                        "line":  823
+                    },
+                    {
+                        "race":  "race_bin_02/3_2_1_r_sprint",
+                        "count":  15,
+                        "line":  838
+                    },
+                    {
+                        "race":  "race_bin_01/2_2_1_r_sprint",
+                        "count":  15,
+                        "line":  853
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_4_sprint",
+                        "count":  15,
+                        "line":  867
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_2_sprint",
+                        "count":  15,
+                        "line":  882
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_1_sprint",
+                        "count":  15,
+                        "line":  896
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  29,
+                        "line":  909
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  3,
+                        "line":  928
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  19,
+                        "line":  938
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  16,
+                        "line":  955
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  15,
+                        "line":  956
+                    },
+                    {
+                        "race":  "race_bin_15/15_2_1_sprint",
+                        "count":  3,
+                        "line":  957
+                    },
+                    {
+                        "race":  "race_bin_14/14_2_3_cellphone_sprint",
+                        "count":  5,
+                        "line":  958
+                    },
+                    {
+                        "race":  "race_bin_14/14_2_2_sprint",
+                        "count":  5,
+                        "line":  961
+                    },
+                    {
+                        "race":  "race_bin_14/14_2_1_sprint",
+                        "count":  5,
+                        "line":  962
+                    },
+                    {
+                        "race":  "race_bin_13/13_5_2_speedtrap",
+                        "count":  5,
+                        "line":  966
+                    },
+                    {
+                        "race":  "race_bin_13/13_5_1_speedtrap",
+                        "count":  5,
+                        "line":  970
+                    },
+                    {
+                        "race":  "race_bin_12/12_5_1_speedtrap",
+                        "count":  5,
+                        "line":  974
+                    },
+                    {
+                        "race":  "race_bin_11/11_5_2_speedtrap",
+                        "count":  7,
+                        "line":  977
+                    },
+                    {
+                        "race":  "race_bin_11/11_5_1_speedtrap_race",
+                        "count":  7,
+                        "line":  984
+                    },
+                    {
+                        "race":  "race_bin_10/11_5_1_r_speedtrap",
+                        "count":  7,
+                        "line":  990
+                    },
+                    {
+                        "race":  "race_bin_09/9_5_2_speedtrap",
+                        "count":  9,
+                        "line":  997
+                    },
+                    {
+                        "race":  "race_bin_09/9_5_1_speedtrap",
+                        "count":  9,
+                        "line":  1004
+                    },
+                    {
+                        "race":  "race_bin_08/8_5_2_speedtrap",
+                        "count":  9,
+                        "line":  1011
+                    },
+                    {
+                        "race":  "race_bin_08/8_5_1_speedtrap",
+                        "count":  9,
+                        "line":  1020
+                    },
+                    {
+                        "race":  "race_bin_07/7_5_1_speedtrap",
+                        "count":  11,
+                        "line":  1028
+                    },
+                    {
+                        "race":  "race_bin_06/6_5_3_speedtrap",
+                        "count":  11,
+                        "line":  1037
+                    },
+                    {
+                        "race":  "race_bin_06/6_5_1_speedtraprace",
+                        "count":  11,
+                        "line":  1049
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_3_speedtrap",
+                        "count":  13,
+                        "line":  1059
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_2_speedtrap",
+                        "count":  13,
+                        "line":  1071
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_1_speedtrap",
+                        "count":  13,
+                        "line":  1084
+                    },
+                    {
+                        "race":  "race_bin_04/5_5_2_r_speedtrap",
+                        "count":  15,
+                        "line":  1095
+                    },
+                    {
+                        "race":  "race_bin_04/4_5_3_speedtrap",
+                        "count":  15,
+                        "line":  1110
+                    },
+                    {
+                        "race":  "race_bin_04/4_5_1_speedtrap",
+                        "count":  15,
+                        "line":  1125
+                    },
+                    {
+                        "race":  "race_bin_03/3_5_2_speedtrap",
+                        "count":  15,
+                        "line":  1139
+                    },
+                    {
+                        "race":  "race_bin_03/3_5_1_speedtrap",
+                        "count":  15,
+                        "line":  1153
+                    },
+                    {
+                        "race":  "race_bin_02/5_5_1_r_speedtrap",
+                        "count":  15,
+                        "line":  1167
+                    },
+                    {
+                        "race":  "race_bin_02/2_5_1_speedtrap",
+                        "count":  15,
+                        "line":  1181
+                    },
+                    {
+                        "race":  "race_bin_01/1_5_3_speedtrap",
+                        "count":  15,
+                        "line":  1195
+                    },
+                    {
+                        "race":  "race_bin_01/1_5_1_speedtraprace",
+                        "count":  15,
+                        "line":  1219
+                    },
+                    {
+                        "race":  "race_bin_06/7_4_1_r_tollbooth",
+                        "count":  11,
+                        "line":  1465
+                    },
+                    {
+                        "race":  "race_bin_12/12_7_3_drag",
+                        "count":  5,
+                        "line":  1694
+                    },
+                    {
+                        "race":  "race_bin_11/11_7_1_drag",
+                        "count":  7,
+                        "line":  1697
+                    },
+                    {
+                        "race":  "race_bin_10/10_7_1_r_drag",
+                        "count":  7,
+                        "line":  1702
+                    },
+                    {
+                        "race":  "race_bin_10/10_7_1_drag",
+                        "count":  7,
+                        "line":  1707
+                    },
+                    {
+                        "race":  "race_bin_09/9_7_1_r_drag",
+                        "count":  9,
+                        "line":  1712
+                    },
+                    {
+                        "race":  "race_bin_09/9_7_1_drag",
+                        "count":  9,
+                        "line":  1719
+                    },
+                    {
+                        "race":  "race_bin_07/7_7_4_drag",
+                        "count":  11,
+                        "line":  1726
+                    },
+                    {
+                        "race":  "race_bin_07/7_7_1_drag",
+                        "count":  11,
+                        "line":  1735
+                    },
+                    {
+                        "race":  "race_bin_06/7_7_1_r_drag",
+                        "count":  11,
+                        "line":  1744
+                    },
+                    {
+                        "race":  "race_bin_04/4_7_2_drag",
+                        "count":  13,
+                        "line":  1753
+                    },
+                    {
+                        "race":  "race_bin_03/3_7_3_drag",
+                        "count":  15,
+                        "line":  1764
+                    },
+                    {
+                        "race":  "race_bin_03/3_7_2_drag",
+                        "count":  15,
+                        "line":  1777
+                    },
+                    {
+                        "race":  "race_bin_02/2_7_1_drag",
+                        "count":  15,
+                        "line":  1790
+                    },
+                    {
+                        "race":  "race_bin_01/1_7_1_r_drag",
+                        "count":  15,
+                        "line":  1803
+                    },
+                    {
+                        "race":  "race_bin_01/1_7_1_drag",
+                        "count":  15,
+                        "line":  1816
+                    },
+                    {
+                        "race":  "race_bin_01/1_3_1_lapknockout",
+                        "count":  15,
+                        "line":  1829
+                    },
+                    {
+                        "race":  "race_bin_01/1_1_1_circuit",
+                        "count":  11,
+                        "line":  1835
+                    },
+                    {
+                        "race":  "race_bin_02/2_1_1_circuit",
+                        "count":  11,
+                        "line":  1836
+                    },
+                    {
+                        "race":  "race_bin_02/2_1_1_r_circuit",
+                        "count":  11,
+                        "line":  1837
+                    },
+                    {
+                        "race":  "race_bin_02/5_1_1_r_Circuit",
+                        "count":  11,
+                        "line":  1838
+                    },
+                    {
+                        "race":  "race_bin_03/3_1_1_circuit",
+                        "count":  11,
+                        "line":  1839
+                    },
+                    {
+                        "race":  "race_bin_04/4_1_1_circuit",
+                        "count":  11,
+                        "line":  1840
+                    },
+                    {
+                        "race":  "race_bin_04/9_1_1_r_circuit",
+                        "count":  11,
+                        "line":  1841
+                    },
+                    {
+                        "race":  "race_bin_05/5_1_1_circuit",
+                        "count":  11,
+                        "line":  1842
+                    },
+                    {
+                        "race":  "race_bin_07/16_1_1_r_circuit",
+                        "count":  11,
+                        "line":  1844
+                    },
+                    {
+                        "race":  "race_bin_07/7_1_1_circuit",
+                        "count":  11,
+                        "line":  1845
+                    },
+                    {
+                        "race":  "race_bin_01/1_3_1_lapknockout",
+                        "count":  11,
+                        "line":  1848
+                    },
+                    {
+                        "race":  "race_bin_02/3_3_1_r_knockout",
+                        "count":  11,
+                        "line":  1850
+                    },
+                    {
+                        "race":  "race_bin_02/3_3_2_r_knockout",
+                        "count":  11,
+                        "line":  1852
+                    },
+                    {
+                        "race":  "race_bin_03/3_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1854
+                    },
+                    {
+                        "race":  "race_bin_03/3_3_2_lap_ko",
+                        "count":  11,
+                        "line":  1856
+                    },
+                    {
+                        "race":  "race_bin_03/4_3_1_r_knockout",
+                        "count":  11,
+                        "line":  1858
+                    },
+                    {
+                        "race":  "race_bin_04/4_3_1_lapknockout",
+                        "count":  11,
+                        "line":  1860
+                    },
+                    {
+                        "race":  "race_bin_04/6_3_1_r_knockout",
+                        "count":  11,
+                        "line":  1862
+                    },
+                    {
+                        "race":  "race_bin_05/5_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1864
+                    },
+                    {
+                        "race":  "race_bin_06/6_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1865
+                    },
+                    {
+                        "race":  "race_bin_07/7_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1868
+                    },
+                    {
+                        "race":  "race_bin_08/13_3_1_r_lap_ko",
+                        "count":  11,
+                        "line":  1870
+                    },
+                    {
+                        "race":  "race_bin_08/8_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1871
+                    },
+                    {
+                        "race":  "race_bin_09/9_3_1_lapknockout",
+                        "count":  11,
+                        "line":  1874
+                    },
+                    {
+                        "race":  "race_bin_10/10_3_1_knockout",
+                        "count":  11,
+                        "line":  1876
+                    },
+                    {
+                        "race":  "race_bin_10/10_3_2_knockout",
+                        "count":  11,
+                        "line":  1878
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_1_lap_ko",
+                        "count":  11,
+                        "line":  1880
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_1_r_knockout",
+                        "count":  11,
+                        "line":  1882
+                    },
+                    {
+                        "race":  "race_bin_13/13_3_2_lap_ko",
+                        "count":  11,
+                        "line":  1884
+                    },
+                    {
+                        "race":  "race_bin_15/15_3_1_knockout",
+                        "count":  11,
+                        "line":  1886
+                    },
+                    {
+                        "race":  "race_bin_06/14_3_1_r_lap_ko",
+                        "count":  11,
+                        "line":  1887
+                    },
+                    {
+                        "race":  "race_bin_01/1_7_1_drag",
+                        "count":  11,
+                        "line":  1888
+                    },
+                    {
+                        "race":  "race_bin_01/1_7_1_r_drag",
+                        "count":  11,
+                        "line":  1889
+                    },
+                    {
+                        "race":  "race_bin_02/2_7_1_drag",
+                        "count":  11,
+                        "line":  1890
+                    },
+                    {
+                        "race":  "race_bin_03/3_7_2_drag",
+                        "count":  11,
+                        "line":  1891
+                    },
+                    {
+                        "race":  "race_bin_03/3_7_3_drag",
+                        "count":  11,
+                        "line":  1892
+                    },
+                    {
+                        "race":  "race_bin_04/4_7_2_drag",
+                        "count":  11,
+                        "line":  1893
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_1_sprint",
+                        "count":  11,
+                        "line":  1894
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_2_sprint",
+                        "count":  11,
+                        "line":  1895
+                    },
+                    {
+                        "race":  "race_bin_01/1_2_4_sprint",
+                        "count":  11,
+                        "line":  1896
+                    },
+                    {
+                        "race":  "race_bin_01/2_2_1_r_sprint",
+                        "count":  11,
+                        "line":  1897
+                    },
+                    {
+                        "race":  "race_bin_02/3_2_1_r_sprint",
+                        "count":  11,
+                        "line":  1898
+                    },
+                    {
+                        "race":  "race_bin_03/3_2_1_sprint",
+                        "count":  11,
+                        "line":  1899
+                    },
+                    {
+                        "race":  "race_bin_03/4_2_1_r_sprint_race",
+                        "count":  11,
+                        "line":  1900
+                    },
+                    {
+                        "race":  "race_bin_03/7_2_1_r_sprint",
+                        "count":  11,
+                        "line":  1901
+                    },
+                    {
+                        "race":  "race_bin_04/7_2_2_r_sprint",
+                        "count":  11,
+                        "line":  1902
+                    },
+                    {
+                        "race":  "race_bin_05/5_2_1_sprint",
+                        "count":  11,
+                        "line":  1903
+                    },
+                    {
+                        "race":  "race_bin_05/5_2_3_sprint",
+                        "count":  11,
+                        "line":  1904
+                    },
+                    {
+                        "race":  "race_bin_01/1_5_1_speedtraprace",
+                        "count":  11,
+                        "line":  1905
+                    },
+                    {
+                        "race":  "race_bin_01/1_5_3_speedtrap",
+                        "count":  11,
+                        "line":  1906
+                    },
+                    {
+                        "race":  "race_bin_02/2_5_1_speedtrap",
+                        "count":  11,
+                        "line":  1907
+                    },
+                    {
+                        "race":  "race_bin_02/5_5_1_r_speedtrap",
+                        "count":  11,
+                        "line":  1908
+                    },
+                    {
+                        "race":  "race_bin_03/3_5_1_speedtrap",
+                        "count":  11,
+                        "line":  1909
+                    },
+                    {
+                        "race":  "race_bin_03/3_5_2_speedtrap",
+                        "count":  11,
+                        "line":  1910
+                    },
+                    {
+                        "race":  "race_bin_04/4_5_1_speedtrap",
+                        "count":  11,
+                        "line":  1911
+                    },
+                    {
+                        "race":  "race_bin_04/4_5_3_speedtrap",
+                        "count":  11,
+                        "line":  1912
+                    },
+                    {
+                        "race":  "race_bin_04/5_5_2_r_speedtrap",
+                        "count":  11,
+                        "line":  1913
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_1_speedtrap",
+                        "count":  11,
+                        "line":  1914
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_2_speedtrap",
+                        "count":  11,
+                        "line":  1915
+                    },
+                    {
+                        "race":  "race_bin_05/5_5_3_speedtrap",
+                        "count":  11,
+                        "line":  1916
+                    },
+                    {
+                        "race":  "race_bin_01/1_4_1_tollbooth",
+                        "count":  11,
+                        "line":  1917
+                    },
+                    {
+                        "race":  "race_bin_01/1_4_2_tollbooth",
+                        "count":  11,
+                        "line":  1918
+                    },
+                    {
+                        "race":  "race_bin_01/2_4_3_r_tollbooth",
+                        "count":  11,
+                        "line":  1919
+                    },
+                    {
+                        "race":  "race_bin_02/2_4_1_tollbooth",
+                        "count":  11,
+                        "line":  1920
+                    },
+                    {
+                        "race":  "race_bin_02/2_4_2_tollbooth",
+                        "count":  11,
+                        "line":  1921
+                    },
+                    {
+                        "race":  "race_bin_02/2_4_3_tollbooth",
+                        "count":  11,
+                        "line":  1922
+                    },
+                    {
+                        "race":  "race_bin_03/3_4_1_r_tollbooth",
+                        "count":  11,
+                        "line":  1923
+                    },
+                    {
+                        "race":  "race_bin_03/3_4_1_tollbooth",
+                        "count":  11,
+                        "line":  1924
+                    },
+                    {
+                        "race":  "race_bin_03/4_4_1_r_tollbooth",
+                        "count":  11,
+                        "line":  1925
+                    },
+                    {
+                        "race":  "race_bin_04/4_4_1_tollbooth",
+                        "count":  11,
+                        "line":  1926
+                    },
+                    {
+                        "race":  "race_bin_04/5_4_1_r_tollbooth",
+                        "count":  11,
+                        "line":  1927
+                    },
+                    {
+                        "race":  "race_bin_04/7_4_3_r_tollbooth",
+                        "count":  11,
+                        "line":  1928
+                    },
+                    {
+                        "race":  "race_bin_05/5_4_1_tollbooth",
+                        "count":  11,
+                        "line":  1929
+                    },
+                    {
+                        "race":  "race_bin_05/6_4_1_r_tollbooth",
+                        "count":  11,
+                        "line":  1930
+                    },
+                    {
+                        "race":  "race_bin_05/7_4_2_r_tollbooth",
+                        "count":  11,
+                        "line":  1931
+                    }
+                ],
+    "fields":  {
+                   "PursuitLevel":  6,
+                   "Opponents[4]":  161,
+                   "Opponents[21]":  2,
+                   "race_bin_02/2_4_2_tollbooth":  1,
+                   "Opponents[19]":  2,
+                   "TrafficLevel":  145,
+                   "Opponents[23]":  2,
+                   "Name":  1,
+                   "Opponents[22]":  2,
+                   "RollingStart":  10,
+                   "Opponents[2]":  50,
+                   "Opponents[16]":  3,
+                   "Opponents[12]":  73,
+                   "Opponents[9]":  92,
+                   "race_bin_01/1_4_2_tollbooth":  1,
+                   "Opponents[24]":  2,
+                   "race_bin_01/1_4_1_tollbooth":  1,
+                   "race_bin_03/3_4_1_r_tollbooth":  1,
+                   "Opponents[26]":  2,
+                   "Shortcuts":  1,
+                   "Opponents[7]":  121,
+                   "Opponents[10]":  104,
+                   "MaxHeatLevel":  10,
+                   "race_bin_04/5_4_1_r_tollbooth":  1,
+                   "Opponents":  225,
+                   "Opponents[28]":  2,
+                   "Opponents[13]":  65,
+                   "Opponents[5]":  145,
+                   "Opponents[17]":  3,
+                   "Opponents[20]":  2,
+                   "NumLaps":  57,
+                   "Opponents[14]":  65,
+                   "Opponents[3]":  136,
+                   "Opponents[15]":  3,
+                   "CatchUpSkill":  1,
+                   "Opponents[0]":  25,
+                   "CashValue":  25,
+                   "race_bin_04/4_4_1_tollbooth":  1,
+                   "race_bin_02/2_4_1_tollbooth":  1,
+                   "Opponents[1]":  51,
+                   "IntroMovie":  1,
+                   "TimeLimit":  1,
+                   "race_bin_05/5_4_1_tollbooth":  1,
+                   "Opponents[8]":  122,
+                   "Opponents[25]":  2,
+                   "Opponents[18]":  3,
+                   "race_bin_03/3_4_1_tollbooth":  1,
+                   "KnockoutsPerLap":  2,
+                   "Opponents[11]":  81,
+                   "race_bin_05/6_4_1_r_tollbooth":  1,
+                   "Opponents[6]":  122,
+                   "Opponents[27]":  2,
+                   "BarrierExemptions":  2,
+                   "IntroNIS":  1
+               },
+    "other":  [
+                  "45: update_field gameplay 16_1_1_circuit CashValue 50000",
+                  "60: update_field gameplay race_bin_14/14_3_1_lapknockout CashValue 30000",
+                  "74: add_field gameplay race_bin_14/14_3_1_lapknockout NumLaps",
+                  "75: update_field gameplay race_bin_14/14_3_1_lapknockout NumLaps 15",
+                  "77: update_field gameplay race_bin_14/14_3_1_lapknockout TrafficLevel 100",
+                  "78: update_field gameplay race_bin_14/14_3_1_lapknockout CatchUpSkill 10",
+                  "159: add_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps",
+                  "160: update_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps 15",
+                  "173: update_field gameplay race_bin_06/14_3_1_r_lap_ko CashValue 180000",
+                  "174: update_field gameplay race_bin_06/14_3_1_r_lap_ko TrafficLevel 100",
+                  "176: update_field gameplay race_bin_05/5_1_1_circuit TrafficLevel 100",
+                  "189: update_field gameplay race_bin_04/9_1_1_r_circuit TrafficLevel 100",
+                  "203: update_field gameplay race_bin_04/4_1_1_circuit TrafficLevel 100",
+                  "217: update_field gameplay race_bin_03/3_1_2_r_circuit TrafficLevel 100",
+                  "218: update_field gameplay race_bin_03/3_1_2_circuit TrafficLevel 100",
+                  "219: update_field gameplay race_bin_03/3_1_1_circuit TrafficLevel 100",
+                  "233: update_field gameplay race_bin_02/5_1_1_r_Circuit TrafficLevel 100",
+                  "247: update_field gameplay race_bin_02/3_1_1_r_circuit TrafficLevel 100",
+                  "248: update_field gameplay race_bin_02/2_1_1_r_circuit TrafficLevel 100",
+                  "262: update_field gameplay race_bin_02/2_1_1_circuit TrafficLevel 100",
+                  "276: update_field gameplay race_bin_01/1_1_2_circuit TrafficLevel 100",
+                  "277: update_field gameplay race_bin_01/1_1_1_circuit TrafficLevel 100",
+                  "278: update_field gameplay race_bin_15/15_3_1_knockout TrafficLevel 100",
+                  "279: add_field gameplay race_bin_15/15_3_1_knockout NumLaps",
+                  "281: update_field gameplay race_bin_15/15_3_1_knockout NumLaps 15",
+                  "294: update_field gameplay race_bin_15/15_3_1_knockout CashValue 22500",
+                  "295: update_field gameplay race_bin_06/14_3_1_r_lap_ko CashValue 240000",
+                  "296: update_field gameplay race_bin_15/15_3_1_knockout CashValue 30000",
+                  "297: update_field gameplay race_bin_13/13_3_2_lap_ko CashValue 50000",
+                  "298: update_field gameplay race_bin_13/13_3_2_lap_ko TrafficLevel 100",
+                  "300: update_field gameplay race_bin_13/13_3_2_lap_ko NumLaps 15",
+                  "313: update_field gameplay race_bin_13/13_3_1_r_knockout CashValue 50000",
+                  "314: update_field gameplay race_bin_13/13_3_1_r_knockout TrafficLevel 100",
+                  "328: update_field gameplay race_bin_13/13_3_1_lap_ko CashValue 50000",
+                  "329: update_field gameplay race_bin_13/13_3_1_lap_ko TrafficLevel 100",
+                  "343: update_field gameplay race_bin_13/13_3_1_r_knockout NumLaps 15",
+                  "344: update_field gameplay race_bin_13/13_3_1_lap_ko NumLaps 15",
+                  "345: update_field gameplay race_bin_10/10_3_2_knockout CashValue 100000",
+                  "346: update_field gameplay race_bin_10/10_3_2_knockout TrafficLevel 100",
+                  "347: update_field gameplay race_bin_10/10_3_2_knockout NumLaps 15",
+                  "361: update_field gameplay race_bin_10/10_3_1_knockout CashValue 100000",
+                  "362: update_field gameplay race_bin_10/10_3_1_knockout TrafficLevel 100",
+                  "363: add_field gameplay race_bin_10/10_3_1_knockout NumLaps",
+                  "365: update_field gameplay race_bin_10/10_3_1_knockout NumLaps 15",
+                  "378: update_field gameplay race_bin_09/9_3_1_lapknockout CashValue 120000",
+                  "379: add_field gameplay race_bin_09/9_3_1_lapknockout NumLaps",
+                  "381: add_field gameplay race_bin_09/9_3_1_lapknockout TrafficLevel",
+                  "382: update_field gameplay race_bin_09/9_3_1_lapknockout NumLaps 15",
+                  "383: update_field gameplay race_bin_09/9_3_1_lapknockout TrafficLevel 100",
+                  "396: update_field gameplay race_bin_08/8_3_1_lap_ko NumLaps 15",
+                  "397: update_field gameplay race_bin_08/8_3_1_lap_ko TrafficLevel 100",
+                  "411: update_field gameplay race_bin_08/8_3_1_lap_ko CashValue 160000",
+                  "412: update_field gameplay race_bin_08/13_3_1_r_lap_ko CashValue 160000",
+                  "413: update_field gameplay race_bin_08/13_3_1_r_lap_ko TrafficLevel 100",
+                  "414: add_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps",
+                  "416: update_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps 15",
+                  "429: update_field gameplay race_bin_07/7_3_1_lap_ko CashValue 200000",
+                  "430: update_field gameplay race_bin_07/7_3_1_lap_ko TrafficLevel 100",
+                  "431: update_field gameplay race_bin_07/7_3_1_lap_ko NumLaps 15",
+                  "445: update_field gameplay race_bin_06/6_3_1_lap_ko CashValue 240000",
+                  "446: update_field gameplay race_bin_06/6_3_1_lap_ko NumLaps 15",
+                  "447: update_field gameplay race_bin_06/6_3_1_lap_ko TrafficLevel 100",
+                  "461: update_field gameplay race_bin_05/5_3_1_lap_ko CashValue 280000",
+                  "462: update_field gameplay race_bin_05/5_3_1_lap_ko TrafficLevel 100",
+                  "463: add_field gameplay race_bin_05/5_3_1_lap_ko NumLaps",
+                  "465: update_field gameplay race_bin_05/5_3_1_lap_ko NumLaps 15",
+                  "478: update_field gameplay race_bin_04/6_3_1_r_knockout TrafficLevel 100",
+                  "479: update_field gameplay race_bin_04/6_3_1_r_knockout CashValue 320000",
+                  "480: add_field gameplay race_bin_04/6_3_1_r_knockout NumLaps",
+                  "482: update_field gameplay race_bin_04/6_3_1_r_knockout NumLaps 15",
+                  "495: update_field gameplay race_bin_04/4_3_1_lapknockout CashValue 320000",
+                  "496: update_field gameplay race_bin_04/4_3_1_lapknockout TrafficLevel 100",
+                  "497: update_field gameplay race_bin_04/4_3_1_lapknockout NumLaps 15",
+                  "512: add_field gameplay race_bin_03/4_3_1_r_knockout NumLaps",
+                  "514: update_field gameplay race_bin_03/4_3_1_r_knockout CashValue 360000",
+                  "515: update_field gameplay race_bin_03/4_3_1_r_knockout TrafficLevel 100",
+                  "516: update_field gameplay race_bin_03/4_3_1_r_knockout NumLaps 15",
+                  "529: update_field gameplay race_bin_03/3_3_2_lap_ko CashValue 360000",
+                  "530: update_field gameplay race_bin_03/3_3_2_lap_ko TrafficLevel 100",
+                  "531: add_field gameplay race_bin_03/3_3_2_lap_ko NumLaps",
+                  "533: update_field gameplay race_bin_03/3_3_2_lap_ko NumLaps 15",
+                  "546: update_field gameplay race_bin_03/3_3_1_lap_ko CashValue 360000",
+                  "547: update_field gameplay race_bin_03/3_3_1_lap_ko TrafficLevel 100",
+                  "548: update_field gameplay race_bin_03/3_3_1_lap_ko NumLaps 15",
+                  "562: update_field gameplay race_bin_02/3_3_2_r_knockout CashValue 400000",
+                  "563: update_field gameplay race_bin_02/3_3_2_r_knockout TrafficLevel 100",
+                  "564: add_field gameplay race_bin_02/3_3_2_r_knockout NumLaps",
+                  "566: update_field gameplay race_bin_02/3_3_2_r_knockout NumLaps 15",
+                  "579: update_field gameplay race_bin_02/3_3_1_r_knockout CashValue 400000",
+                  "580: update_field gameplay race_bin_02/3_3_1_r_knockout TrafficLevel 100",
+                  "581: add_field gameplay race_bin_02/3_3_1_r_knockout NumLaps",
+                  "583: update_field gameplay race_bin_02/3_3_1_r_knockout NumLaps 15",
+                  "597: update_field gameplay race_bin_01/1_3_1_lapknockout CashValue 1000000",
+                  "598: update_field gameplay race_bin_01/1_3_1_lapknockout TrafficLevel 100",
+                  "599: add_field gameplay race_bin_01/1_3_1_lapknockout NumLaps",
+                  "601: add_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel",
+                  "602: update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 10",
+                  "603: update_field gameplay race_bin_01/1_3_1_lapknockout NumLaps 15",
+                  "631: add_field gameplay race_bin_01/1_3_1_lapknockout RollingStart",
+                  "632: update_field gameplay race_bin_01/1_3_1_lapknockout RollingStart True",
+                  "633: update_field gameplay race_bin_01/1_3_1_lapknockout RollingStart False",
+                  "634: add_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap",
+                  "635: update_field gameplay race_bin_01/1_3_1_lapknockout KnockoutsPerLap 2",
+                  "636: update_field gameplay race_bin_15/15_2_1_sprint TrafficLevel 100",
+                  "637: update_field gameplay race_bin_14/15_2_1_sprint_reverse TrafficLevel 100",
+                  "638: update_field gameplay race_bin_14/14_2_4_sprint TrafficLevel 100",
+                  "639: update_field gameplay race_bin_14/14_2_3_cellphone_sprint TrafficLevel 100",
+                  "640: update_field gameplay race_bin_14/14_2_2_sprint TrafficLevel 100",
+                  "641: update_field gameplay race_bin_14/14_2_1_sprint TrafficLevel 100",
+                  "642: update_field gameplay race_bin_13/14_2_2_r_sprint TrafficLevel 100",
+                  "643: update_field gameplay race_bin_13/13_2_3_sprint TrafficLevel 100",
+                  "644: update_field gameplay race_bin_13/13_2_2_r_sprint TrafficLevel 100",
+                  "648: update_field gameplay race_bin_13/13_2_1_sprint TrafficLevel 100",
+                  "652: update_field gameplay race_bin_12/14_2_3_r_sprint TrafficLevel 100",
+                  "656: update_field gameplay race_bin_12/13_2_2_r_Sprint TrafficLevel 100",
+                  "661: update_field gameplay race_bin_12/12_2_1_sprint TrafficLevel 100",
+                  "662: update_field gameplay race_bin_11/12_2_1_r_sprint TrafficLevel 100",
+                  "664: update_field gameplay race_bin_11/11_2_1_sprint TrafficLevel 100",
+                  "671: update_field gameplay race_bin_10/11_2_1_r_sprint TrafficLevel 100",
+                  "676: update_field gameplay race_bin_10/10_2_2_sprint TrafficLevel 100",
+                  "682: update_field gameplay race_bin_10/10_2_1_sprint TrafficLevel 100",
+                  "683: update_field gameplay race_bin_09/9_2_2_sprint TrafficLevel 100",
+                  "691: update_field gameplay race_bin_09/9_2_1_sprint TrafficLevel 100",
+                  "692: update_field gameplay race_bin_08/8_2_2_sprint TrafficLevel 100",
+                  "700: update_field gameplay race_bin_08/8_2_1_sprint TrafficLevel 100",
+                  "701: update_field gameplay race_bin_07/8_2_1_r_sprint TrafficLevel 100",
+                  "711: update_field gameplay race_bin_07/7_2_3_p2p TrafficLevel 100",
+                  "712: update_field gameplay race_bin_07/7_2_2_p2p TrafficLevel 100",
+                  "714: update_field gameplay race_bin_07/7_2_1_sprint TrafficLevel 100",
+                  "723: update_field gameplay race_bin_06/6_2_3_sprint TrafficLevel 100",
+                  "733: update_field gameplay race_bin_06/6_2_2_p2p TrafficLevel 100",
+                  "743: update_field gameplay race_bin_06/6_2_1_p2p TrafficLevel 100",
+                  "753: update_field gameplay race_bin_05/5_2_3_sprint TrafficLevel 100",
+                  "765: update_field gameplay race_bin_05/5_2_2_sprint TrafficLevel 100",
+                  "767: add_field gameplay race_bin_05/5_2_1_sprint TrafficLevel",
+                  "768: update_field gameplay race_bin_05/5_2_1_sprint TrafficLevel 100",
+                  "779: update_field gameplay race_bin_05/5_2_1_r_sprint TrafficLevel 100",
+                  "780: update_field gameplay race_bin_04/7_2_2_r_sprint TrafficLevel 100",
+                  "793: update_field gameplay race_bin_03/7_2_1_r_sprint TrafficLevel 100",
+                  "807: update_field gameplay race_bin_03/4_2_1_r_sprint_race TrafficLevel 100",
+                  "821: update_field gameplay race_bin_03/3_2_2_sprint TrafficLevel 100",
+                  "822: update_field gameplay race_bin_03/3_2_1_sprint TrafficLevel 100",
+                  "836: update_field gameplay race_bin_02/9_2_2_r_sprint TrafficLevel 100",
+                  "837: update_field gameplay race_bin_02/3_2_1_r_sprint TrafficLevel 100",
+                  "851: update_field gameplay race_bin_02/2_2_1_sprint TrafficLevel 100",
+                  "852: update_field gameplay race_bin_01/2_2_1_r_sprint TrafficLevel 100",
+                  "866: update_field gameplay race_bin_01/1_2_4_sprint TrafficLevel 100",
+                  "880: update_field gameplay race_bin_01/1_2_3_sprint TrafficLevel 100",
+                  "881: update_field gameplay race_bin_01/1_2_2_sprint TrafficLevel 100",
+                  "895: update_field gameplay race_bin_01/1_2_1_sprint TrafficLevel 100",
+                  "910: add_field gameplay race_bin_15/15_2_1_sprint PursuitLevel",
+                  "911: add_field gameplay race_bin_15/15_2_1_sprint RollingStart",
+                  "912: update_field gameplay race_bin_15/15_2_1_sprint RollingStart True",
+                  "913: update_field gameplay race_bin_15/15_2_1_sprint PursuitLevel 10",
+                  "929: delete_field gameplay race_bin_15/15_2_1_sprint IntroMovie",
+                  "930: delete_field gameplay race_bin_15/15_2_1_sprint IntroNIS",
+                  "931: update_field gameplay race_bin_15/15_2_1_sprint RollingStart False",
+                  "932: update_field gameplay race_bin_15/15_2_1_sprint MaxHeatLevel 10",
+                  "933: delete_field gameplay race_bin_15/15_2_1_sprint RollingStart",
+                  "934: delete_field gameplay race_bin_15/15_2_1_sprint PursuitLevel",
+                  "935: add_field gameplay race_bin_15/15_2_1_sprint RollingStart",
+                  "936: update_field gameplay race_bin_15/15_2_1_sprint RollingStart True",
+                  "937: update_field gameplay race_bin_15/15_2_1_sprint RollingStart False",
+                  "965: update_field gameplay race_bin_13/13_5_2_speedtrap TrafficLevel 100",
+                  "969: update_field gameplay race_bin_13/13_5_1_speedtrap TrafficLevel 100",
+                  "973: update_field gameplay race_bin_12/12_5_1_speedtrap TrafficLevel 100",
+                  "978: update_field gameplay race_bin_11/11_5_2_speedtrap TrafficLevel 100",
+                  "983: update_field gameplay race_bin_11/11_5_1_speedtrap_race TrafficLevel 100",
+                  "989: update_field gameplay race_bin_10/11_5_1_r_speedtrap TrafficLevel 100",
+                  "995: update_field gameplay race_bin_09/9_5_3_speedtrap_race TrafficLevel 100",
+                  "996: update_field gameplay race_bin_09/9_5_2_speedtrap TrafficLevel 100",
+                  "1012: update_field gameplay race_bin_08/8_5_2_speedtrap TrafficLevel 100",
+                  "1019: update_field gameplay race_bin_08/8_5_1_speedtrap TrafficLevel 100",
+                  "1027: update_field gameplay race_bin_07/7_5_1_speedtrap TrafficLevel 100",
+                  "1038: update_field gameplay race_bin_06/6_5_3_speedtrap TrafficLevel 100",
+                  "1047: update_field gameplay race_bin_06/6_5_2_speedtraprace TrafficLevel 100",
+                  "1048: update_field gameplay race_bin_06/6_5_1_speedtraprace TrafficLevel 100",
+                  "1058: update_field gameplay race_bin_05/5_5_4_speedtrap TrafficLevel 100",
+                  "1060: update_field gameplay race_bin_05/5_5_3_speedtrap TrafficLevel 100",
+                  "1072: update_field gameplay race_bin_05/5_5_2_speedtrap TrafficLevel 100",
+                  "1083: update_field gameplay race_bin_05/5_5_1_speedtrap TrafficLevel 100",
+                  "1096: update_field gameplay race_bin_04/5_5_2_r_speedtrap TrafficLevel 100",
+                  "1109: update_field gameplay race_bin_04/4_5_3_speedtrap TrafficLevel 100",
+                  "1123: update_field gameplay race_bin_04/4_5_2_speedtrap TrafficLevel 100",
+                  "1124: update_field gameplay race_bin_04/4_5_1_speedtrap TrafficLevel 100",
+                  "1138: update_field gameplay race_bin_04/4_5_1_r_speedtrap TrafficLevel 100",
+                  "1140: update_field gameplay race_bin_03/3_5_2_speedtrap TrafficLevel 100",
+                  "1154: update_field gameplay race_bin_03/3_5_1_speedtrap TrafficLevel 100",
+                  "1168: update_field gameplay race_bin_02/5_5_1_r_speedtrap TrafficLevel 100",
+                  "1182: update_field gameplay race_bin_02/2_5_1_speedtrap TrafficLevel 100",
+                  "1196: update_field gameplay race_bin_01/1_5_3_speedtrap TrafficLevel 100",
+                  "1218: update_field gameplay race_bin_01/1_5_2_speedtraprace TrafficLevel 100",
+                  "1232: update_field gameplay race_bin_14/14_4_1_tollbooth TrafficLevel 100",
+                  "1233: update_field gameplay race_bin_13/13_4_2_tollbooth TrafficLevel 100",
+                  "1234: update_field gameplay race_bin_13/13_4_1_tollbooth TrafficLevel 100",
+                  "1235: add_field gameplay race_bin_14/14_4_1_tollbooth Opponents 3",
+                  "1239: add_field gameplay race_bin_13/13_4_2_tollbooth Opponents 5",
+                  "1248: add_field gameplay race_bin_13/13_4_1_tollbooth Opponents 5",
+                  "1257: update_field gameplay race_bin_12/12_4_2_tollbooth TrafficLevel 100",
+                  "1258: add_field gameplay race_bin_12/12_4_2_tollbooth Opponents 5",
+                  "1267: update_field gameplay race_bin_12/12_4_1_tollbooth TrafficLevel 100",
+                  "1268: add_field gameplay race_bin_12/12_4_1_tollbooth Opponents 5",
+                  "1277: update_field gameplay race_bin_11/11_4_2_tollbooth TrafficLevel 100",
+                  "1278: add_field gameplay race_bin_11/11_4_2_tollbooth Opponents 7",
+                  "1297: add_field gameplay race_bin_11/11_4_1_tollbooth Opponents 7",
+                  "1309: update_field gameplay race_bin_10/10_4_2_tollbooth TrafficLevel 100",
+                  "1310: add_field gameplay race_bin_10/10_4_2_tollbooth Opponents 7",
+                  "1322: add_field gameplay race_bin_10/10_4_1_tollbooth Opponents 7",
+                  "1323: update_field gameplay race_bin_10/10_4_1_tollbooth TrafficLevel 100",
+                  "1335: add_field gameplay race_bin_09/9_4_2_tollbooth Opponents 9",
+                  "1345: update_field gameplay race_bin_09/9_4_2_tollbooth TrafficLevel 100",
+                  "1352: update_field gameplay race_bin_09/9_4_1_tollbooth TrafficLevel 100",
+                  "1353: add_field gameplay race_bin_09/9_4_1_tollbooth Opponents 9",
+                  "1369: update_field gameplay race_bin_08/9_4_1_r_tollbooth TrafficLevel 100",
+                  "1370: add_field gameplay race_bin_08/9_4_1_r_tollbooth Opponents 9",
+                  "1386: add_field gameplay race_bin_08/10_4_2_r_tollbooth Opponents 9",
+                  "1387: update_field gameplay race_bin_08/10_4_2_r_tollbooth TrafficLevel 100",
+                  "1403: add_field gameplay race_bin_07/7_4_3_tollbooth Opponents 11",
+                  "1404: update_field gameplay race_bin_07/7_4_3_tollbooth TrafficLevel 100",
+                  "1423: add_field gameplay race_bin_07/7_4_2_tollbooth Opponents 11",
+                  "1424: update_field gameplay race_bin_07/7_4_2_tollbooth TrafficLevel 100",
+                  "1443: add_field gameplay race_bin_07/7_4_1_tollbooth Opponents 11",
+                  "1444: update_field gameplay race_bin_07/7_4_1_tollbooth TrafficLevel 100",
+                  "1463: add_field gameplay race_bin_06/7_4_1_r_tollbooth Opponents 29",
+                  "1464: update_field gameplay race_bin_06/7_4_1_r_tollbooth TrafficLevel 100",
+                  "1484: add_field gameplay race_bin_06/6_4_2_tollbooth Opponents 11",
+                  "1503: update_field gameplay race_bin_06/6_4_2_tollbooth TrafficLevel 100",
+                  "1504: add_field gameplay race_bin_06/6_4_1_tollbooth Opponents 11",
+                  "1523: update_field gameplay race_bin_06/6_4_1_tollbooth TrafficLevel 100",
+                  "1524: update_field gameplay race_bin_05/7_4_2_r_tollbooth TimeLimit 100",
+                  "1525: add_field gameplay race_bin_05/7_4_2_r_tollbooth Opponents 13",
+                  "1547: copy_fields gameplay race_bin_05/7_4_2_r_tollbooth race_bin_05/6_4_1_r_tollbooth optional",
+                  "1548: delete_field gameplay race_bin_05/6_4_1_r_tollbooth Shortcuts",
+                  "1549: copy_fields gameplay race_bin_05/6_4_1_r_tollbooth race_bin_05/5_4_1_tollbooth optional",
+                  "1550: update_field gameplay race_bin_05/6_4_1_r_tollbooth TrafficLevel 100",
+                  "1551: update_field gameplay race_bin_05/5_4_1_tollbooth TrafficLevel 100",
+                  "1552: add_field gameplay race_bin_04/7_4_3_r_tollbooth Opponents 13",
+                  "1553: update_field gameplay race_bin_04/7_4_3_r_tollbooth TrafficLevel 100",
+                  "1575: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/5_4_1_r_tollbooth optional",
+                  "1576: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/4_4_1_tollbooth optional",
+                  "1577: update_field gameplay race_bin_04/4_4_1_tollbooth TrafficLevel 100",
+                  "1578: update_field gameplay race_bin_04/5_4_1_r_tollbooth TrafficLevel 100",
+                  "1579: add_field gameplay race_bin_03/4_4_1_r_tollbooth Opponents 15",
+                  "1580: update_field gameplay race_bin_03/4_4_1_r_tollbooth TrafficLevel 100",
+                  "1596: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_tollbooth optional",
+                  "1597: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_r_tollbooth optional",
+                  "1598: update_field gameplay race_bin_03/3_4_1_tollbooth TrafficLevel 100",
+                  "1599: update_field gameplay race_bin_03/3_4_1_r_tollbooth TrafficLevel 100",
+                  "1600: add_field gameplay race_bin_02/2_4_3_tollbooth Opponents 15",
+                  "1601: update_field gameplay race_bin_02/2_4_3_tollbooth TrafficLevel 100",
+                  "1657: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_2_tollbooth optional",
+                  "1658: update_field gameplay race_bin_02/2_4_2_tollbooth TrafficLevel 100",
+                  "1659: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_1_tollbooth optional",
+                  "1660: add_field gameplay race_bin_01/2_4_3_r_tollbooth Opponents 15",
+                  "1661: update_field gameplay race_bin_01/2_4_3_r_tollbooth TrafficLevel 100",
+                  "1662: update_field gameplay race_bin_02/2_4_1_tollbooth TrafficLevel 100",
+                  "1688: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_2_tollbooth optional",
+                  "1689: update_field gameplay race_bin_01/1_4_2_tollbooth TrafficLevel 100",
+                  "1690: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_1_tollbooth optional",
+                  "1691: update_field gameplay race_bin_01/1_4_1_tollbooth TrafficLevel 100",
+                  "1692: update_field gameplay race_bin_12/12_7_3_drag TrafficLevel 100",
+                  "1693: update_field gameplay race_bin_12/12_7_3_drag TrafficLevel 0",
+                  "1834: update_field gameplay race_bin_11/11_2_1_sprint Name race_bin_11/11_2_1_sprint",
+                  "1843: update_field gameplay race_bin_06/14_3_1_r_lap_ko NumLaps 10",
+                  "1846: update_field gameplay race_bin_01/1_3_1_lapknockout NumLaps 10",
+                  "1847: update_field gameplay race_bin_01/1_3_1_lapknockout PursuitLevel 5",
+                  "1849: update_field gameplay race_bin_02/3_3_1_r_knockout NumLaps 10",
+                  "1851: update_field gameplay race_bin_02/3_3_2_r_knockout NumLaps 10",
+                  "1853: update_field gameplay race_bin_03/3_3_1_lap_ko NumLaps 10",
+                  "1855: update_field gameplay race_bin_03/3_3_2_lap_ko NumLaps 10",
+                  "1857: update_field gameplay race_bin_03/4_3_1_r_knockout NumLaps 10",
+                  "1859: update_field gameplay race_bin_04/4_3_1_lapknockout NumLaps 10",
+                  "1861: update_field gameplay race_bin_04/6_3_1_r_knockout NumLaps 10",
+                  "1863: update_field gameplay race_bin_05/5_3_1_lap_ko NumLaps 10",
+                  "1866: update_field gameplay race_bin_06/6_3_1_lap_ko NumLaps 10",
+                  "1867: update_field gameplay race_bin_07/7_3_1_lap_ko NumLaps 10",
+                  "1869: update_field gameplay race_bin_08/13_3_1_r_lap_ko NumLaps 10",
+                  "1872: update_field gameplay race_bin_08/8_3_1_lap_ko NumLaps 10",
+                  "1873: update_field gameplay race_bin_09/9_3_1_lapknockout NumLaps 10",
+                  "1875: update_field gameplay race_bin_10/10_3_1_knockout NumLaps 10",
+                  "1877: update_field gameplay race_bin_10/10_3_2_knockout NumLaps 10",
+                  "1879: update_field gameplay race_bin_13/13_3_1_lap_ko NumLaps 10",
+                  "1881: update_field gameplay race_bin_13/13_3_1_r_knockout NumLaps 10",
+                  "1883: update_field gameplay race_bin_13/13_3_2_lap_ko NumLaps 10",
+                  "1885: update_field gameplay race_bin_15/15_3_1_knockout NumLaps 10",
+                  "1932: update_field gameplay race_bin_04/4_3_1_lapknockout MaxHeatLevel 5",
+                  "1933: update_field gameplay race_bin_06/6_3_1_lap_ko MaxHeatLevel 5",
+                  "1934: update_field gameplay race_bin_13/13_3_1_lap_ko MaxHeatLevel 5",
+                  "1935: update_field gameplay race_bin_13/13_3_1_r_knockout MaxHeatLevel 5",
+                  "1936: update_field gameplay race_bin_04/4_1_1_circuit MaxHeatLevel 5",
+                  "1937: update_field gameplay race_bin_06/6_1_1_circuit MaxHeatLevel 5",
+                  "1938: update_field gameplay race_bin_12/12_1_1_circuit MaxHeatLevel 5",
+                  "1939: update_field gameplay race_bin_12/12_1_2_circuit MaxHeatLevel 5",
+                  "1940: update_field gameplay race_bin_14/14_1_1_circuit MaxHeatLevel 5",
+                  "1941: update_field gameplay race_bin_14/14_3_1_lapknockout NumLaps 10",
+                  "1942: delete_field gameplay race_bin_02/2_4_1_tollbooth BarrierExemptions",
+                  "1943: delete_field gameplay race_bin_02/2_4_2_tollbooth BarrierExemptions"
+              ],
+    "overrides":  [
+                      {
+                          "line":  24,
+                          "key":  "race_bin_15/15_2_1_sprint|10",
+                          "before":  "race_bin_15/opponent",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  25,
+                          "key":  "race_bin_15/15_2_1_sprint|11",
+                          "before":  "0x00000000",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  35,
+                          "key":  "16_1_1_circuit|5",
+                          "before":  "0x00000000",
+                          "after":  "16_1_1_circuit/opponent2"
+                      },
+                      {
+                          "line":  62,
+                          "key":  "race_bin_14/14_3_1_lapknockout|3",
+                          "before":  "0x00000000",
+                          "after":  "race_bin_14/character1"
+                      },
+                      {
+                          "line":  103,
+                          "key":  "race_bin_12/12_1_1_circuit|5",
+                          "before":  "race_bin_12/character2",
+                          "after":  "race_bin_12/character3"
+                      },
+                      {
+                          "line":  504,
+                          "key":  "race_bin_04/4_3_1_lapknockout|4",
+                          "before":  "race_bin_04/character3",
+                          "after":  "race_bin_04/character2"
+                      },
+                      {
+                          "line":  593,
+                          "key":  "race_bin_02/3_3_1_r_knockout|5",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  792,
+                          "key":  "race_bin_04/7_2_2_r_sprint|11",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character3"
+                      },
+                      {
+                          "line":  939,
+                          "key":  "race_bin_15/15_2_1_sprint|3",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  940,
+                          "key":  "race_bin_15/15_2_1_sprint|6",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  941,
+                          "key":  "race_bin_15/15_2_1_sprint|9",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  942,
+                          "key":  "race_bin_15/15_2_1_sprint|12",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  943,
+                          "key":  "race_bin_15/15_2_1_sprint|15",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  944,
+                          "key":  "race_bin_15/15_2_1_sprint|18",
+                          "before":  "race_bin_15/opponent1",
+                          "after":  "race_bin_15/opponent1"
+                      },
+                      {
+                          "line":  945,
+                          "key":  "race_bin_15/15_2_1_sprint|4",
+                          "before":  "race_bin_15/opponent2",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  946,
+                          "key":  "race_bin_15/15_2_1_sprint|7",
+                          "before":  "race_bin_15/opponent2",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  947,
+                          "key":  "race_bin_15/15_2_1_sprint|10",
+                          "before":  "race_bin_15/opponent2",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  948,
+                          "key":  "race_bin_15/15_2_1_sprint|13",
+                          "before":  "race_bin_15/opponent2",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  949,
+                          "key":  "race_bin_15/15_2_1_sprint|16",
+                          "before":  "race_bin_15/opponent2",
+                          "after":  "race_bin_15/opponent2"
+                      },
+                      {
+                          "line":  950,
+                          "key":  "race_bin_15/15_2_1_sprint|5",
+                          "before":  "race_bin_15/opponent3",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  951,
+                          "key":  "race_bin_15/15_2_1_sprint|8",
+                          "before":  "race_bin_15/opponent3",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  952,
+                          "key":  "race_bin_15/15_2_1_sprint|11",
+                          "before":  "race_bin_15/opponent3",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  953,
+                          "key":  "race_bin_15/15_2_1_sprint|14",
+                          "before":  "race_bin_15/opponent3",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  954,
+                          "key":  "race_bin_15/15_2_1_sprint|17",
+                          "before":  "race_bin_15/opponent3",
+                          "after":  "race_bin_15/opponent3"
+                      },
+                      {
+                          "line":  1205,
+                          "key":  "race_bin_01/1_5_3_speedtrap|6",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1206,
+                          "key":  "race_bin_01/1_5_3_speedtrap|9",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1207,
+                          "key":  "race_bin_01/1_5_3_speedtrap|12",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1208,
+                          "key":  "race_bin_01/1_5_3_speedtrap|5",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1209,
+                          "key":  "race_bin_01/1_5_3_speedtrap|8",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1210,
+                          "key":  "race_bin_01/1_5_3_speedtrap|11",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1212,
+                          "key":  "race_bin_01/1_5_3_speedtrap|6",
+                          "before":  "race_bin_01/character2",
+                          "after":  "race_bin_01/character1"
+                      },
+                      {
+                          "line":  1213,
+                          "key":  "race_bin_01/1_5_3_speedtrap|9",
+                          "before":  "race_bin_01/character2",
+                          "after":  "race_bin_01/character1"
+                      },
+                      {
+                          "line":  1214,
+                          "key":  "race_bin_01/1_5_3_speedtrap|12",
+                          "before":  "race_bin_01/character2",
+                          "after":  "race_bin_01/character1"
+                      },
+                      {
+                          "line":  1245,
+                          "key":  "race_bin_13/13_4_2_tollbooth|1",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character2"
+                      },
+                      {
+                          "line":  1246,
+                          "key":  "race_bin_13/13_4_2_tollbooth|2",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character3"
+                      },
+                      {
+                          "line":  1247,
+                          "key":  "race_bin_13/13_4_2_tollbooth|4",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character2"
+                      },
+                      {
+                          "line":  1254,
+                          "key":  "race_bin_13/13_4_1_tollbooth|1",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character2"
+                      },
+                      {
+                          "line":  1255,
+                          "key":  "race_bin_13/13_4_1_tollbooth|2",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character3"
+                      },
+                      {
+                          "line":  1256,
+                          "key":  "race_bin_13/13_4_1_tollbooth|4",
+                          "before":  "race_bin_13/character1",
+                          "after":  "race_bin_13/character2"
+                      },
+                      {
+                          "line":  1264,
+                          "key":  "race_bin_12/12_4_2_tollbooth|1",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1265,
+                          "key":  "race_bin_12/12_4_2_tollbooth|2",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character3"
+                      },
+                      {
+                          "line":  1266,
+                          "key":  "race_bin_12/12_4_2_tollbooth|4",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1274,
+                          "key":  "race_bin_12/12_4_1_tollbooth|1",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1275,
+                          "key":  "race_bin_12/12_4_1_tollbooth|2",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character3"
+                      },
+                      {
+                          "line":  1276,
+                          "key":  "race_bin_12/12_4_1_tollbooth|4",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1286,
+                          "key":  "race_bin_11/11_4_2_tollbooth|1",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1287,
+                          "key":  "race_bin_11/11_4_2_tollbooth|2",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character3"
+                      },
+                      {
+                          "line":  1288,
+                          "key":  "race_bin_11/11_4_2_tollbooth|4",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character2"
+                      },
+                      {
+                          "line":  1289,
+                          "key":  "race_bin_11/11_4_2_tollbooth|5",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_12/character3"
+                      },
+                      {
+                          "line":  1290,
+                          "key":  "race_bin_11/11_4_2_tollbooth|0",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_11/character1"
+                      },
+                      {
+                          "line":  1291,
+                          "key":  "race_bin_11/11_4_2_tollbooth|1",
+                          "before":  "race_bin_12/character2",
+                          "after":  "race_bin_11/character2"
+                      },
+                      {
+                          "line":  1292,
+                          "key":  "race_bin_11/11_4_2_tollbooth|2",
+                          "before":  "race_bin_12/character3",
+                          "after":  "race_bin_11/character3"
+                      },
+                      {
+                          "line":  1293,
+                          "key":  "race_bin_11/11_4_2_tollbooth|3",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_11/character1"
+                      },
+                      {
+                          "line":  1294,
+                          "key":  "race_bin_11/11_4_2_tollbooth|4",
+                          "before":  "race_bin_12/character2",
+                          "after":  "race_bin_11/character2"
+                      },
+                      {
+                          "line":  1295,
+                          "key":  "race_bin_11/11_4_2_tollbooth|5",
+                          "before":  "race_bin_12/character3",
+                          "after":  "race_bin_11/character3"
+                      },
+                      {
+                          "line":  1296,
+                          "key":  "race_bin_11/11_4_2_tollbooth|6",
+                          "before":  "race_bin_12/character1",
+                          "after":  "race_bin_11/character1"
+                      },
+                      {
+                          "line":  1305,
+                          "key":  "race_bin_11/11_4_1_tollbooth|1",
+                          "before":  "race_bin_11/character1",
+                          "after":  "race_bin_11/character2"
+                      },
+                      {
+                          "line":  1306,
+                          "key":  "race_bin_11/11_4_1_tollbooth|2",
+                          "before":  "race_bin_11/character1",
+                          "after":  "race_bin_11/character3"
+                      },
+                      {
+                          "line":  1307,
+                          "key":  "race_bin_11/11_4_1_tollbooth|4",
+                          "before":  "race_bin_11/character1",
+                          "after":  "race_bin_11/character2"
+                      },
+                      {
+                          "line":  1308,
+                          "key":  "race_bin_11/11_4_1_tollbooth|5",
+                          "before":  "race_bin_11/character1",
+                          "after":  "race_bin_11/character3"
+                      },
+                      {
+                          "line":  1318,
+                          "key":  "race_bin_10/10_4_2_tollbooth|1",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character2"
+                      },
+                      {
+                          "line":  1319,
+                          "key":  "race_bin_10/10_4_2_tollbooth|2",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character3"
+                      },
+                      {
+                          "line":  1320,
+                          "key":  "race_bin_10/10_4_2_tollbooth|4",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character2"
+                      },
+                      {
+                          "line":  1321,
+                          "key":  "race_bin_10/10_4_2_tollbooth|5",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character3"
+                      },
+                      {
+                          "line":  1331,
+                          "key":  "race_bin_10/10_4_1_tollbooth|1",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character2"
+                      },
+                      {
+                          "line":  1332,
+                          "key":  "race_bin_10/10_4_1_tollbooth|2",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character3"
+                      },
+                      {
+                          "line":  1333,
+                          "key":  "race_bin_10/10_4_1_tollbooth|4",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character2"
+                      },
+                      {
+                          "line":  1334,
+                          "key":  "race_bin_10/10_4_1_tollbooth|5",
+                          "before":  "race_bin_10/character1",
+                          "after":  "race_bin_10/character3"
+                      },
+                      {
+                          "line":  1346,
+                          "key":  "race_bin_09/9_4_2_tollbooth|1",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1347,
+                          "key":  "race_bin_09/9_4_2_tollbooth|2",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1348,
+                          "key":  "race_bin_09/9_4_2_tollbooth|4",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1349,
+                          "key":  "race_bin_09/9_4_2_tollbooth|5",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1350,
+                          "key":  "race_bin_09/9_4_2_tollbooth|7",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1351,
+                          "key":  "race_bin_09/9_4_2_tollbooth|8",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1363,
+                          "key":  "race_bin_09/9_4_1_tollbooth|1",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1364,
+                          "key":  "race_bin_09/9_4_1_tollbooth|2",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1365,
+                          "key":  "race_bin_09/9_4_1_tollbooth|4",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1366,
+                          "key":  "race_bin_09/9_4_1_tollbooth|5",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1367,
+                          "key":  "race_bin_09/9_4_1_tollbooth|7",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character2"
+                      },
+                      {
+                          "line":  1368,
+                          "key":  "race_bin_09/9_4_1_tollbooth|8",
+                          "before":  "race_bin_09/character1",
+                          "after":  "race_bin_09/character3"
+                      },
+                      {
+                          "line":  1380,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|1",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1381,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|2",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1382,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|4",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1383,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|5",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1384,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|7",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1385,
+                          "key":  "race_bin_08/9_4_1_r_tollbooth|8",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1397,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|1",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1398,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|2",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1399,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|4",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1400,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|5",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1401,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|7",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character2"
+                      },
+                      {
+                          "line":  1402,
+                          "key":  "race_bin_08/10_4_2_r_tollbooth|8",
+                          "before":  "race_bin_08/character1",
+                          "after":  "race_bin_08/character3"
+                      },
+                      {
+                          "line":  1416,
+                          "key":  "race_bin_07/7_4_3_tollbooth|1",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1417,
+                          "key":  "race_bin_07/7_4_3_tollbooth|2",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1418,
+                          "key":  "race_bin_07/7_4_3_tollbooth|4",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1419,
+                          "key":  "race_bin_07/7_4_3_tollbooth|5",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1420,
+                          "key":  "race_bin_07/7_4_3_tollbooth|7",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1421,
+                          "key":  "race_bin_07/7_4_3_tollbooth|8",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1422,
+                          "key":  "race_bin_07/7_4_3_tollbooth|10",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1436,
+                          "key":  "race_bin_07/7_4_2_tollbooth|1",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1437,
+                          "key":  "race_bin_07/7_4_2_tollbooth|2",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1438,
+                          "key":  "race_bin_07/7_4_2_tollbooth|4",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1439,
+                          "key":  "race_bin_07/7_4_2_tollbooth|5",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1440,
+                          "key":  "race_bin_07/7_4_2_tollbooth|7",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1441,
+                          "key":  "race_bin_07/7_4_2_tollbooth|8",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1442,
+                          "key":  "race_bin_07/7_4_2_tollbooth|10",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1456,
+                          "key":  "race_bin_07/7_4_1_tollbooth|1",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1457,
+                          "key":  "race_bin_07/7_4_1_tollbooth|2",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1458,
+                          "key":  "race_bin_07/7_4_1_tollbooth|4",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1459,
+                          "key":  "race_bin_07/7_4_1_tollbooth|5",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1460,
+                          "key":  "race_bin_07/7_4_1_tollbooth|7",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1461,
+                          "key":  "race_bin_07/7_4_1_tollbooth|8",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character3"
+                      },
+                      {
+                          "line":  1462,
+                          "key":  "race_bin_07/7_4_1_tollbooth|10",
+                          "before":  "race_bin_07/character1",
+                          "after":  "race_bin_07/character2"
+                      },
+                      {
+                          "line":  1477,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|1",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1478,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|2",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1479,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|4",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1480,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|5",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1481,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|7",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1482,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|8",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1483,
+                          "key":  "race_bin_06/7_4_1_r_tollbooth|10",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1496,
+                          "key":  "race_bin_06/6_4_2_tollbooth|1",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1497,
+                          "key":  "race_bin_06/6_4_2_tollbooth|2",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1498,
+                          "key":  "race_bin_06/6_4_2_tollbooth|4",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1499,
+                          "key":  "race_bin_06/6_4_2_tollbooth|5",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1500,
+                          "key":  "race_bin_06/6_4_2_tollbooth|7",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1501,
+                          "key":  "race_bin_06/6_4_2_tollbooth|8",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1502,
+                          "key":  "race_bin_06/6_4_2_tollbooth|10",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1516,
+                          "key":  "race_bin_06/6_4_1_tollbooth|1",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1517,
+                          "key":  "race_bin_06/6_4_1_tollbooth|2",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1518,
+                          "key":  "race_bin_06/6_4_1_tollbooth|4",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1519,
+                          "key":  "race_bin_06/6_4_1_tollbooth|5",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1520,
+                          "key":  "race_bin_06/6_4_1_tollbooth|7",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1521,
+                          "key":  "race_bin_06/6_4_1_tollbooth|8",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character3"
+                      },
+                      {
+                          "line":  1522,
+                          "key":  "race_bin_06/6_4_1_tollbooth|10",
+                          "before":  "race_bin_06/character1",
+                          "after":  "race_bin_06/character2"
+                      },
+                      {
+                          "line":  1539,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|1",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character2"
+                      },
+                      {
+                          "line":  1540,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|2",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character3"
+                      },
+                      {
+                          "line":  1541,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|4",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character2"
+                      },
+                      {
+                          "line":  1542,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|5",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character3"
+                      },
+                      {
+                          "line":  1543,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|7",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character2"
+                      },
+                      {
+                          "line":  1544,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|8",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character3"
+                      },
+                      {
+                          "line":  1545,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|10",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character2"
+                      },
+                      {
+                          "line":  1546,
+                          "key":  "race_bin_05/7_4_2_r_tollbooth|11",
+                          "before":  "race_bin_05/character1",
+                          "after":  "race_bin_05/character3"
+                      },
+                      {
+                          "line":  1567,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|1",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character2"
+                      },
+                      {
+                          "line":  1568,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|2",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character3"
+                      },
+                      {
+                          "line":  1569,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|4",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character2"
+                      },
+                      {
+                          "line":  1570,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|5",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character3"
+                      },
+                      {
+                          "line":  1571,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|7",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character2"
+                      },
+                      {
+                          "line":  1572,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|8",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character3"
+                      },
+                      {
+                          "line":  1573,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|10",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character2"
+                      },
+                      {
+                          "line":  1574,
+                          "key":  "race_bin_04/7_4_3_r_tollbooth|11",
+                          "before":  "race_bin_04/character1",
+                          "after":  "race_bin_04/character3"
+                      },
+                      {
+                          "line":  1617,
+                          "key":  "race_bin_02/2_4_3_tollbooth|1",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character2"
+                      },
+                      {
+                          "line":  1618,
+                          "key":  "race_bin_02/2_4_3_tollbooth|2",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  1619,
+                          "key":  "race_bin_02/2_4_3_tollbooth|4",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character2"
+                      },
+                      {
+                          "line":  1620,
+                          "key":  "race_bin_02/2_4_3_tollbooth|5",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  1621,
+                          "key":  "race_bin_02/2_4_3_tollbooth|7",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character2"
+                      },
+                      {
+                          "line":  1622,
+                          "key":  "race_bin_02/2_4_3_tollbooth|8",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  1623,
+                          "key":  "race_bin_02/2_4_3_tollbooth|10",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character2"
+                      },
+                      {
+                          "line":  1624,
+                          "key":  "race_bin_02/2_4_3_tollbooth|11",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  1625,
+                          "key":  "race_bin_02/2_4_3_tollbooth|13",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character2"
+                      },
+                      {
+                          "line":  1626,
+                          "key":  "race_bin_02/2_4_3_tollbooth|14",
+                          "before":  "race_bin_02/character1",
+                          "after":  "race_bin_02/character3"
+                      },
+                      {
+                          "line":  1647,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|1",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character2"
+                      },
+                      {
+                          "line":  1648,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|2",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character3"
+                      },
+                      {
+                          "line":  1649,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|4",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character2"
+                      },
+                      {
+                          "line":  1650,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|5",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character3"
+                      },
+                      {
+                          "line":  1651,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|7",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character2"
+                      },
+                      {
+                          "line":  1652,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|8",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character3"
+                      },
+                      {
+                          "line":  1653,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|10",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character2"
+                      },
+                      {
+                          "line":  1654,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|11",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character3"
+                      },
+                      {
+                          "line":  1655,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|13",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character2"
+                      },
+                      {
+                          "line":  1656,
+                          "key":  "race_bin_03/4_4_1_r_tollbooth|14",
+                          "before":  "race_bin_03/character1",
+                          "after":  "race_bin_03/character3"
+                      },
+                      {
+                          "line":  1678,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|1",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1679,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|2",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1680,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|4",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1681,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|5",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1682,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|7",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1683,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|8",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1684,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|10",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1685,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|11",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      },
+                      {
+                          "line":  1686,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|13",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character2"
+                      },
+                      {
+                          "line":  1687,
+                          "key":  "race_bin_01/2_4_3_r_tollbooth|14",
+                          "before":  "race_bin_01/character1",
+                          "after":  "race_bin_01/character3"
+                      }
+                  ],
+    "finalNulls":  [
+
+                   ],
+    "duplicateRaces":  [
+                           "race_bin_01/1_1_1_circuit",
+                           "race_bin_15/15_2_1_sprint",
+                           "16_2_3_sprint",
+                           "race_bin_15/15_1_1_circuit",
+                           "race_bin_14/14_1_2_cellphone_circuit",
+                           "race_bin_14/14_1_1_circuit",
+                           "race_bin_07/7_1_1_circuit",
+                           "race_bin_07/16_1_1_r_circuit",
+                           "race_bin_06/14_3_1_r_lap_ko",
+                           "race_bin_05/5_1_1_circuit",
+                           "race_bin_04/9_1_1_r_circuit",
+                           "race_bin_04/4_1_1_circuit",
+                           "race_bin_03/3_1_1_circuit",
+                           "race_bin_02/5_1_1_r_Circuit",
+                           "race_bin_02/2_1_1_r_circuit",
+                           "race_bin_02/2_1_1_circuit",
+                           "race_bin_15/15_3_1_knockout",
+                           "race_bin_13/13_3_2_lap_ko",
+                           "race_bin_13/13_3_1_r_knockout",
+                           "race_bin_13/13_3_1_lap_ko",
+                           "race_bin_10/10_3_2_knockout",
+                           "race_bin_10/10_3_1_knockout",
+                           "race_bin_09/9_3_1_lapknockout",
+                           "race_bin_08/8_3_1_lap_ko",
+                           "race_bin_08/13_3_1_r_lap_ko",
+                           "race_bin_07/7_3_1_lap_ko",
+                           "race_bin_06/6_3_1_lap_ko",
+                           "race_bin_05/5_3_1_lap_ko",
+                           "race_bin_04/6_3_1_r_knockout",
+                           "race_bin_04/4_3_1_lapknockout",
+                           "race_bin_03/4_3_1_r_knockout",
+                           "race_bin_03/3_3_2_lap_ko",
+                           "race_bin_03/3_3_1_lap_ko",
+                           "race_bin_02/3_3_2_r_knockout",
+                           "race_bin_02/3_3_1_r_knockout",
+                           "race_bin_01/1_3_1_lapknockout",
+                           "race_bin_12/13_2_2_r_Sprint",
+                           "race_bin_05/5_2_3_sprint",
+                           "race_bin_05/5_2_1_sprint",
+                           "race_bin_04/7_2_2_r_sprint",
+                           "race_bin_03/7_2_1_r_sprint",
+                           "race_bin_03/4_2_1_r_sprint_race",
+                           "race_bin_03/3_2_1_sprint",
+                           "race_bin_02/3_2_1_r_sprint",
+                           "race_bin_01/2_2_1_r_sprint",
+                           "race_bin_01/1_2_4_sprint",
+                           "race_bin_01/1_2_2_sprint",
+                           "race_bin_01/1_2_1_sprint",
+                           "race_bin_05/5_5_3_speedtrap",
+                           "race_bin_05/5_5_2_speedtrap",
+                           "race_bin_05/5_5_1_speedtrap",
+                           "race_bin_04/5_5_2_r_speedtrap",
+                           "race_bin_04/4_5_3_speedtrap",
+                           "race_bin_04/4_5_1_speedtrap",
+                           "race_bin_03/3_5_2_speedtrap",
+                           "race_bin_03/3_5_1_speedtrap",
+                           "race_bin_02/5_5_1_r_speedtrap",
+                           "race_bin_02/2_5_1_speedtrap",
+                           "race_bin_01/1_5_3_speedtrap",
+                           "race_bin_01/1_5_1_speedtraprace",
+                           "race_bin_04/4_7_2_drag",
+                           "race_bin_03/3_7_3_drag",
+                           "race_bin_03/3_7_2_drag",
+                           "race_bin_02/2_7_1_drag",
+                           "race_bin_01/1_7_1_r_drag",
+                           "race_bin_01/1_7_1_drag"
+                       ]
+}

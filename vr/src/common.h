@@ -108,7 +108,7 @@ struct Config {
     // the triangles along the gaze (0 = nearest), the selection's size (0 one triangle, 1..3 within
     // 2 / 5 / 10 cm, 4 the connected piece, 5 the whole draw entry); out: triangles selected.
     // Commands besides those above: 9 drop the selection, 10 fit the steering wheel's turning centre,
-    // 11 reset it.
+    // 11 reset it, 12 copy the selection's triangle IDs to the clipboard.
     float editPicking = 0, editLayer = 0, editMode = 0, editPicked = 0;
     float headSize = 0.25f;          // how far down from the top of the driver model the head reaches (m)
     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye

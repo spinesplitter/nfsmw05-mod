@@ -41,33 +41,38 @@ EffectParts Effects::Step(const Telemetry& t, float drive, double now, float dt,
         e.engine = amp * (float)sin(enginePhase_) * drive;
     }
 
-    // --- kerbs and bumps: a front wheel's suspension compressing quickly (the slow part, roll and
-    // pitch, taken out): a kick toward the side hit harder and a short shake, read once per
-    // physics step ---
+    // Kerbs use the vehicle-hit envelope, not a continuously decaying vibration.
+    // Positive compression only: the rebound must not make a second opposite hit.
+    // Physics-thread latching preserves short hits. Independent wheel hysteresis
+    // prevents a held-up wheel masking the other; close hits do not reset the push.
     if (t.seq != lastSeq_) {
         lastSeq_ = t.seq;
-        if (t.valid && p.kerbs > 0.0f) {
-            const float ref = 0.5f;   // m/s of quick compression that is a solid hit
-            float gate = Smoothstep(1.0f, 5.0f, speed);
-            float kick = p.kerbs * 0.6f * tanhf((t.bump[1] - t.bump[0]) / ref) * gate;
-            if (fabsf(kick) > fabsf(kerbKick_)) kerbKick_ = kick;
-            float hit = fmaxf(fabsf(t.bump[0]), fabsf(t.bump[1]));
-            float shake = p.kerbs * 0.4f * tanhf(fmaxf(hit - 0.15f, 0.0f) / ref) * gate;
-            if (shake > kerbShake_) kerbShake_ = shake;
+        float left = fmaxf(t.bump[0], 0.0f), right = fmaxf(t.bump[1], 0.0f);
+        float hit = fmaxf(left, right);
+        for (int i = 0; i < 2; ++i)
+            if (!t.valid || t.bump[i] < 0.025f) kerbArmed_[i] = true;
+        bool edge = (left > 0.06f && kerbArmed_[0]) || (right > 0.06f && kerbArmed_[1]);
+        bool latched = t.kerbSeq != lastKerbSeq_;
+        lastKerbSeq_ = t.kerbSeq;
+        if (t.kerbSeq) {
+            edge = latched && now >= t.kerbTime && now - t.kerbTime < 0.15;
+            hit = t.kerbHit;
         }
+        if (t.valid && drive > 0.0f && p.kerbs > 0.0f && speed > 1.0f &&
+            edge) {
+            float dir = t.kerbSeq ? t.kerbDir : (fabsf(right - left) > 0.02f ? (right > left ? 1.0f : -1.0f) : 0.0f);
+            float strength = Clampf(0.35f + (hit - 0.08f) / 0.6f, 0.35f, 1.0f);
+            float amp = p.kerbs * strength * Smoothstep(1.0f, 3.0f, speed);
+            // Closely spaced teeth add strength without resetting the push to zero.
+            if (kerb_.start >= 0 && now - kerb_.start < 0.06) kerb_.Raise(now, amp, dir);
+            else kerb_.Start(now, amp, dir);
+        }
+        if (left > 0.06f) kerbArmed_[0] = false;
+        if (right > 0.06f) kerbArmed_[1] = false;
     }
-    kerbKick_ *= expf(-dt / 0.05f);
-    kerbShake_ *= expf(-dt / 0.08f);
-    kerbPhase_ = Advance(kerbPhase_, 30.0f, dt);
-    e.kerb = (kerbKick_ + kerbShake_ * (float)sin(kerbPhase_)) * drive;
-
-    // --- road surface rumble at the game's own frequency for the surface ---
-    if (t.valid && t.frontOnGround > 0 && t.surfaceRumble > 0.0f && p.surface > 0.0f) {
-        float hz = Clampf(t.surfaceHz > 0.0f ? t.surfaceHz : 25.0f, 8.0f, 60.0f);
-        surfacePhase_ = Advance(surfacePhase_, hz, dt);
-        float amp = p.surface * 0.5f * Clampf(t.surfaceRumble * 1.5f, 0.0f, 1.0f) * Smoothstep(1.0f, 8.0f, speed);
-        e.surface = amp * (float)sin(surfacePhase_) * drive;
-    }
+    if (!t.valid || p.kerbs <= 0.0f || drive <= 0.0f) kerb_ = Jolt{};
+    e.kerb = kerb_.Step(now, kLandJolt) * drive;
+    // SurfaceRumble is deliberately inert, including legacy INIs/live settings.
 
     // --- tyre scrub: a fine vibration once any tyre is past its grip limit ---
     if (t.valid && t.tireStateValid && p.tyreScrub > 0.0f && t.wheelsOnGround > 0 && speed > 3.0f) {

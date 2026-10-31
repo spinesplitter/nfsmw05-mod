@@ -5,6 +5,7 @@
 //
 // speed.exe v1.3 addresses and vtable slots (from the dbalatoni13/nfsmw symbol map):
 #include "telemetry.h"
+#include "kerb_detector.h"
 #include <math.h>
 #include <string.h>
 
@@ -84,6 +85,7 @@ bool Plausible(uintptr_t p) { return p >= 0x10000 && p < 0x7FFF0000; }
 CRITICAL_SECTION s_lock;
 Telemetry s_cur;
 uint32_t s_seq;
+KerbDetector s_kerbs;
 
 // Game thread state: the previous sample, and the car as the collision hook sees it.
 struct {
@@ -406,12 +408,6 @@ void Sample(void* player) {
                     Log("surface: front %s wheel on %s", i ? "right" : "left", lastName[i]);
                 }
             }
-            // The game's own rumble for the surface (its controller rumble), the stronger front tyre's.
-            float rumbleNow = t.offroad[i] ? 0.0f : *(uint8_t*)(layout + kSurfEffectIntensity) / 255.0f;
-            if (rumbleNow > t.surfaceRumble) {
-                t.surfaceRumble = rumbleNow;
-                t.surfaceHz = *(uint16_t*)(layout + kSurfEffectFrequency);
-            }
         }
     }
 
@@ -424,10 +420,17 @@ void Sample(void* player) {
         if (!(comp[i] > -10.0f && comp[i] < 10.0f)) comp[i] = s_prev.comp[i];
         float cv = continuous ? Clamp((comp[i] - s_prev.comp[i]) / (float)dt, -20.0f, 20.0f) : 0.0f;
         float k = continuous ? Clamp((float)dt / 0.15f, 0.0f, 1.0f) : 1.0f;
-        s_prev.compVelSlow[i] += (cv - s_prev.compVelSlow[i]) * k;
+        // Measure the transient BEFORE advancing the slow filter. Otherwise a
+        // long physics tick attenuates precisely the short hit we want to keep.
         t.bump[i] = onGround[i] && continuous ? cv - s_prev.compVelSlow[i] : 0.0f;
+        s_prev.compVelSlow[i] += (cv - s_prev.compVelSlow[i]) * k;
         s_prev.comp[i] = comp[i];
     }
+    s_kerbs.Sample(t.bump, continuous, t.time);
+    t.kerbSeq = s_kerbs.seq;
+    t.kerbHit = s_kerbs.hit;
+    t.kerbDir = s_kerbs.dir;
+    t.kerbTime = s_kerbs.time;
     if (continuous)
         t.yawRate = Dot(fwd - s_prev.fwd, right) / (float)dt;
     if (trace.have)

@@ -16,6 +16,7 @@
 #include "inisave.h"
 #include "input.h"
 #include "physics.h"
+#include "telemetry_inputs.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -161,7 +162,7 @@ void Update(float dt) {
         s_trail[s_trailAt] = {s_d.gLat, s_d.gLon, t};
     }
 
-    if (g_cfg.logPhysics) {
+    if (PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown())) {
         static double last;
         if (t - last >= 1.0) {
             last = t;
@@ -206,7 +207,7 @@ void Telemetry_Draw(IDirect3DDevice9* dev, int w, int h) {
     if (!dev || w < 64 || h < 64 || !s_wasShown) return;
     using namespace draw2d;
     float k = (float)h / 768.0f * g_cfg.telSize;
-    const float PW = 420, PH = 252;
+    const float PW = 420, PH = 362;
     float pw = PW * k, ph = PH * k;
     if (pw > (float)w - 16.0f || ph > (float)h - 16.0f) return;    // no room: nothing rather than a mess
     int px = std::max(8, (int)lroundf(16.0f * k));
@@ -313,6 +314,46 @@ void Telemetry_Draw(IDirect3DDevice9* dev, int w, int h) {
         Bar(bx + bw + gap, bt, 1, susp);
         Bar(bx, row2, 2, susp);
         Bar(bx + bw + gap, row2, 3, susp);
+    }
+
+    // Unsmooth driver inputs: countersteering and pedal releases must not lag the real controls.
+    const TelemetryInputs inputs = ReadTelemetryInputs(Input_Get(), g_cfg.classicInput);
+    const float iy = y0 + 240 * k, wx = x0 + 56 * k, wy = iy + 43 * k, wr = 30 * k;
+    Line(x0 + 12 * k, iy - 5 * k, x0 + pw - 12 * k, iy - 5 * k, k, C(100, 90, 100, 115));
+    const D3DCOLOR wheelCol = inputs.steering ? C(245, 210, 220, 235) : C(160, 100, 110, 125);
+    Ring(wx, wy, wr, 4 * k, wheelCol);
+    const float angle = inputs.degrees * 0.017453293f;
+    auto WheelPoint = [&](float x, float y, float& px, float& py) {
+        px = wx + (x * cosf(angle) - y * sinf(angle)) * wr;
+        py = wy + (x * sinf(angle) + y * cosf(angle)) * wr;
+    };
+    for (int i = 0; i < 3; i++) {
+        float px, py;
+        WheelPoint(i == 0 ? -0.85f : i == 1 ? 0.85f : 0.0f, i == 2 ? 0.85f : 0.0f, px, py);
+        Line(wx, wy, px, py, 3 * k, wheelCol);
+    }
+    float mx, my;
+    WheelPoint(0.0f, -1.0f, mx, my);
+    Disc(mx, my, 4 * k, 12, C(255, 255, 180, 65));
+    Disc(wx, wy, 7 * k, 16, wheelCol);
+    ShadowText(wx - TextWidth("WHEEL") * 0.5f, iy, "WHEEL", wheelCol, k);
+    if (inputs.steering) snprintf(buf, sizeof(buf), "%+.0f deg", inputs.degrees);
+    else snprintf(buf, sizeof(buf), "N/A");
+    ShadowText(wx - TextWidth(buf) * 0.5f, wy + wr + 5 * k, buf, wheelCol, k);
+
+    const char* const names[4] = {"GAS", "BRAKE", "CLUTCH", "H-BRAKE"};
+    const D3DCOLOR colors[4] = {C(235, 90, 215, 120), C(235, 245, 85, 65),
+                               C(235, 100, 175, 255), C(235, 255, 190, 65)};
+    for (int i = 0; i < 4; i++) {
+        float cx = x0 + (137 + i * 75) * k;
+        float top = iy + 23 * k, bottom = top + 50 * k;
+        ShadowText(cx - TextWidth(names[i]) * 0.5f, iy, names[i], C(240, 210, 220, 235), k);
+        Quad(cx - 12 * k, top, cx + 12 * k, bottom, C(170, 35, 40, 50));
+        if (inputs.bound[i]) {
+            Quad(cx - 12 * k, bottom - 50 * k * inputs.pedal[i], cx + 12 * k, bottom, colors[i]);
+            snprintf(buf, sizeof(buf), "%.0f%%", inputs.pedal[i] * 100.0f);
+        } else snprintf(buf, sizeof(buf), "N/A");
+        ShadowText(cx - TextWidth(buf) * 0.5f, bottom + 5 * k, buf, colors[i], k);
     }
 
     // The bottom row: the force now and the most of the run, the front axle's share of the load, and

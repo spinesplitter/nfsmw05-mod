@@ -102,3 +102,4 @@ void Physics_EraseOldKeys(std::vector<IniWrite>* writes);
 // How far behind where the game puts it the current car's engine smoke comes out (m): the
 // rear- and mid-engined cars have their engine behind the driver. 0 for the others.
 float Physics_EngineSmokeBack();
+float Physics_DefaultEngineSmokeBack();

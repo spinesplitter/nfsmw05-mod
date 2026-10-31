@@ -34,11 +34,14 @@
 // Popped tires: spike strips call ISpikeable::Puncture (DamageRacer), the tire goes flat 0.5 s later
 // and the chassis reports it to the suspension. The handicap itself is in physics.cpp.
 #include "game.h"
+#include "impact_damage.h"
 #include "common.h"
 #include "input.h"
 #include "ui.h"
 #include "hud.h"
 #include "physics.h"
+#include "shift_direction.h"
+#include "telemetry.h"
 #include "vfx.h"
 #include "traffic.h"
 #include "controls.h"
@@ -230,6 +233,8 @@ float Engagement(float pedal) {
 
 // Driven wheels turning against the requested direction (e.g. reverse while rolling forward)?
 bool WrongDirection(uint8_t* eng, int gear) {
+    // Allow engaging first while rolling back slowly. Clutch/rev-match checks still apply.
+    if (FirstGearRollbackAllowed(gear, Physics_PlayerSpeed())) return false;
     float w = ((GetDiffAngVel_t)kGetDiffAngVel)(eng, false);   // rad/s, + forward
     if (gear == G_REVERSE) return w > 3.0f;
     return w < -3.0f;
@@ -560,7 +565,7 @@ bool InRace() {
 // until the game repairs it (safehouse).
 void UpdateTotaled(uint8_t* eng) {
     void* damage = PlayerDamageable(eng);
-    bool totaled = damage && ((Float_t)Vtbl(damage)[5])(damage) <= 0.0f;   // GetHealth
+    bool totaled = CarTotaled(damage && ((Float_t)Vtbl(damage)[5])(damage) <= 0.0f, IsBlown(eng));
     if (totaled != s.totaled) {
         s.totaled = totaled;
         s.totaledMsg = 0;
@@ -779,7 +784,7 @@ void __fastcall Hook_OnImpact(uint8_t* dv, void*, const float* arm, const float*
     float mass = rb ? ((Float_t)Vtbl(rb)[6])(rb) : 0.0f;
     if (!(mass > 1.0f)) return;
     float dv_ms = force / mass;
-    float add = (dv_ms - g_cfg.damageMinImpact) * 0.01f * g_cfg.damageStrength;
+    float add = ImpactDamage(dv_ms, g_cfg.damageMinImpact, g_cfg.damageStrength, other == nullptr);
     if (g_cfg.logInputs) Log("damage: impact %.1f m/s (speed %.1f, mass %.0f)%s", dv_ms, speed, mass, add > 0 ? "" : " ignored");
     if (add > 0.0f) {
         AddDamage(s.engine, add, dv_ms);
@@ -919,11 +924,12 @@ namespace {
 // at each stage (the pedal, what the chassis took, what the engine used), the brakes, gear, clutch,
 // engine and gearbox rpm: where a launch loses the start of the pedal.
 void LogLaunch(uint8_t* eng) {
+    if (!PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown())) return;
     static double last;
     InputSnapshot in = Input_Get();
     float speed = Physics_PlayerSpeed() * 3.6f;
     double now = Now();
-    if (!g_cfg.logPhysics || in.pedal[0] < 0.02f || speed > 30.0f || now - last < 0.25) return;
+    if (in.pedal[0] < 0.02f || speed > 30.0f || now - last < 0.25) return;
     last = now;
     const Clutch& c = Field<Clutch>(eng, kER_Clutch);
     Log("launch: %4.1f km/h: pedal %.2f, chassis %.2f, engine %.2f; brake %.2f, handbrake %.2f; gear %d, clutch %d "

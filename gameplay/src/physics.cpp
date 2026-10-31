@@ -138,6 +138,8 @@
 // [Physics] values apply to every car without one.
 #include "common.h"
 #include "physics.h"
+#include "telemetry.h"
+#include "low_speed_tyres.h"
 #include "game.h"
 #include "input.h"
 #include "inisave.h"
@@ -658,7 +660,7 @@ typedef float(__thiscall* ComputeLateralForce_t)(void* tire, float load, float a
 // loose surfaces.
 float Curve(int i, uint8_t* tire, float a) {
     float peak = g_cfg.tyrePeakAngle;
-    float f = 1.0f - (1.0f - g_cfg.tyreSlideGrip) * Smoothstep(peak, 3.0f * peak, a) * Smoothstep(2.0f, 5.0f, s_playerSpeed);
+    float f = 1.0f - (1.0f - g_cfg.tyreSlideGrip) * Smoothstep(peak, 3.0f * peak, a) * low_speed_tyres::Share(s_playerSpeed);
     if (f < 1.0f && LooseSurface(i, tire)) f = 1.0f;
     return f;
 }
@@ -670,7 +672,9 @@ float Curve(int i, uint8_t* tire, float a) {
 // limit, times the curve; a wheel that spins or locks slides on the grip limit times TyreSlideGrip
 // along its skid instead, so its side force is that times the sideways share of the skid (the
 // lateral speed from the slip angle and the ground speed along the wheel, as in Circle).
+// Keep the game's contact force below 2 m/s; blend the replacement in by 5 m/s.
 void TyreCurve(int i, uint8_t* tire) {
+    if (low_speed_tyres::Share(s_playerSpeed) == 0.0f) return;
     float& side = Field<float>(tire, kTire_SideForce);
     float turns = Field<float>(tire, kTire_SlipAngle);
     float a = fabsf(turns) * 360.0f;
@@ -678,7 +682,7 @@ void TyreCurve(int i, uint8_t* tire) {
     if (a > 90.0f) a = 180.0f - a;           // rolling backwards
     float f = Curve(i, tire, a);
     bool sliding = !(s_traction[i] >= 1.0f) || Field<uint8_t>(tire, kTire_Locked);
-    bool log = g_cfg.logPhysics && s_playerSpeed > 5.0f;
+    bool log = PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && s_playerSpeed > 5.0f;
     float budget = s_budget[i], grip = 0.0f, kept = 1.0f;
     if (sliding || log)
         grip = fabsf(((ComputeLateralForce_t)kComputeLateralForce)(tire, Field<float>(tire, kTire_Load), fabsf(turns)) *
@@ -695,7 +699,7 @@ void TyreCurve(int i, uint8_t* tire) {
             want = curve + (slide - curve) * spin;
             if (curve > 1.0f) kept = want / curve;
         }
-        side = turns > 0.0f ? -want : want;
+        side = low_speed_tyres::Blend(side, turns > 0.0f ? -want : want, s_playerSpeed);
     } else {
         side *= f;
     }
@@ -716,8 +720,10 @@ void TyreCurve(int i, uint8_t* tire) {
 // along the wheel, angular velocity * radius - the slip), and room is at least that, so a car
 // sliding further sideways gets side grip back and a power slide can be held. FrictionCircle up to
 // 1 blends room from 1 (0) to all of it (1); above 1 the drive torque counts that many times over
-// (an exaggeration, for testing).
+// (an exaggeration, for testing). The additional cut fades in from 2 to 5 m/s so
+// drive torque alone cannot remove the game's lateral support while almost stationary.
 float Circle(int i, uint8_t* tire) {
+    if (low_speed_tyres::Share(s_playerSpeed) == 0.0f) return 1.0f;
     float budget = s_budget[i], radius = Field<float>(tire, kTire_Radius);
     if (!(budget > 0.0f) || !(radius > 0.0f)) return 1.0f;
     float slip = Field<float>(tire, kTire_Slip);
@@ -740,7 +746,7 @@ float Circle(int i, uint8_t* tire) {
     }
     float cap = budget * (1.0f - std::min(k, 1.0f) * (1.0f - room));
     float side = fabsf(Field<float>(tire, kTire_SideForce));
-    float f = side > cap ? cap / side : 1.0f;
+    float f = low_speed_tyres::Blend(1.0f, side > cap ? cap / side : 1.0f, s_playerSpeed);
     CircleStats& c = s_circle[i >= 2];
     c.steps++, c.use += std::min(u, 9.0f), c.keep += f;
     c.useMax = std::max(c.useMax, u);
@@ -752,6 +758,7 @@ float Circle(int i, uint8_t* tire) {
 // factor returned.
 // The tie of a player's tyre's wheel to the road for this step's spin: the game's (its traction,
 // final by now), or while the engine drives it past the limit traction^(1 + 15 * WheelspinInSlides).
+// The extra amplification fades in with ground speed, never with spinning-wheel speed.
 void WheelTie(int i, uint8_t* tire) {
     float t = Field<float>(tire, kTire_GripUsed);
     s_wheelTie[i] = t;
@@ -759,9 +766,9 @@ void WheelTie(int i, uint8_t* tire) {
     float wheel = Field<float>(tire, kTire_AngVel) * Field<float>(tire, kTire_Radius);
     float torque = Field<float>(tire, kTire_DriveTorque);
     if (!(torque * wheel > 0.0f)) return;    // not driven, or engine braking
-    float tie = powf(t, 1.0f + 15.0f * g_cfg.slideWheelspin);
+    float tie = low_speed_tyres::WheelTie(t, g_cfg.slideWheelspin, s_playerSpeed);
     s_wheelTie[i] = tie;
-    if (g_cfg.logPhysics && s_playerSpeed > 5.0f) {
+    if (PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && s_playerSpeed > 5.0f) {
         CurveStats& s = s_curve[i >= 2];
         s.freed++, s.tie += t, s.ourTie += tie, s.slip += fabsf(Field<float>(tire, kTire_Slip));
     }
@@ -1075,7 +1082,7 @@ void Aids(uint8_t* susp, uint8_t* iface, float dT) {
     s_aid.tcActive = s_aid.tcGas < 0.97f;
     if (s_aid.tcActive) s_aid.tcSince = Now();
     static double lastLog;
-    if ((g_cfg.logInputs || g_cfg.logPhysics) && (absNow || s_aid.tcActive) && Now() - lastLog > 0.5) {
+    if ((g_cfg.logInputs || PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown())) && (absNow || s_aid.tcActive) && Now() - lastLog > 0.5) {
         lastLog = Now();
         Log("physics: aids: ABS %s (lock %.2f, brake x%.2f %.2f %.2f %.2f) TC %s (spin %.1f m/s, throttle x%.2f) speed %.1f",
             absNow ? "active" : "-", lockMax, s_aid.absMul[0], s_aid.absMul[1], s_aid.absMul[2], s_aid.absMul[3],
@@ -1139,7 +1146,7 @@ void Diagnostics(uint8_t* rb) {
         warnedCar = rb;
         Log("physics: the player's car moves but its suspension steps don't reach the mod: no physics settings on it");
     }
-    if (g_cfg.logPhysics && s_playerSpeed > 5.0f)
+    if (PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && s_playerSpeed > 5.0f)
         Log("physics: %3.0f km/h: suspension %d steps (%d with the mod's values), aero %d; downforce %.0f%% of the "
             "weight (the game's %.0f%%)",
             s_playerSpeed * 3.6f, s_diag.suspSteps, s_diag.suspCustom, s_diag.aeroSteps,
@@ -1147,19 +1154,19 @@ void Diagnostics(uint8_t* rb) {
             s_diag.weight > 0 ? s_diag.gameForce / s_diag.weight * 100.0f : 0.0f);
     for (int a = 0; a < 2; a++) {
         const CircleStats& c = s_circle[a];
-        if (!g_cfg.logPhysics || c.steps == 0) continue;
+        if (!PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) || c.steps == 0) continue;
         float n = (float)c.steps;
         Log("physics:   %s driven (%d tyre steps, throttle %.2f): drive torque %.0f%% of the grip (up to %.0f%%); "
             "side force held to the friction circle %.0f%% of the steps, kept x%.2f",
             a ? "rear" : "front", c.steps, s_gas, c.use / n * 100.0f, c.useMax * 100.0f, c.held / n * 100.0f, c.keep / n);
     }
-    if (g_cfg.logPhysics && s_playerSpeed > 5.0f && g_cfg.loadSensitivity > 0.0f)
+    if (PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && s_playerSpeed > 5.0f && g_cfg.loadSensitivity > 0.0f)
         Log("physics:   tyres FL FR RL RR: load %.2f %.2f %.2f %.2f of static, grip limit x%.2f %.2f %.2f %.2f",
             s_lsRatio[0], s_lsRatio[1], s_lsRatio[2], s_lsRatio[3], s_lsFactor[0], s_lsFactor[1], s_lsFactor[2],
             s_lsFactor[3]);
     for (int a = 0; a < 2; a++) {
         const CurveStats& s = s_curve[a];
-        if (!g_cfg.logPhysics || s.steps == 0) continue;
+        if (!PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) || s.steps == 0) continue;
         float n = (float)s.steps;
         Log("physics:   %s tyre curve (%d tyre steps, %.0f%% sliding model): slip angle %.1f deg (up to %.0f), curve "
             "x%.2f (down to x%.2f), the game's side force %.2f of the grip limit; spinning or locked wheels x%.2f of it",
@@ -1471,6 +1478,10 @@ void Physics_EraseOldKeys(std::vector<IniWrite>* writes) {
 }
 
 float Physics_EngineSmokeBack() {
+    return g_cfg.engineSmokeBack;
+}
+
+float Physics_DefaultEngineSmokeBack() {
     // The game's car names (its CARS folders). The 911s and the Clio V6 have it at the back, the
     // others in the middle, behind the seats.
     static const struct { const char* car; float back; } kBehind[] = {
@@ -1491,11 +1502,20 @@ bool Physics_IsPerCar(const void* value) {
 void Physics_SetCar(const char* name) {
     std::string car = name ? name : "";
     if (car == pc.car) return;
+    // Keep a change with the old car even if the menu has not saved yet.
+    static float loadedSmoke = 0.0f;
+    if (!pc.car.empty() && g_cfg.engineSmokeBack != loadedSmoke)
+        IniSave_Queue({{IniPath(), "Smoke." + pc.car, "Back", std::to_string(g_cfg.engineSmokeBack)}});
     IniSave_Flush();   // the last car's section written before this one's is read
     ReadGroups();
     if (Shared()) StoreGlobal();
     SyncGroup();
     pc.car = car;
+    char smoke[64];
+    std::string smokeSection = "Smoke." + car;
+    GetPrivateProfileStringA(smokeSection.c_str(), "Back", "", smoke, sizeof(smoke), IniPath());
+    g_cfg.engineSmokeBack = smoke[0] ? Clamp((float)atof(smoke), -5.0f, 5.0f) : Physics_DefaultEngineSmokeBack();
+    loadedSmoke = g_cfg.engineSmokeBack;
     pc.group.clear();
     std::string section = "Car." + car;
     char buf[64];
@@ -1957,7 +1977,7 @@ void __fastcall Hook_WorldModify(uint8_t* self, void*, const void* surface, cons
     if (!Plausible((uintptr_t)owner) || !((bool(__thiscall*)(void*))(*(uintptr_t**)owner)[9])(owner)) return;
     float& e = Field<float>(moment, kMo_Elasticity);
     static int logged;
-    if (g_cfg.logPhysics && logged < 5 && e > 0.0f) {
+    if (PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && logged < 5 && e > 0.0f) {
         logged++;
         Log("physics: wall hit: the game's bounce %.2f, kept %.2f", e, e * g_cfg.wallBounce);
     }

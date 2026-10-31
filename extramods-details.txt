@@ -1,0 +1,35 @@
+﻿FINAL NON-ARRAY SCALAR VALUES
+TrafficLevel: 142 targets; values: 0, 100
+NumLaps: 22 targets; values: 10
+MaxHeatLevel: 10 targets; values: 10, 5
+CashValue: 23 targets; values: 100000, 1000000, 120000, 160000, 200000, 240000, 280000, 30000, 320000, 360000, 400000, 50000
+RollingStart: 2 targets; values: False
+CatchUpSkill: 1 targets; values: 10
+KnockoutsPerLap: 1 targets; values: 2
+PursuitLevel: 2 targets; values: 10, 5
+Name: 1 targets; values: race_bin_11/11_2_1_sprint
+TimeLimit: 1 targets; values: 100
+COPY AND DELETE
+929: delete_field gameplay race_bin_15/15_2_1_sprint IntroMovie
+930: delete_field gameplay race_bin_15/15_2_1_sprint IntroNIS
+933: delete_field gameplay race_bin_15/15_2_1_sprint RollingStart
+934: delete_field gameplay race_bin_15/15_2_1_sprint PursuitLevel
+1547: copy_fields gameplay race_bin_05/7_4_2_r_tollbooth race_bin_05/6_4_1_r_tollbooth optional
+1548: delete_field gameplay race_bin_05/6_4_1_r_tollbooth Shortcuts
+1549: copy_fields gameplay race_bin_05/6_4_1_r_tollbooth race_bin_05/5_4_1_tollbooth optional
+1575: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/5_4_1_r_tollbooth optional
+1576: copy_fields gameplay race_bin_04/7_4_3_r_tollbooth race_bin_04/4_4_1_tollbooth optional
+1596: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_tollbooth optional
+1597: copy_fields gameplay race_bin_03/4_4_1_r_tollbooth race_bin_03/3_4_1_r_tollbooth optional
+1657: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_2_tollbooth optional
+1659: copy_fields gameplay race_bin_02/2_4_3_tollbooth race_bin_02/2_4_1_tollbooth optional
+1688: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_2_tollbooth optional
+1690: copy_fields gameplay race_bin_01/2_4_3_r_tollbooth race_bin_01/1_4_1_tollbooth optional
+1942: delete_field gameplay race_bin_02/2_4_1_tollbooth BarrierExemptions
+1943: delete_field gameplay race_bin_02/2_4_2_tollbooth BarrierExemptions
+SPECIAL COUNTS / FINAL TARGETS IN JSON
+16_1_1_circuit: 15
+16_2_3_sprint: 1
+race_bin_14/14_3_1_lapknockout: 15
+race_bin_15/15_1_1_circuit: 3
+race_bin_15/15_2_1_sprint: 3

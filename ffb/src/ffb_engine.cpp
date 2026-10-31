@@ -98,7 +98,6 @@ public:
         ep.carHits = c.carHits;
         ep.offroad = c.offroadVibration;
         ep.kerbs = c.kerbs;
-        ep.surface = c.surfaceRumble;
         ep.tyreScrub = c.tyreScrub;
         s.effects = effects_.Step(t, drive_, now, dt, ep);
         float fx = PrioritizedEffectSum(s.effects, &s.hitPriority);

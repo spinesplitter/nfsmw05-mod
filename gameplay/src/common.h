@@ -46,6 +46,11 @@ constexpr int kMaxGears = 7;    // forward gears on the shifter
 
 struct Config {
     bool enabled = true;
+    bool disableRubberband = false; // [Races], racer catch-up only
+    float tollboothTimeBonus = 0.0f; // seconds, once per tollbooth start/restart
+    float opponentSpeed = 1.0f;      // AI racer target speed multiplier; not world time
+    float trafficMultiplier = 1.0f; // civilian density request, bounded to the game's 0..100
+    float engineSmokeBack = 0.0f; // [Smoke.<car>] only, never a class/group tuning value
 
     // [Devices] JoyN = name substring; empty = Nth attached game controller
     std::string joyName[kMaxJoys];
@@ -184,7 +189,7 @@ struct Config {
     float rollBalance = 0.0f;       // anti-roll bar stiffness moved to the front (+, understeer) or rear (-), per car
     float suspFirmness = 1.0f;      // springs and anti-roll bars times this, dampers by its square root (per car)
     float wallBounce = 0.0f;        // share of the game's wall rebound the player's car keeps (0 = none)
-    int   logPhysics = 0;           // 1: a physics line every second while driving (aero, grip factors)
+    int   logPhysics = 0;           // 1: physics diagnostics only while the telemetry panel is visible
     float slideWheelspin = 0.5f;    // driven wheels past the limit spin up: the game's tie to the road ^(1 + 15 * this) (0 = the game's)
     float frictionCircle = 1.0f;    // a driven tyre's side force kept within the grip its drive torque leaves (0 = off, above 1 exaggerated)
     float gravity = 1.0f;
