@@ -47,7 +47,7 @@ constexpr int kMaxGears = 7;    // forward gears on the shifter
 struct Config {
     bool enabled = true;
     float raceTrafficFloor = 75.0f; // offline race density floor; -1 keeps event settings
-    float careerTrafficMultiplier = 3.0f; // live Career race/free-roam post-curve spawn-rate request
+    float careerTrafficMultiplier = 3.0f; // 1..10x offline traffic rate/type limits; drag excluded
     float opponentSpeed = 1.0f; // Career AI target speed multiplier; player/cops/traffic unchanged
     float tollboothTimeBonus = 0.0f; // seconds, once per tollbooth start/restart
     float engineSmokeBack = 0.0f; // [Smoke.<car>] only, never a class/group tuning value

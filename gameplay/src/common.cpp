@@ -231,7 +231,7 @@ void LoadConfig() {
     c.damageSmoke = ReadInt("Damage", "Smoke", 1) != 0;
     c.noHeavySupport = ReadInt("Traffic", "NoHeavySupport", 1) != 0;   // replaces NoSuvCops (which also removed SUV patrols)
     c.raceTrafficFloor = Clamp(ReadFloat("Traffic", "RaceDensityFloor", 75.0f), -1.0f, 100.0f);
-    c.careerTrafficMultiplier = Clamp(ReadFloat("Traffic", "CareerMultiplier", 3.0f), 1.0f, 3.0f);
+    c.careerTrafficMultiplier = Clamp(ReadFloat("Traffic", "CareerMultiplier", 3.0f), 1.0f, 10.0f);
     c.opponentSpeed = Clamp(ReadFloat("Races", "OpponentSpeed", 1.0f), 0.25f, 2.0f);
     c.normalDragRaces = ReadInt("Races", "NormalDragRaces", 1) != 0;
     c.normalDragHud = ReadInt("Races", "NormalDragHud", 1) != 0;

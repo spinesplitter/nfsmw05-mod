@@ -82,7 +82,18 @@ static void __fastcall ResetRaceTimer(void* race, void*) {
     *(float*)((uint8_t*)race + 0x1980) = 0.0f;
 }
 static int __fastcall TollboothType(void*, void*) { return 4; }
+static int __fastcall DragTrafficType(void*, void*) { return kRaceDrag; }
 static void TestRaceControls() {
+    uint8_t trafficRace[0x1970] = {};
+    auto trafficType = s_trafficRaceType;
+    s_trafficRaceType = &DragTrafficType;
+    assert(TrafficRaceType(nullptr) == -1);
+    assert(TrafficRaceType(trafficRace) == -1); // free roam ignores stale parameters
+    *(int*)(trafficRace + 0x1960) = 1;
+    assert(TrafficRaceType(trafficRace) == kRaceDrag); // no parameters: fail closed
+    *(void**)(trafficRace + 0x1968) = trafficRace;
+    assert(TrafficRaceType(trafficRace) == kRaceDrag);
+    s_trafficRaceType = trafficType;
     assert(Config{}.careerTrafficMultiplier == 3.0f);
     g_cfg.careerTrafficMultiplier = 3;
     g_cfg.raceTrafficFloor = 75;
@@ -92,7 +103,7 @@ static void TestRaceControls() {
         assert(CareerTrafficLimit(0, 2, play) == 0); // retain unlimited sentinel
         assert(CareerTrafficLimit(UINT32_MAX, 2, play) == UINT32_MAX);
         for (int context : {0, 1, 3})
-            assert(CareerTrafficLimit(4, context, play) == 4);
+            assert(CareerTrafficLimit(4, context, play) == (context == 1 ? 4u : 12u));
     }
     assert(CareerTrafficLimit(4, 2, 7) == 4);
     assert(CareerTrafficValue(0.75f, 2, 1) == 0.75f);
@@ -101,11 +112,12 @@ static void TestRaceControls() {
         assert(CareerSpawnRateValue(2.0f, 2, play) == 6.0f);
         assert(CareerSpawnRateValue(0.0f, 2, play) == 0.0f);
         for (int context : {0, 1, 3})
-            assert(CareerSpawnRateValue(2.0f, context, play) == 2.0f);
+            assert(CareerSpawnRateValue(2.0f, context, play) == (context == 1 ? 2.0f : 6.0f));
     }
     assert(CareerSpawnRateValue(2.0f, 2, 7) == 2.0f);
     for (int context : {0, 1, 3})
-        for (int play : {0, 1}) assert(CareerTrafficValue(0.5f, context, play) == 0.5f);
+        for (int play : {0, 1}) assert(CareerTrafficValue(0.5f, context, play) ==
+            (context != 1 && play == 0 ? 0.75f : 0.5f));
     assert(CareerTrafficValue(0.5f, 2, 7) == 0.5f);
     assert(CareerTrafficValue(0, 2, 1) == 0);
     for (int repeat = 0; repeat < 20; ++repeat)
@@ -121,6 +133,24 @@ static void TestRaceControls() {
     assert(RaceTrafficValue(0, 2) == 75);
     assert(RaceTrafficValue(100, 2) == 100);
     assert(RaceTrafficValue(10, 1) == 10);
+    // Every traffic override must bypass drag, online and unsupported contexts.
+    for (float multiplier : {1.0f, 2.0f, 3.0f, 5.0f, 10.0f, 100.0f}) {
+        g_cfg.careerTrafficMultiplier = multiplier;
+        for (int context : {-1, 0, 1, 2, 3, 4}) {
+            assert(CareerTrafficLimit(4, context, 1, kRaceDrag) == 4);
+            assert(CareerSpawnRateValue(8, context, 1, kRaceDrag) == 8);
+            assert(CareerTrafficValue(0.25f, context, 1, kRaceDrag) == 0.25f);
+            assert(RaceTrafficValue(10, context, kRaceDrag) == 10);
+            assert(CareerTrafficLimit(4, context, 1, -1) == 4);
+            for (int play : {0, 1}) for (int type : {0, 1, 3, 4, 5}) {
+                bool eligible = context >= 0 && context <= 3 && context != 1;
+                float scale = eligible ? Clamp(multiplier, 1.0f, 10.0f) : 1.0f;
+                assert(CareerTrafficLimit(4, context, play, type) == (uint32_t)(4 * scale));
+                assert(CareerSpawnRateValue(8, context, play, type) == 8 * scale);
+            }
+        }
+    }
+    g_cfg.careerTrafficMultiplier = 3;
     g_cfg.raceTrafficFloor = -1;
     assert(RaceTrafficValue(10, 2) == 10);
     uint8_t race[0x19A0] = {};

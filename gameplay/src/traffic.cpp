@@ -12,8 +12,8 @@
 // Extra Options owns Quick Race presets. These separate runtime overrides never patch ExOpts.
 namespace {
 
-int RaceTrafficValue(int original, int mode) {
-    if (mode == 1 || g_cfg.raceTrafficFloor < 0) return original;
+int RaceTrafficValue(int original, int mode, int type = -1) {
+    if (mode == 1 || type == 2 || g_cfg.raceTrafficFloor < 0) return original;
     return std::max(original, (int)lroundf(Clamp(g_cfg.raceTrafficFloor, 0.0f, 100.0f)));
 }
 
@@ -27,9 +27,22 @@ static int(__fastcall* s_density)(void*, void*) = nullptr;
 // curve at 439BF0. Keep density in its native range and scale the curve result.
 static float(__cdecl* s_liveDensity)() = (float(__cdecl*)())0x41EC20;
 
-float CareerTrafficValue(float original, int context, int playMode) {
-    if (context != 2 || (playMode != 0 && playMode != 1)) return original;
-    float multiplier = Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 3.0f);
+static int(__fastcall* s_trafficRaceType)(void*, void*) = (int(__fastcall*)(void*, void*))0x5FAA20;
+
+int TrafficRaceType(uint8_t* race) {
+    if (!race || *(int*)(race + 0x1960) != 1) return -1;
+    auto parms = *(void**)(race + 0x1968);
+    return parms ? s_trafficRaceType(parms, nullptr) : 2; // unknown active race: fail closed
+}
+
+bool TrafficEligible(int context, int playMode, int type) {
+    return context >= 0 && context <= 3 && context != 1 &&
+        (playMode == 0 || (playMode == 1 && type >= 0 && type != 2));
+}
+
+float CareerTrafficValue(float original, int context, int playMode, int type = 0) {
+    if (!TrafficEligible(context, playMode, type)) return original;
+    float multiplier = Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 10.0f);
     if (multiplier == 1.0f) return original; // exact stock bypass, including free roam
     if (playMode == 0 && g_cfg.raceTrafficFloor >= 0.0f)
         original = std::max(original, Clamp(g_cfg.raceTrafficFloor, 0.0f, 100.0f) * 0.01f);
@@ -37,9 +50,9 @@ float CareerTrafficValue(float original, int context, int playMode) {
     return original;
 }
 
-float CareerSpawnRateValue(float original, int context, int playMode) {
-    if (context != 2 || (playMode != 0 && playMode != 1)) return original;
-    return original > 0.0f ? original * Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 3.0f) : original;
+float CareerSpawnRateValue(float original, int context, int playMode, int type = 0) {
+    if (!TrafficEligible(context, playMode, type)) return original;
+    return original > 0.0f ? original * Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 10.0f) : original;
 }
 
 static float(__fastcall* s_spawnRate)(void*, void*, float) =
@@ -56,9 +69,9 @@ struct TrafficPatternEntry {
 };
 static_assert(sizeof(TrafficPatternEntry) == 24, "trafficpattern record size");
 
-uint32_t CareerTrafficLimit(uint32_t original, int context, int playMode) {
-    if (!original || context != 2 || (playMode != 0 && playMode != 1)) return original;
-    double scaled = ceil((double)original * Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 3.0f));
+uint32_t CareerTrafficLimit(uint32_t original, int context, int playMode, int type = 0) {
+    if (!original || !TrafficEligible(context, playMode, type)) return original;
+    double scaled = ceil((double)original * Clamp(g_cfg.careerTrafficMultiplier, 1.0f, 10.0f));
     return scaled >= 4294967295.0 ? UINT32_MAX : (uint32_t)scaled;
 }
 
@@ -72,8 +85,9 @@ TrafficPatternEntry* __fastcall CareerPatternEntry(void* pattern, void* edx, uin
     int context = *(int*)(race + 0x1964), playMode = *(int*)(race + 0x1960);
     static thread_local TrafficPatternEntry copy;
     copy = *entry;
-    copy.maximum = CareerTrafficLimit(entry->maximum, context, playMode);
-    copy.percent = CareerTrafficLimit(entry->percent, context, playMode);
+    int type = TrafficRaceType(race);
+    copy.maximum = CareerTrafficLimit(entry->maximum, context, playMode, type);
+    copy.percent = CareerTrafficLimit(entry->percent, context, playMode, type);
     return &copy;
 }
 
@@ -82,10 +96,10 @@ float __fastcall CareerSpawnRate(void* curve, void* edx, float density) {
     auto race = *(uint8_t**)0x91E000;
     if (!race) return original;
     int context = *(int*)(race + 0x1964), playMode = *(int*)(race + 0x1960);
-    float scaled = CareerSpawnRateValue(original, context, playMode);
+    float scaled = CareerSpawnRateValue(original, context, playMode, TrafficRaceType(race));
     static int lastContext = -1, lastPlayMode = -1;
     if (context != lastContext || playMode != lastPlayMode) {
-        Log("traffic: context %d play %d density %.3f spawn rate %.3f -> %.3f (pool limits unchanged)",
+        Log("traffic: context %d play %d density %.3f spawn rate %.3f -> %.3f (pool capacities unchanged)",
             context, playMode, density, original, scaled);
         lastContext = context;
         lastPlayMode = playMode;
@@ -97,11 +111,31 @@ float __cdecl CareerLiveDensity() {
     float original = s_liveDensity();
     auto race = *(uint8_t**)0x91E000;
     if (!race) return original;
-    return CareerTrafficValue(original, *(int*)(race + 0x1964), *(int*)(race + 0x1960));
+    return CareerTrafficValue(original, *(int*)(race + 0x1964), *(int*)(race + 0x1960), TrafficRaceType(race));
 }
 
 int __fastcall RaceDensity(void* parms, void* edx) {
-    return RaceTrafficValue(s_density(parms, edx), RaceMode());
+    return RaceTrafficValue(s_density(parms, edx), RaceMode(), s_trafficRaceType(parms, nullptr));
+}
+
+// Observe the existing attempt; never bypass the game's capacity/road/visibility checks.
+static bool(__fastcall* s_spawnAttempt)(void*, void*) = (bool(__fastcall*)(void*, void*))0x439A10;
+bool __fastcall TrafficSpawnAttempt(void* manager, void* edx) {
+    bool result = s_spawnAttempt(manager, edx);
+    static unsigned attempts = 0, successes = 0;
+    static double nextLog = 0;
+    ++attempts;
+    if (result) ++successes;
+    double now = Now();
+    if (now >= nextLog) {
+        auto race = *(uint8_t**)0x91E000;
+        Log("traffic: attempts %u successes %u in sample; context %d play %d type %d multiplier %.1fx",
+            attempts, successes, race ? *(int*)(race + 0x1964) : -1,
+            race ? *(int*)(race + 0x1960) : -1, TrafficRaceType(race), g_cfg.careerTrafficMultiplier);
+        attempts = successes = 0;
+        nextLog = now + 15.0;
+    }
+    return result;
 }
 
 // Independent runtime roster view. The optional More opponents VLT script was
@@ -208,11 +242,13 @@ void InstallCareerRoster() {
 
 void InstallRaceOverrides() {
     InstallCareerRoster();
-    if (Expect(0x426299, {0x52, 0x68, 0x95, 0xC7, 0xE3, 0x94, 0xE8, 0x69, 0xE5, 0x02, 0x00}) &&
+    if (!RetargetCall(0x439C6B, 0x439A10, (void*)&TrafficSpawnAttempt))
+        Log("traffic: spawn diagnostics unavailable (unexpected attempt call)");
+    if (Expect(0x426299, {0x52, 0x68, 0x95, 0xC7, 0xE3, 0x94, 0x89, 0x56, 0x60, 0xE8, 0x69, 0xE5, 0x02, 0x00}) &&
         Expect(0x42630B, {0x8B, 0x47, 0x10}) &&
         Expect(0x42631D, {0x8B, 0x47, 0x14})) {
         WriteRel(0x4262A2, 0xE8, (void*)&CareerPatternEntry);
-        Log("traffic: Career per-type maximum and percentage limits scale with traffic multiplier; array capacities unchanged");
+        Log("traffic: offline per-type maximum and percentage limits scale 1..10x; drag excluded; array capacities unchanged");
     } else Log("traffic: per-type limit scaling unavailable (unexpected traffic selection code)");
     // Install the density floor and post-curve multiplier together, or neither.
     if (Expect(0x439BBD, {0xE8,0x5E,0x50,0xFE,0xFF}) &&
@@ -220,7 +256,7 @@ void InstallRaceOverrides() {
         Expect(0x6533B0, {0x51,0xD9,0x44,0x24,0x08,0x56,0x8B,0xF1})) {
         WriteRel(0x439BBD, 0xE8, (void*)&CareerLiveDensity);
         WriteRel(0x439BF0, 0xE8, (void*)&CareerSpawnRate);
-        Log("traffic: Career post-curve spawn-rate multiplier installed; spawn/pool limits unchanged");
+        Log("traffic: offline post-curve spawn-rate multiplier installed (1..10x); drag excluded; pool capacities unchanged");
     } else Log("traffic: Career spawn-rate multiplier unavailable (unexpected density/curve code)");
     // Six bytes, three complete position-independent instructions. Never hook an existing detour.
     if (Expect(0x5FABB0, {0x56, 0x8B, 0xF1, 0x8B, 0x46, 0x0C}))
