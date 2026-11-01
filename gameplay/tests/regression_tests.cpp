@@ -83,7 +83,50 @@ static void __fastcall ResetRaceTimer(void* race, void*) {
 }
 static int __fastcall TollboothType(void*, void*) { return 4; }
 static int __fastcall DragTrafficType(void*, void*) { return kRaceDrag; }
+static unsigned stageCalls;
+static bool stageResult;
+static void* stageManager;
+static bool __fastcall SpawnRoadStub(void* manager, void*, void* position) {
+    assert(manager == stageManager && position == stageManager);
+    ++stageCalls;
+    return stageResult;
+}
+static uint32_t __fastcall SpawnSelectionStub(void* manager, void*) {
+    assert(manager == stageManager);
+    ++stageCalls;
+    return stageResult ? 0x12345678u : 0;
+}
+static void* __fastcall SpawnVehicleStub(void* manager, void*, uint32_t key, bool allowCreate) {
+    assert(manager == stageManager && key == 0x12345678u && allowCreate == stageResult);
+    ++stageCalls;
+    return stageResult ? manager : nullptr;
+}
 static void TestRaceControls() {
+    auto road = s_spawnRoad;
+    auto selection = s_spawnSelection;
+    auto vehicle = s_spawnVehicle;
+    s_spawnRoad = &SpawnRoadStub;
+    s_spawnSelection = &SpawnSelectionStub;
+    s_spawnVehicle = &SpawnVehicleStub;
+    stageManager = &stageCalls;
+    stageCalls = 0;
+    s_spawnStages = {};
+    for (bool result : {false, true}) {
+        stageResult = result;
+        assert(TrafficSpawnRoad(stageManager, nullptr, stageManager) == result);
+        assert(TrafficSpawnSelection(stageManager, nullptr) == (result ? 0x12345678u : 0));
+        assert(TrafficSpawnVehicle(stageManager, nullptr, 0x12345678u, result) ==
+            (result ? stageManager : nullptr));
+    }
+    assert(stageCalls == 6); // exactly one original call per stage; no retries
+    assert(s_spawnStages.roads == 2 && s_spawnStages.roadOK == 1);
+    assert(s_spawnStages.selections == 2 && s_spawnStages.selectionOK == 1);
+    assert(s_spawnStages.vehicles == 2 && s_spawnStages.vehicleOK == 1);
+    assert(s_spawnStages.creationAllowed == 1);
+    s_spawnRoad = road;
+    s_spawnSelection = selection;
+    s_spawnVehicle = vehicle;
+    s_spawnStages = {};
     uint8_t trafficRace[0x1970] = {};
     auto trafficType = s_trafficRaceType;
     s_trafficRaceType = &DragTrafficType;

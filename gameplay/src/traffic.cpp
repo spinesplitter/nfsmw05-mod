@@ -118,6 +118,42 @@ int __fastcall RaceDensity(void* parms, void* edx) {
     return RaceTrafficValue(s_density(parms, edx), RaceMode(), s_trafficRaceType(parms, nullptr));
 }
 
+// Observe the three direct calls in 439A10 without repeating them or bypassing checks.
+struct TrafficSpawnStages {
+    unsigned roads = 0, roadOK = 0, selections = 0, selectionOK = 0;
+    unsigned vehicles = 0, vehicleOK = 0, creationAllowed = 0;
+};
+static TrafficSpawnStages s_spawnStages;
+static bool s_spawnStagesInstalled = false;
+static bool(__fastcall* s_spawnRoad)(void*, void*, void*) =
+    (bool(__fastcall*)(void*, void*, void*))0x437DC0;
+static uint32_t(__fastcall* s_spawnSelection)(void*, void*) =
+    (uint32_t(__fastcall*)(void*, void*))0x426230;
+static void*(__fastcall* s_spawnVehicle)(void*, void*, uint32_t, bool) =
+    (void*(__fastcall*)(void*, void*, uint32_t, bool))0x426380;
+
+bool __fastcall TrafficSpawnRoad(void* manager, void* edx, void* position) {
+    ++s_spawnStages.roads;
+    bool result = s_spawnRoad(manager, edx, position);
+    if (result) ++s_spawnStages.roadOK;
+    return result;
+}
+
+uint32_t __fastcall TrafficSpawnSelection(void* manager, void* edx) {
+    ++s_spawnStages.selections;
+    uint32_t result = s_spawnSelection(manager, edx);
+    if (result) ++s_spawnStages.selectionOK;
+    return result;
+}
+
+void* __fastcall TrafficSpawnVehicle(void* manager, void* edx, uint32_t key, bool allowCreate) {
+    ++s_spawnStages.vehicles;
+    if (allowCreate) ++s_spawnStages.creationAllowed;
+    void* result = s_spawnVehicle(manager, edx, key, allowCreate);
+    if (result) ++s_spawnStages.vehicleOK;
+    return result;
+}
+
 // Observe the existing attempt; never bypass the game's capacity/road/visibility checks.
 static bool(__fastcall* s_spawnAttempt)(void*, void*) = (bool(__fastcall*)(void*, void*))0x439A10;
 bool __fastcall TrafficSpawnAttempt(void* manager, void* edx) {
@@ -132,6 +168,13 @@ bool __fastcall TrafficSpawnAttempt(void* manager, void* edx) {
         Log("traffic: attempts %u successes %u in sample; context %d play %d type %d multiplier %.1fx",
             attempts, successes, race ? *(int*)(race + 0x1964) : -1,
             race ? *(int*)(race + 0x1960) : -1, TrafficRaceType(race), g_cfg.careerTrafficMultiplier);
+        if (s_spawnStagesInstalled)
+            Log("traffic: stages road %u/%u type %u/%u vehicle %u/%u creation-allowed %u; early-gate %u post-vehicle %u",
+                s_spawnStages.roadOK, s_spawnStages.roads,
+                s_spawnStages.selectionOK, s_spawnStages.selections,
+                s_spawnStages.vehicleOK, s_spawnStages.vehicles, s_spawnStages.creationAllowed,
+                attempts - s_spawnStages.roads, s_spawnStages.vehicleOK - successes);
+        s_spawnStages = {};
         attempts = successes = 0;
         nextLog = now + 15.0;
     }
@@ -242,6 +285,17 @@ void InstallCareerRoster() {
 
 void InstallRaceOverrides() {
     InstallCareerRoster();
+    // Validate the entire set before redirecting any stage. Each wrapper preserves
+    // the original thiscall arguments, return value and number of invocations.
+    if (Expect(0x439A39, {0xE8,0x82,0xE3,0xFF,0xFF}) &&
+        Expect(0x439A44, {0xE8,0xE7,0xC7,0xFE,0xFF}) &&
+        Expect(0x439A75, {0xE8,0x06,0xC9,0xFE,0xFF})) {
+        WriteRel(0x439A39, 0xE8, (void*)&TrafficSpawnRoad);
+        WriteRel(0x439A44, 0xE8, (void*)&TrafficSpawnSelection);
+        WriteRel(0x439A75, 0xE8, (void*)&TrafficSpawnVehicle);
+        s_spawnStagesInstalled = true;
+        Log("traffic: road/type/vehicle rejection diagnostics installed; all spawn checks preserved");
+    } else Log("traffic: stage diagnostics unavailable (unexpected spawn code)");
     if (!RetargetCall(0x439C6B, 0x439A10, (void*)&TrafficSpawnAttempt))
         Log("traffic: spawn diagnostics unavailable (unexpected attempt call)");
     if (Expect(0x426299, {0x52, 0x68, 0x95, 0xC7, 0xE3, 0x94, 0x89, 0x56, 0x60, 0xE8, 0x69, 0xE5, 0x02, 0x00}) &&

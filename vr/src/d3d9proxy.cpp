@@ -512,8 +512,39 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
             }
         decl->Release();
     }
-    if (posOfs < 0 || uvOfs < 0 || stride < 20) {
+    if (posOfs < 0 || uvOfs < 0 || stride < 20 ||
+        (UINT)posOfs + 3 * sizeof(float) > stride || (UINT)uvOfs + 2 * sizeof(float) > stride) {
         Log("d3d9: side mirror glass: unexpected vertex layout (position %d, uv %d, stride %u)", posOfs, uvOfs, stride);
+        vb->Release();
+        return;
+    }
+    // Validate all addresses before changing any UVs. Whole-buffer locks do not
+    // provide the range validation the old per-part locks supplied.
+    D3DVERTEXBUFFER_DESC desc = {};
+    if (FAILED(vb->GetDesc(&desc))) {
+        vb->Release();
+        return;
+    }
+    size_t vertexCount = 0;
+    for (const MirrorGlassPart& part : j.parts) {
+        vertexCount += part.vertices.size();
+        for (uint16_t v : part.vertices) {
+            int64_t vertex = (int64_t)base + v;
+            if (vertex < 0 || (uint64_t)offset + ((uint64_t)vertex + 1) * stride > desc.Size) {
+                vb->Release();
+                return;
+            }
+        }
+    }
+    if (!vertexCount) {
+        vb->Release();
+        return;
+    }
+    saved.reserve(saved.size() + vertexCount);
+    // All parts use the same stream. One lock avoids synchronizing with the
+    // previous GPU work again for every part of a split mirror.
+    uint8_t* buffer = nullptr;
+    if (FAILED(vb->Lock(0, 0, (void**)&buffer, 0)) || !buffer) {
         vb->Release();
         return;
     }
@@ -521,25 +552,13 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
     for (MirrorGlassPart& part : j.parts) {
         if (part.vertices.empty()) continue;
         mappedVerts += part.vertices.size();
-        uint16_t lo = 0xFFFF, hi = 0;
-        for (uint16_t v : part.vertices) {
-            lo = v < lo ? v : lo;
-            hi = v > hi ? v : hi;
-        }
-        UINT firstVertex = (UINT)(base + lo), count = (UINT)(hi - lo + 1);
-        uint8_t* p = nullptr;
-        if (FAILED(vb->Lock(offset + firstVertex * stride, count * stride, (void**)&p, 0)) || !p) {
-            Log("d3d9: side mirror glass: vertex buffer lock failed");
-            vb->Release();
-            return;
-        }
         const float* b = part.basis;
         float cu = b[0] * b[3] + b[1] * b[4] + b[2] * b[5], cv = b[0] * b[6] + b[1] * b[7] + b[2] * b[8];
         for (uint16_t v : part.vertices) {
-            UINT i = v - lo;
-            const float* pos = (const float*)(p + i * stride + posOfs);
-            float* uv = (float*)(p + i * stride + uvOfs);
-            SavedGlassUV old = {offset + (firstVertex + i) * stride + (UINT)uvOfs, {uv[0], uv[1]}};
+            UINT vertexOffset = offset + (UINT)(base + v) * stride;
+            const float* pos = (const float*)(buffer + vertexOffset + posOfs);
+            float* uv = (float*)(buffer + vertexOffset + uvOfs);
+            SavedGlassUV old = {vertexOffset + (UINT)uvOfs, {uv[0], uv[1]}};
             saved.push_back(old);
             float pu = pos[0] * b[3] + pos[1] * b[4] + pos[2] * b[5], pv = pos[0] * b[6] + pos[1] * b[7] + pos[2] * b[8];
             float s = b[9] > 0 ? (pu - (cu - b[9])) / (2 * b[9]) : 0.5f, t = b[10] > 0 ? ((cv + b[10]) - pv) / (2 * b[10]) : 0.5f;
@@ -548,8 +567,8 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
             uv[0] = b[11] + (b[12] - b[11]) * s;
             uv[1] = t;
         }
-        vb->Unlock();
     }
+    vb->Unlock();
     vb->Release();
     static int logged;
     if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
@@ -562,12 +581,14 @@ static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
     IDirect3DVertexBuffer9* vb = nullptr;
     UINT offset = 0, stride = 0;
     if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
-    for (auto it = saved.rbegin(); it != saved.rend(); ++it) {
-        void* p = nullptr;
-        if (SUCCEEDED(vb->Lock(it->offset, sizeof(it->uv), &p, 0)) && p) {
-            memcpy(p, it->uv, sizeof(it->uv));
-            vb->Unlock();
-        }
+    // A normal lock after DrawIndexedPrimitive may wait for the GPU. Lock once,
+    // not once per vertex. Keep reverse order: overlapping parts can save the
+    // same UV more than once, and the earliest saved value must win.
+    void* p = nullptr;
+    if (SUCCEEDED(vb->Lock(0, 0, &p, 0)) && p) {
+        for (auto it = saved.rbegin(); it != saved.rend(); ++it)
+            memcpy((uint8_t*)p + it->offset, it->uv, sizeof(it->uv));
+        vb->Unlock();
     }
     vb->Release();
 }
@@ -1911,6 +1932,9 @@ static struct {
     double gameSum, gameMax, worstGame;        // the frame's time outside the measured slots
     double frameMax, worstFrame, last, since;
     int frames;
+    int budgetFrames, overBudget, missedRefresh;
+    double budgetSpan, budgetMax;
+    double budgetPhases[PROF_COUNT];
 } s_prof;
 static double s_profLastAvg;                   // the previous window's average frame
 static double s_profLastHitch;                 // when the last hitch was logged
@@ -2029,6 +2053,18 @@ static void ProfFrame() {
     if (s_prof.last > 0) {
         double frame = now - s_prof.last;
         s_prof.frames++;
+        // Count only stereo frames. A 0.5 ms tolerance separates scheduler
+        // jitter around the nominal period from a meaningful budget overrun.
+        float hz = Xr_DisplayHz();
+        if (Game_StereoThisFrame() && hz >= 30 && hz <= 500) {
+            double budget = 1.0 / hz;
+            s_prof.budgetFrames++;
+            s_prof.budgetSpan += frame;
+            s_prof.budgetMax = std::max(s_prof.budgetMax, frame);
+            for (int i = 0; i < PROF_COUNT; i++) s_prof.budgetPhases[i] += s_prof.frame[i];
+            if (frame > budget + 0.0005) s_prof.overBudget++;
+            if (frame > budget * 1.5) s_prof.missedRefresh++;
+        }
         double known = 0;
         for (int i = 0; i < PROF_COUNT; i++) known += s_prof.frame[i];
         double game = frame - known;
@@ -2061,6 +2097,19 @@ static void ProfFrame() {
     s_prof.last = now;
     double span = now - s_prof.since;
     if (span < 5.0 || s_prof.frames == 0) return;
+    if (s_prof.budgetFrames && s_prof.budgetSpan > 0) {
+        double n = (double)s_prof.budgetFrames;
+        Log("perf: stereo %.1f fps, target %.1f Hz; %d frames, budget overruns %d (%.1f%%), "
+            "longer than 1.5 refresh periods %d (%.1f%%); max %.1f ms; "
+            "phase averages wait %.2f eyes %.2f GPUwait %.2f update %.2f ms",
+            n / s_prof.budgetSpan, Xr_DisplayHz(), s_prof.budgetFrames,
+            s_prof.overBudget, 100.0 * s_prof.overBudget / n,
+            s_prof.missedRefresh, 100.0 * s_prof.missedRefresh / n, s_prof.budgetMax * 1000.0,
+            s_prof.budgetPhases[PROF_WAITFRAME] * 1000.0 / n,
+            s_prof.budgetPhases[PROF_EYES] * 1000.0 / n,
+            s_prof.budgetPhases[PROF_GPUWAIT] * 1000.0 / n,
+            s_prof.budgetPhases[PROF_UPDATE] * 1000.0 / n);
+    }
     if (g_cfg.logPasses) {
         s_passTallyN = 0;
         s_passColor = s_passDepth = -1;
