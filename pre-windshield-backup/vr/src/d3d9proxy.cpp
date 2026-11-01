@@ -1,0 +1,2951 @@
+// d3d9.dll proxy (or an .asi plugin that redirects the game's Direct3DCreate9 import).
+//
+// * Upgrades the game's IDirect3D9 / device to the Ex versions so render targets
+//   can be shared with the D3D11 device that feeds OpenXR (no CPU copies).
+// * D3D9Ex has no MANAGED pool, so managed resources are moved to DEFAULT
+//   (textures become DYNAMIC to stay lockable).
+// * Hooks Present to hand finished eye images to OpenXR.
+#include "common.h"
+#include "d3d9hook.h"
+#include "game.h"
+#include "xr.h"
+#include "spectator.h"
+#include "cockpit.h"
+#include "crash.h"
+#include "frametrace.h"
+
+#include <d3d9.h>
+#include "d3d9device_gen.h"
+#include <d3dcommon.h>
+#include <stdio.h>
+#include <string.h>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
+#include <intrin.h>
+
+// ---------------------------------------------------------------------------
+// Real d3d9.dll
+// ---------------------------------------------------------------------------
+// As the d3d9.dll proxy this is System32's; as an .asi it is whatever the game's
+// import resolved to (System32's or another wrapper's), set by PatchImport.
+static HMODULE s_real;
+template <typename T> static T Real(const char* name) {
+    if (!s_real) {
+        char path[MAX_PATH];
+        GetSystemDirectoryA(path, MAX_PATH);
+        strcat_s(path, "\\d3d9.dll");
+        s_real = LoadLibraryA(path);
+    }
+    return s_real ? (T)GetProcAddress(s_real, name) : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Vtable patching
+// ---------------------------------------------------------------------------
+template <typename T> static void PatchVtable(void* obj, int index, T hook, T* original) {
+    void** vt = *(void***)obj;
+    if (vt[index] == (void*)hook) return;
+    *original = (T)vt[index];
+    DWORD old;
+    VirtualProtect(&vt[index], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    vt[index] = (void*)hook;
+    VirtualProtect(&vt[index], sizeof(void*), old, &old);
+}
+
+// IDirect3D9 vtable slot (patched once, right before the game creates its device)
+enum { kD3D_CreateDevice = 16 };
+typedef HRESULT(WINAPI* CreateDevice_t)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
+static CreateDevice_t oCreateDevice;
+
+// ---------------------------------------------------------------------------
+// Device state
+// ---------------------------------------------------------------------------
+static IDirect3DDevice9Ex* s_dev;
+static bool s_xr;
+static bool s_active;                     // this copy runs the mod (see DllMain)
+static IDirect3DTexture9* s_eyeTex[3];    // left, right, HUD (shared with D3D11)
+static IDirect3DSurface9* s_eyeSurf[3];
+static IDirect3DSurface9* s_hudRT;        // HUD is drawn here (matches the back buffer's MSAA)
+static IDirect3DSurface9* s_backBuffer;   // held while the HUD phase is active
+static bool s_hudPhase, s_hudValid;
+static int s_hudInEyes;                   // eyes this frame with the HUD drawn into them (steering wheel over the HUD)
+static bool s_skipPostPass;               // another mod's full-screen pass on the HUD layer, until EndScene
+static int s_eyeW, s_eyeH;
+static bool s_eyeOk;
+static IDirect3DQuery9* s_fence;
+static int s_dumpRequested; // frames left to dump
+static int s_dumpIndex;
+
+static void* s_hideTex[3];               // draws sampling these are left out (the HUD mirror)
+static void* s_boundTex[4];              // textures bound to stages 0..3
+static bool s_texHidden;                 // one of them is hidden
+
+// 16x anisotropic filtering ([VR] Anisotropic): a sampler the game sets to linear minification is
+// switched to anisotropic, except while a depth texture is bound to it (the shadow map: its
+// hardware comparison needs linear). Kept per stage: the game's own filter and the texture bound.
+static std::vector<void*> s_depthTex;            // textures created as depth buffers
+static DWORD s_gameMinFilter[16];                // the game's D3DSAMP_MINFILTER per stage
+static bool s_stageDepth[16];                    // a depth texture is bound to the stage
+static DWORD s_setMinFilter[16];                 // what we passed on
+static int s_anisoLevel = 0;                     // 0 off, else the maximum anisotropy (2..16)
+// What the game asks for, for the log: minification filters set, by value (none, point, linear,
+// anisotropic, other), and how many we turned anisotropic.
+static unsigned s_minFilterAsked[5], s_minFilterTurned;
+
+static bool IsDepthFormat(D3DFORMAT f) {
+    return f == D3DFMT_D24S8 || f == D3DFMT_D24X8 || f == D3DFMT_D16 || f == D3DFMT_D32 || f == D3DFMT_D24FS8 ||
+           f == D3DFMT_D15S1 || f == D3DFMT_D24X4S4 || f == D3DFMT_D16_LOCKABLE || f == D3DFMT_D32F_LOCKABLE ||
+           f == (D3DFORMAT)MAKEFOURCC('I', 'N', 'T', 'Z') || f == (D3DFORMAT)MAKEFOURCC('D', 'F', '1', '6') ||
+           f == (D3DFORMAT)MAKEFOURCC('D', 'F', '2', '4') || f == (D3DFORMAT)MAKEFOURCC('R', 'A', 'W', 'Z');
+}
+
+static DWORD EffectiveMinFilter(DWORD stage) {
+    DWORD f = s_gameMinFilter[stage];
+    return s_anisoLevel && (f == D3DTEXF_LINEAR || f == D3DTEXF_ANISOTROPIC) && !s_stageDepth[stage] ? (DWORD)D3DTEXF_ANISOTROPIC : f;
+}
+
+static void ApplyMinFilter(IDirect3DDevice9* real, DWORD stage) {
+    DWORD want = EffectiveMinFilter(stage);
+    if (want == s_setMinFilter[stage]) return;
+    if (want == D3DTEXF_ANISOTROPIC) real->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, s_anisoLevel ? s_anisoLevel : 1);
+    real->SetSamplerState(stage, D3DSAMP_MINFILTER, want);
+    s_setMinFilter[stage] = want;
+}
+
+static bool IsHidden(void* t) { return t && (t == s_hideTex[0] || t == s_hideTex[1] || t == s_hideTex[2]); }
+
+void D3D_HideTextures(void* a, void* b, void* c) {
+    s_hideTex[0] = a;
+    s_hideTex[1] = b;
+    s_hideTex[2] = c;
+    s_texHidden = false;
+    for (void* t : s_boundTex) s_texHidden = s_texHidden || IsHidden(t);
+}
+
+static IDirect3DTexture9* s_mirrorTex;        // the graded picture the mirrors show
+static IDirect3DSurface9* s_mirrorSurf;
+static IDirect3DTexture9* s_mirrorRaw;        // the rear view copied as rendered
+static IDirect3DSurface9* s_mirrorRawSurf;
+static UINT s_mirrorW, s_mirrorH;
+
+static void ReleaseDash();
+
+// One reusable D3DSBT_ALL state block. Every place that changes device state for our own drawing
+// used to create a fresh one, which allocates the whole block and reads the device state back - and
+// with the dashboard on that happened twice an eye, plus once per coloured-triangle batch. The same
+// block is captured before the state changes and applied after them. Released with the eye targets,
+// which is also where a device Reset needs it gone.
+static IDirect3DStateBlock9* s_savedState;
+static bool s_savedStateTried;
+
+static IDirect3DStateBlock9* SavedStateBlock() {
+    if (s_savedState || s_savedStateTried) return s_savedState;
+    s_savedStateTried = true;
+    if (!s_dev || FAILED(s_dev->CreateStateBlock(D3DSBT_ALL, &s_savedState))) s_savedState = nullptr;
+    return s_savedState;
+}
+
+static void ReleaseSavedState() {
+    if (s_savedState) s_savedState->Release();
+    s_savedState = nullptr;
+    s_savedStateTried = false;
+}
+
+static void ReleaseEyeTargets() {
+    for (int i = 0; i < 3; i++) {
+        if (s_eyeSurf[i]) s_eyeSurf[i]->Release();
+        if (s_eyeTex[i]) s_eyeTex[i]->Release();
+        s_eyeSurf[i] = nullptr;
+        s_eyeTex[i] = nullptr;
+    }
+    if (s_hudRT) s_hudRT->Release();
+    s_hudRT = nullptr;
+    if (s_mirrorSurf) s_mirrorSurf->Release();
+    if (s_mirrorTex) s_mirrorTex->Release();
+    if (s_mirrorRawSurf) s_mirrorRawSurf->Release();
+    if (s_mirrorRaw) s_mirrorRaw->Release();
+    s_mirrorSurf = s_mirrorRawSurf = nullptr;
+    s_mirrorTex = s_mirrorRaw = nullptr;
+    s_mirrorW = s_mirrorH = 0;
+    ReleaseDash();
+    ReleaseSavedState();
+    s_eyeW = s_eyeH = 0;
+    s_eyeOk = false;
+}
+
+static bool EnsureEyeTargets(int w, int h, D3DMULTISAMPLE_TYPE ms, DWORD msQuality) {
+    if (s_eyeTex[0] && w == s_eyeW && h == s_eyeH) return s_eyeOk;
+    ReleaseEyeTargets();
+    HANDLE handles[3] = {};
+    for (int i = 0; i < 3; i++) {
+        HRESULT hr = s_dev->CreateTexture(w, h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+                                          &s_eyeTex[i], &handles[i]);
+        if (FAILED(hr)) {
+            Log("d3d9: creating shared eye texture %dx%d failed 0x%08lx", w, h, hr);
+            return false;
+        }
+        s_eyeTex[i]->GetSurfaceLevel(0, &s_eyeSurf[i]);
+    }
+    if (FAILED(s_dev->CreateRenderTarget(w, h, D3DFMT_A8R8G8B8, ms, msQuality, FALSE, &s_hudRT, nullptr)))
+        Log("d3d9: creating HUD render target failed - HUD will stay in the right eye");
+    s_eyeW = w;
+    s_eyeH = h;
+    // On a flat screen (no VR) there is no headset to share them with.
+    s_eyeOk = s_xr && Xr_SetSharedTextures(handles[0], handles[1], handles[2], w, h);
+    Log("d3d9: eye targets %dx%d (%s)", w, h, s_eyeOk ? "shared with XR" : s_xr ? "XR attach failed" : "flat screen");
+    return s_eyeOk;
+}
+
+void D3D_CaptureEye(int eye) {
+    if (!s_dev) return;
+    IDirect3DSurface9* bb = nullptr;
+    if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
+    D3DSURFACE_DESC d;
+    bb->GetDesc(&d);
+    if (EnsureEyeTargets(d.Width, d.Height, d.MultiSampleType, d.MultiSampleQuality)) {
+        HRESULT hr = s_dev->StretchRect(bb, nullptr, s_eyeSurf[eye], nullptr, D3DTEXF_NONE);
+        static bool warned;
+        if (FAILED(hr) && !warned) {
+            warned = true;
+            Log("d3d9: StretchRect back buffer -> eye failed 0x%08lx (format %d, msaa %d)", hr, d.Format, d.MultiSampleType);
+        }
+    }
+    bb->Release();
+}
+
+static IDirect3DSurface9* s_frameRT;
+static IDirect3DSurface9* s_frameDS;
+static unsigned s_frameSerial;    // bumped once a frame, for the work that is once a frame
+                                  // whatever the number of eyes (the mirrors' grading, the mirrors'
+                                  // shader log): the rear view is the same picture for both eyes.
+
+void D3D_BeginEyes() {
+    if (!s_dev) return;
+    s_frameSerial++;
+    if (s_frameRT) s_frameRT->Release();
+    if (s_frameDS) s_frameDS->Release();
+    s_frameRT = s_frameDS = nullptr;
+    s_hudInEyes = 0;
+    s_dev->GetRenderTarget(0, &s_frameRT);
+    s_dev->GetDepthStencilSurface(&s_frameDS);
+}
+
+void D3D_ResetForNextEye() {
+    if (!s_dev || !s_frameRT) return;
+    IDirect3DSurface9 *rt = nullptr, *ds = nullptr;
+    D3DVIEWPORT9 vp;
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->GetDepthStencilSurface(&ds);
+    s_dev->GetViewport(&vp);
+    s_dev->SetRenderTarget(0, s_frameRT);
+    s_dev->SetDepthStencilSurface(s_frameDS);
+    // Same as the game's Clear after Present (eDisplayFrame @ 0x6E763B).
+    DWORD flags = D3DCLEAR_TARGET;
+    if (s_frameDS) {
+        D3DSURFACE_DESC d;
+        s_frameDS->GetDesc(&d);
+        flags |= D3DCLEAR_ZBUFFER;
+        if (d.Format == D3DFMT_D24S8 || d.Format == D3DFMT_D24X4S4 || d.Format == D3DFMT_D15S1 || d.Format == D3DFMT_D24FS8)
+            flags |= D3DCLEAR_STENCIL;
+    }
+    s_dev->Clear(0, nullptr, flags, 0, 1.0f, 0);
+    s_dev->SetRenderTarget(0, rt);
+    s_dev->SetDepthStencilSurface(ds);
+    s_dev->SetViewport(&vp);
+    if (rt) rt->Release();
+    if (ds) ds->Release();
+}
+
+
+// Our pixel shaders, compiled from HLSL with the system's d3dcompiler_47 (ps_2_0, entry main) the
+// first time they are asked for. Shaders aren't in a memory pool, so they outlive a device Reset.
+struct LazyShader {
+    const char* name;
+    const char* src;
+    IDirect3DPixelShader9* ps;
+    bool tried;
+};
+
+static IDirect3DPixelShader9* Shader(LazyShader& sh) {
+    if (sh.ps || sh.tried) return sh.ps;
+    sh.tried = true;
+    typedef HRESULT(WINAPI * Compile_t)(LPCVOID, SIZE_T, LPCSTR, const void*, void*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**,
+                                         ID3DBlob**);
+    static Compile_t compile = [] {
+        HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+        Compile_t f = dc ? (Compile_t)GetProcAddress(dc, "D3DCompile") : nullptr;
+        if (!f) Log("d3d9: d3dcompiler_47 not available - mirrors without their own shaders (no brightness / contrast)");
+        return f;
+    }();
+    if (!compile) return nullptr;
+    ID3DBlob *code = nullptr, *errors = nullptr;
+    HRESULT hr = compile(sh.src, strlen(sh.src), sh.name, nullptr, nullptr, "main", "ps_2_0", 0, 0, &code, &errors);
+    if (SUCCEEDED(hr) && code)
+        s_dev->CreatePixelShader((const DWORD*)code->GetBufferPointer(), &sh.ps);
+    else
+        Log("d3d9: %s shader did not compile: %s", sh.name, errors ? (const char*)errors->GetBufferPointer() : "?");
+    if (code) code->Release();
+    if (errors) errors->Release();
+    return sh.ps;
+}
+
+// The mirror picture's brightness and contrast (c0.x contrast, c0.y brightness).
+static LazyShader s_gradeShader = {"mirror",
+    "sampler s : register(s0); float4 k : register(c0);"
+    "float4 main(float2 uv : TEXCOORD0) : COLOR {"
+    "  float3 c = tex2D(s, uv).rgb; c = saturate(((c - 0.5) * k.x + 0.5) * k.y); return float4(c, 1); }"};
+
+// The car shader's vertex shader puts the texture coordinates in oT1 (oT0 is its reflection
+// vector), so both glass shaders read TEXCOORD1.
+// The side mirror glass's own pixel shader: the rear view as it is (already graded), without the
+// car shader's lighting, gloss and environment reflection, which washed it out.
+static LazyShader s_glassShader = {"mirror glass",
+    "sampler s : register(s0);"
+    "float4 main(float2 uv : TEXCOORD1) : COLOR { return float4(tex2D(s, uv).rgb, 1); }"};
+
+// The glass as a mirror: its own coordinates (0..1 across and down) turned into the rear view's
+// by the corners' coordinates (c0: top left, top right; c1: bottom left, bottom right).
+static LazyShader s_mirrorMapShader = {"mirror map",
+    "sampler s : register(s0); float4 c0 : register(c0); float4 c1 : register(c1);"
+    "float4 main(float2 uv : TEXCOORD1) : COLOR {"
+    "  float2 top = lerp(c0.xy, c0.zw, uv.x); float2 bottom = lerp(c1.xy, c1.zw, uv.x);"
+    "  float3 c = tex2D(s, lerp(top, bottom, uv.y)).rgb;"
+    // A dark rim along the glass's edge, as a mirror set in its housing: the distance from the
+    // centre in a rounded rectangle (superellipse) shape, so it follows oval glass too.
+    "  float2 p = abs(uv * 2 - 1); float r = pow(pow(p.x, 3) + pow(p.y, 3), 1.0 / 3);"
+    "  float rim = saturate((1 - r) / 0.2);"
+    "  return float4(c * lerp(0.06, 1, rim * rim), 1); }"};
+
+static bool DrawingPlayerView();
+static void SetPanelState(const D3DMATRIX& view, const D3DMATRIX& proj);
+
+// The rear view render target copied into a texture of our own (it may be multisampled, or a
+// plain surface no texture owns), then graded into the texture the mirrors show.
+static IDirect3DTexture9* MirrorTexture(IDirect3DSurface9* source) {
+    // The rear view is not per eye (its camera is not the player's) and neither is the grading, so
+    // the copy and the shader pass are done once a frame: MirrorTexture is called at the end of each
+    // eye, and the second eye is shown the first eye's result.
+    static unsigned gradedFrame;
+    static IDirect3DSurface9* gradedSource;
+    if (s_mirrorTex && gradedFrame == s_frameSerial && gradedSource == source) return s_mirrorTex;
+    gradedFrame = s_frameSerial;
+    gradedSource = source;
+    D3DSURFACE_DESC d;
+    if (FAILED(source->GetDesc(&d)) || d.Width == 0 || d.Height == 0) return nullptr;
+    if (!s_mirrorTex || d.Width != s_mirrorW || d.Height != s_mirrorH) {
+        for (IUnknown** p : {(IUnknown**)&s_mirrorSurf, (IUnknown**)&s_mirrorTex, (IUnknown**)&s_mirrorRawSurf, (IUnknown**)&s_mirrorRaw})
+            if (*p) { (*p)->Release(); *p = nullptr; }
+        if (FAILED(s_dev->CreateTexture(d.Width, d.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+                                        &s_mirrorTex, nullptr)) ||
+            FAILED(s_dev->CreateTexture(d.Width, d.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+                                        &s_mirrorRaw, nullptr))) {
+            Log("d3d9: mirror textures %ux%u could not be created", d.Width, d.Height);
+            if (s_mirrorTex) { s_mirrorTex->Release(); s_mirrorTex = nullptr; }
+            return nullptr;
+        }
+        s_mirrorTex->GetSurfaceLevel(0, &s_mirrorSurf);
+        s_mirrorRaw->GetSurfaceLevel(0, &s_mirrorRawSurf);
+        s_mirrorW = d.Width;
+        s_mirrorH = d.Height;
+        Log("d3d9: rear view %ux%u (format %d, msaa %d) copied for the mirrors", d.Width, d.Height, d.Format, d.MultiSampleType);
+    }
+    HRESULT hr = s_dev->StretchRect(source, nullptr, s_mirrorRawSurf, nullptr, D3DTEXF_LINEAR);
+    static bool warned;
+    if (FAILED(hr)) {
+        if (!warned) {
+            warned = true;
+            Log("d3d9: copying the rear view failed 0x%08lx", hr);
+        }
+        return nullptr;
+    }
+    IDirect3DPixelShader9* ps = Shader(s_gradeShader);
+    if (!ps) {
+        s_dev->StretchRect(s_mirrorRawSurf, nullptr, s_mirrorSurf, nullptr, D3DTEXF_NONE);
+        return s_mirrorTex;
+    }
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) return s_mirrorTex;
+    saved->Capture();
+    IDirect3DSurface9 *rt = nullptr, *ds = nullptr;
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->GetDepthStencilSurface(&ds);
+    s_dev->SetRenderTarget(0, s_mirrorSurf);
+    s_dev->SetDepthStencilSurface(nullptr);
+    D3DVIEWPORT9 vp = {0, 0, s_mirrorW, s_mirrorH, 0.0f, 1.0f};
+    s_dev->SetViewport(&vp);
+    s_dev->SetVertexShader(nullptr);
+    s_dev->SetPixelShader(ps);
+    float k[4] = {g_cfg.mirrorContrast, g_cfg.mirrorBrightness, 0, 0};
+    s_dev->SetPixelShaderConstantF(0, k, 1);
+    s_dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+    s_dev->SetTexture(0, s_mirrorRaw);
+    s_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+    s_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+    s_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+    s_dev->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    s_dev->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+    s_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    float w = (float)s_mirrorW, h = (float)s_mirrorH;
+    const float quad[4][6] = {{-0.5f, -0.5f, 0, 1, 0, 0}, {w - 0.5f, -0.5f, 0, 1, 1, 0},
+                              {w - 0.5f, h - 0.5f, 0, 1, 1, 1}, {-0.5f, h - 0.5f, 0, 1, 0, 1}};
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, quad, sizeof(quad[0]));
+    saved->Apply();
+    s_dev->SetRenderTarget(0, rt);
+    s_dev->SetDepthStencilSurface(ds);
+    if (rt) rt->Release();
+    if (ds) ds->Release();
+    return s_mirrorTex;
+}
+
+void* D3D_TextureOfSurface(void* surface) {
+    static void* lastSurface;
+    static void* lastTexture;
+    if (!surface) return nullptr;
+    if (surface != lastSurface) {
+        lastSurface = surface;
+        lastTexture = nullptr;
+        IDirect3DTexture9* t = nullptr;
+        if (SUCCEEDED(((IDirect3DSurface9*)surface)->GetContainer(__uuidof(IDirect3DTexture9), (void**)&t)) && t) {
+            lastTexture = t;
+            t->Release();
+        }
+    }
+    return lastTexture;
+}
+
+static void* s_curIndices;            // index buffer the game last set
+
+// --- the game's side mirror glass with the rear view ---------------------------------------------
+struct MirrorGlassPart {
+    float basis[14];
+    std::vector<uint16_t> vertices;               // the glass's own vertices (index values)
+};
+struct MirrorGlassJob {
+    void* ib;
+    UINT first, tris;
+    std::vector<MirrorGlassPart> parts;           // one glass, or both sides' in one entry
+    std::vector<std::pair<void*, INT>> mapped;    // vertex buffer, base vertex already given texture coordinates
+    float corners[8];                             // the rear view's u, v at the glass's corners, this eye
+    bool haveCorners = false;
+};
+static std::vector<MirrorGlassJob> s_glassJobs;
+static std::unordered_map<void*, std::vector<size_t>> s_glassJobsByIb;
+
+void D3D_RegisterMirrorGlass(void* indexBuffer, int firstIndex, int triangles, const float basis[14], const uint16_t* vertices,
+                             int vertexCount) {
+    MirrorGlassJob* job = nullptr;
+    for (MirrorGlassJob& j : s_glassJobs)
+        if (j.ib == indexBuffer && j.first == (UINT)firstIndex) job = &j;
+    if (!job) {
+        s_glassJobs.push_back(MirrorGlassJob());
+        job = &s_glassJobs.back();
+        s_glassJobsByIb[indexBuffer].push_back(s_glassJobs.size() - 1);
+    }
+    job->ib = indexBuffer;
+    job->first = firstIndex;
+    job->tris = triangles;
+    job->parts.assign(1, MirrorGlassPart());
+    memcpy(job->parts[0].basis, basis, sizeof(job->parts[0].basis));
+    job->parts[0].vertices.assign(vertices, vertices + vertexCount);
+    job->mapped.clear();
+    job->haveCorners = false;
+}
+
+void D3D_AddMirrorGlassPart(void* indexBuffer, int firstIndex, const float basis[14], const uint16_t* vertices,
+                            int vertexCount) {
+    auto jobs = s_glassJobsByIb.find(indexBuffer);
+    if (jobs == s_glassJobsByIb.end()) return;
+    for (size_t i : jobs->second) {
+        MirrorGlassJob& j = s_glassJobs[i];
+        if (j.first != (UINT)firstIndex) continue;
+        MirrorGlassPart p;
+        memcpy(p.basis, basis, sizeof(p.basis));
+        p.vertices.assign(vertices, vertices + vertexCount);
+        j.parts.push_back(p);
+        j.mapped.clear();
+        return;
+    }
+}
+
+void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
+    auto jobs = s_glassJobsByIb.find(indexBuffer);
+    if (jobs == s_glassJobsByIb.end()) return;
+    for (size_t i : jobs->second) {
+        MirrorGlassJob& j = s_glassJobs[i];
+        if (j.first != (UINT)firstIndex) continue;
+        memcpy(j.corners, uv, sizeof(j.corners));
+        j.haveCorners = true;
+        return;
+    }
+}
+
+// Texture coordinates across the glass for the glass's own vertices (in the game's own vertex
+// buffer, once per buffer and base): u along the glass within the job's range, v top to bottom.
+struct SavedGlassUV { UINT offset; float uv[2]; };
+static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlassUV>& saved) {
+    if (j.parts.empty()) return;
+    IDirect3DVertexBuffer9* vb = nullptr;
+    UINT offset = 0, stride = 0;
+    if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
+    int posOfs = -1, uvOfs = -1;
+    IDirect3DVertexDeclaration9* decl = nullptr;
+    if (SUCCEEDED(s_dev->GetVertexDeclaration(&decl)) && decl) {
+        D3DVERTEXELEMENT9 el[MAXD3DDECLLENGTH + 1];
+        UINT n = MAXD3DDECLLENGTH + 1;
+        if (SUCCEEDED(decl->GetDeclaration(el, &n)))
+            for (UINT i = 0; i < n && el[i].Stream != 0xFF; i++) {
+                if (el[i].Stream != 0) continue;
+                if (el[i].Usage == D3DDECLUSAGE_POSITION && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT3) posOfs = el[i].Offset;
+                if (el[i].Usage == D3DDECLUSAGE_TEXCOORD && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT2) uvOfs = el[i].Offset;
+            }
+        decl->Release();
+    }
+    if (posOfs < 0 || uvOfs < 0 || stride < 20) {
+        Log("d3d9: side mirror glass: unexpected vertex layout (position %d, uv %d, stride %u)", posOfs, uvOfs, stride);
+        vb->Release();
+        return;
+    }
+    size_t mappedVerts = 0;
+    for (MirrorGlassPart& part : j.parts) {
+        if (part.vertices.empty()) continue;
+        mappedVerts += part.vertices.size();
+        uint16_t lo = 0xFFFF, hi = 0;
+        for (uint16_t v : part.vertices) {
+            lo = v < lo ? v : lo;
+            hi = v > hi ? v : hi;
+        }
+        UINT firstVertex = (UINT)(base + lo), count = (UINT)(hi - lo + 1);
+        uint8_t* p = nullptr;
+        if (FAILED(vb->Lock(offset + firstVertex * stride, count * stride, (void**)&p, 0)) || !p) {
+            Log("d3d9: side mirror glass: vertex buffer lock failed");
+            vb->Release();
+            return;
+        }
+        const float* b = part.basis;
+        float cu = b[0] * b[3] + b[1] * b[4] + b[2] * b[5], cv = b[0] * b[6] + b[1] * b[7] + b[2] * b[8];
+        for (uint16_t v : part.vertices) {
+            UINT i = v - lo;
+            const float* pos = (const float*)(p + i * stride + posOfs);
+            float* uv = (float*)(p + i * stride + uvOfs);
+            SavedGlassUV old = {offset + (firstVertex + i) * stride + (UINT)uvOfs, {uv[0], uv[1]}};
+            saved.push_back(old);
+            float pu = pos[0] * b[3] + pos[1] * b[4] + pos[2] * b[5], pv = pos[0] * b[6] + pos[1] * b[7] + pos[2] * b[8];
+            float s = b[9] > 0 ? (pu - (cu - b[9])) / (2 * b[9]) : 0.5f, t = b[10] > 0 ? ((cv + b[10]) - pv) / (2 * b[10]) : 0.5f;
+            s = s < 0 ? 0 : s > 1 ? 1 : s;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            uv[0] = b[11] + (b[12] - b[11]) * s;
+            uv[1] = t;
+        }
+        vb->Unlock();
+    }
+    vb->Release();
+    static int logged;
+    if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
+}
+
+// The body and mirror may share vertices. Restore their original texture coordinates after
+// the mirror draw so subsequent body draws never inherit the rear-view mapping.
+static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
+    if (saved.empty()) return;
+    IDirect3DVertexBuffer9* vb = nullptr;
+    UINT offset = 0, stride = 0;
+    if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
+    for (auto it = saved.rbegin(); it != saved.rend(); ++it) {
+        void* p = nullptr;
+        if (SUCCEEDED(vb->Lock(it->offset, sizeof(it->uv), &p, 0)) && p) {
+            memcpy(p, it->uv, sizeof(it->uv));
+            vb->Unlock();
+        }
+    }
+    vb->Release();
+}
+
+
+// The glass's draw: its own texture (sampler 0, a 2D texture; the car shader's environment cube is
+// on sampler 1) is the rear view for this draw.
+static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts,
+                                  UINT start, UINT count, HRESULT* hr) {
+    if (s_glassJobs.empty() || !s_mirrorTex) return false;
+    auto jobs = s_glassJobsByIb.find(s_curIndices);
+    if (jobs == s_glassJobsByIb.end()) return false;
+    for (size_t i : jobs->second) {
+        MirrorGlassJob& j = s_glassJobs[i];
+        if (j.first != start) continue;
+        std::vector<SavedGlassUV> saved;
+        MapGlassVertices(j, base, saved);
+        int stage = -1;
+        IDirect3DBaseTexture9* t0 = nullptr;
+        real->GetTexture(0, &t0);
+        if (t0) {
+            if (t0->GetType() == D3DRTYPE_TEXTURE) stage = 0;
+            t0->Release();
+        }
+        if (stage < 0) {
+            static bool logged;
+            if (!logged) {
+                logged = true;
+                for (DWORD st = 0; st < 4; st++) {
+                    DWORD tci = 0, op = 0;
+                    IDirect3DBaseTexture9* t = nullptr;
+                    real->GetTextureStageState(st, D3DTSS_TEXCOORDINDEX, &tci);
+                    real->GetTextureStageState(st, D3DTSS_COLOROP, &op);
+                    real->GetTexture(st, &t);
+                    Log("d3d9: side mirror glass: stage %lu texcoord %lu op %lu texture type %d", st, tci, op, t ? (int)t->GetType() : -1);
+                    if (t) t->Release();
+                }
+            }
+            RestoreGlassVertices(saved);
+            return false;
+        }
+        IDirect3DBaseTexture9* orig = nullptr;
+        real->GetTexture(stage, &orig);
+        real->SetTexture(stage, s_mirrorTex);
+        bool player = stage == 0 && DrawingPlayerView();
+        IDirect3DPixelShader9* map = player && j.haveCorners ? Shader(s_mirrorMapShader) : nullptr;
+        IDirect3DPixelShader9* glass = map ? map : player ? Shader(s_glassShader) : nullptr;
+        IDirect3DPixelShader9* oldPs = nullptr;
+        float oldC[8];
+        DWORD oldAddr[2];
+        if (glass) {
+            real->GetPixelShader(&oldPs);
+            real->SetPixelShader(glass);
+        }
+        if (map) {
+            real->GetPixelShaderConstantF(0, oldC, 2);
+            real->SetPixelShaderConstantF(0, j.corners, 2);
+            real->GetSamplerState(0, D3DSAMP_ADDRESSU, &oldAddr[0]);
+            real->GetSamplerState(0, D3DSAMP_ADDRESSV, &oldAddr[1]);
+            real->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            real->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        }
+        *hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+        RestoreGlassVertices(saved);
+        if (map) {
+            real->SetPixelShaderConstantF(0, oldC, 2);
+            real->SetSamplerState(0, D3DSAMP_ADDRESSU, oldAddr[0]);
+            real->SetSamplerState(0, D3DSAMP_ADDRESSV, oldAddr[1]);
+        }
+        if (glass) {
+            real->SetPixelShader(oldPs);
+            if (oldPs) oldPs->Release();
+        }
+        real->SetTexture(stage, orig);
+        if (orig) orig->Release();
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: side mirror glass drawn with the rear view (stage %d)", stage);
+        }
+        return true;
+    }
+    return false;
+}
+
+// --- mirrors with the models -------------------------------------------------------------------
+struct PendingMirror {
+    void* ib;
+    std::vector<float> verts, frame;
+    bool drawn;
+};
+static std::vector<PendingMirror> s_pendingMirrors;
+static D3DMATRIX s_mirrorView, s_mirrorProj;
+static bool s_mirrorEye;
+
+void D3D_BeginMirrorEye(const float* view, const float* proj) {
+    s_pendingMirrors.clear();
+    memcpy(&s_mirrorView, view, sizeof(s_mirrorView));
+    memcpy(&s_mirrorProj, proj, sizeof(s_mirrorProj));
+    s_mirrorEye = true;
+}
+
+void D3D_AddMirror(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount) {
+    if (!s_mirrorEye || !indexBuffer || vertexCount < 3) return;
+    for (PendingMirror& p : s_pendingMirrors)
+        if (p.ib == indexBuffer && p.verts.size() == (size_t)vertexCount * 5 && !memcmp(p.verts.data(), verts, 5 * sizeof(float)))
+            return;
+    PendingMirror m;
+    m.ib = indexBuffer;
+    m.verts.assign(verts, verts + vertexCount * 5);
+    if (frame && frameCount >= 3) m.frame.assign(frame, frame + frameCount * 5);
+    m.drawn = false;
+    s_pendingMirrors.push_back(m);
+}
+
+// Draws one mirror's glass into whatever the game is drawing to now, with its depth buffer.
+static void DrawMirrorGlass(const PendingMirror& m, bool depth) {
+    if (!s_mirrorTex) return;
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) return;
+    saved->Capture();
+    SetPanelState(s_mirrorView, s_mirrorProj);
+    s_dev->SetRenderState(D3DRS_ZENABLE, depth ? D3DZB_TRUE : D3DZB_FALSE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, depth ? TRUE : FALSE);
+    // Pulled toward the camera in depth too, so the game's own glass under it never shows through.
+    float bias = -0.00002f, slope = -1.0f;
+    s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
+    s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, *(DWORD*)&slope);
+    BYTE k = 255;   // brightness and contrast are in the picture (MirrorTexture)
+    s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, k, k, k));
+    s_dev->SetTexture(0, s_mirrorTex);
+    s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TFACTOR);
+    if (!m.frame.empty()) {
+        // The rim: plain near-black, the housing's plastic around the glass. It only tests depth,
+        // so the picture drawn next over it can't fight it.
+        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, 10, 10, 12));
+        s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TFACTOR);
+        s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(m.frame.size() / 15), m.frame.data(), 5 * sizeof(float));
+        s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, k, k, k));
+        s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+        s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, depth ? TRUE : FALSE);
+    }
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(m.verts.size() / 15), m.verts.data(), 5 * sizeof(float));
+    saved->Apply();
+}
+
+// --- the steering wheel in front of the HUD -------------------------------------------------------
+static std::unordered_map<void*, std::unordered_set<UINT>> s_wheelDraws;  // index buffer -> first indices
+static struct {
+    bool active, marked;
+    float seat[12];
+    D3DMATRIX view, proj;
+    IDirect3DSurface9* ds;                // the depth/stencil the wheel was marked in
+} s_wheelEye;
+static float s_uiMenuOpen;                // live from the gameplay mod: its F4 menu is open
+static const DWORD kWheelStencil = 0x80;
+
+void D3D_RegisterWheelDraw(void* ib, int first) {
+    if (ib) s_wheelDraws[ib].insert((UINT)first);
+}
+
+void D3D_BeginWheelEye(bool on, const float seat[12], const float* view, const float* proj) {
+    s_wheelDraws.clear();
+    s_wheelEye.active = on && s_uiMenuOpen < 0.5f && s_eyeTex[2] && s_hudValid;
+    s_wheelEye.marked = false;
+    if (s_wheelEye.ds) s_wheelEye.ds->Release();
+    s_wheelEye.ds = nullptr;
+    memcpy(s_wheelEye.seat, seat, sizeof(s_wheelEye.seat));
+    memcpy(&s_wheelEye.view, view, sizeof(s_wheelEye.view));
+    memcpy(&s_wheelEye.proj, proj, sizeof(s_wheelEye.proj));
+}
+
+static bool HasStencil(D3DFORMAT f) {
+    return f == D3DFMT_D24S8 || f == D3DFMT_D24X4S4 || f == D3DFMT_D15S1 || f == D3DFMT_D24FS8;
+}
+
+// A wheel draw into the eye: drawn as the game set it up, also writing the wheel bit of the stencil
+// where it ends up visible.
+static bool DrawWheelMarked(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts, UINT start,
+                            UINT count, HRESULT* hr) {
+    if (!s_wheelEye.active || s_wheelDraws.empty()) return false;
+    auto draws = s_wheelDraws.find(s_curIndices);
+    if (draws == s_wheelDraws.end() || !draws->second.count(start) || !DrawingPlayerView()) return false;
+    IDirect3DSurface9* ds = nullptr;
+    D3DSURFACE_DESC dd;
+    if (FAILED(real->GetDepthStencilSurface(&ds)) || !ds || FAILED(ds->GetDesc(&dd)) || !HasStencil(dd.Format)) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: steering wheel over the HUD: the depth buffer has no stencil (format %d), not available", ds ? (int)dd.Format : -1);
+        }
+        if (ds) ds->Release();
+        return false;
+    }
+    const D3DRENDERSTATETYPE states[] = {D3DRS_STENCILENABLE, D3DRS_STENCILFUNC, D3DRS_STENCILREF, D3DRS_STENCILMASK,
+                                         D3DRS_STENCILWRITEMASK, D3DRS_STENCILPASS, D3DRS_STENCILFAIL, D3DRS_STENCILZFAIL,
+                                         D3DRS_TWOSIDEDSTENCILMODE};
+    const DWORD values[] = {TRUE, D3DCMP_ALWAYS, kWheelStencil, kWheelStencil, kWheelStencil, D3DSTENCILOP_REPLACE,
+                            D3DSTENCILOP_KEEP, D3DSTENCILOP_KEEP, FALSE};
+    DWORD saved[9];
+    for (int i = 0; i < 9; i++) {
+        real->GetRenderState(states[i], &saved[i]);
+        real->SetRenderState(states[i], values[i]);
+    }
+    *hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+    for (int i = 0; i < 9; i++) real->SetRenderState(states[i], saved[i]);
+    if (s_wheelEye.ds != ds) {
+        if (s_wheelEye.ds) s_wheelEye.ds->Release();
+        s_wheelEye.ds = ds;
+    } else {
+        ds->Release();
+    }
+    s_wheelEye.marked = true;
+    return true;
+}
+
+struct PanelVertex {
+    float x, y, z;
+    float u, v;
+};
+
+// After the eye: the HUD panel over the scene, but not over the wheel's pixels.
+void D3D_EndWheelEye() {
+    if (!s_wheelEye.active) return;
+    s_wheelEye.active = false;
+    IDirect3DSurface9* ds = s_wheelEye.ds;
+    s_wheelEye.ds = nullptr;
+    if (!s_wheelEye.marked || !ds) {
+        // No wheel this eye (an outside camera): the headset's HUD layer as usual.
+        if (ds) ds->Release();
+        return;
+    }
+    IDirect3DSurface9 *bb = nullptr, *rt = nullptr, *curDs = nullptr;
+    D3DSURFACE_DESC b, d;
+    if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb || FAILED(bb->GetDesc(&b)) || FAILED(ds->GetDesc(&d)) ||
+        d.Width < b.Width || d.Height < b.Height || d.MultiSampleType != b.MultiSampleType) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: steering wheel over the HUD: the stencil doesn't fit the back buffer, not available");
+        }
+        if (bb) bb->Release();
+        ds->Release();
+        return;
+    }
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) {
+        bb->Release();
+        ds->Release();
+        return;
+    }
+    saved->Capture();
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->GetDepthStencilSurface(&curDs);
+    s_dev->SetRenderTarget(0, bb);
+    s_dev->SetDepthStencilSurface(ds);
+
+    // The panel: as the headset's HUD layer places it (xr.cpp), 4:3.
+    const float* s = s_wheelEye.seat;   // origin, right, up, forward
+    float w = g_cfg.hudWidth, h = g_cfg.hudWidth * 0.75f, cx = g_cfg.hudRight, cy = g_cfg.hudHeight, cz = g_cfg.hudDistance;
+    auto at = [&](float x, float y, float u, float v) {
+        PanelVertex p;
+        p.x = s[0] + s[3] * x + s[6] * y + s[9] * cz;
+        p.y = s[1] + s[4] * x + s[7] * y + s[10] * cz;
+        p.z = s[2] + s[5] * x + s[8] * y + s[11] * cz;
+        p.u = u;
+        p.v = v;
+        return p;
+    };
+    PanelVertex a = at(cx - w / 2, cy + h / 2, 0, 0), c = at(cx + w / 2, cy + h / 2, 1, 0), e = at(cx + w / 2, cy - h / 2, 1, 1),
+                f = at(cx - w / 2, cy - h / 2, 0, 1);
+    PanelVertex quad[6] = {a, c, e, a, e, f};
+
+    SetPanelState(s_wheelEye.view, s_wheelEye.proj);
+    s_dev->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_STENCILENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_TWOSIDEDSTENCILMODE, FALSE);
+    s_dev->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_NOTEQUAL);
+    s_dev->SetRenderState(D3DRS_STENCILREF, kWheelStencil);
+    s_dev->SetRenderState(D3DRS_STENCILMASK, kWheelStencil);
+    s_dev->SetRenderState(D3DRS_STENCILWRITEMASK, 0);
+    s_dev->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_KEEP);
+    s_dev->SetRenderState(D3DRS_STENCILFAIL, D3DSTENCILOP_KEEP);
+    s_dev->SetRenderState(D3DRS_STENCILZFAIL, D3DSTENCILOP_KEEP);
+    s_dev->SetTexture(0, s_eyeTex[2]);
+    s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    HRESULT hr = s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, quad, sizeof(PanelVertex));
+
+    s_dev->SetRenderTarget(0, rt);
+    s_dev->SetDepthStencilSurface(curDs);
+    saved->Apply();
+    if (rt) rt->Release();
+    if (curDs) curDs->Release();
+    bb->Release();
+    ds->Release();
+    if (SUCCEEDED(hr)) s_hudInEyes++;
+    static int logged;
+    if (logged < 2) {
+        logged++;
+        Log("d3d9: HUD drawn into the eye behind the steering wheel (0x%08lx)", hr);
+    }
+}
+
+// After each of the game's draws from `ib` in the player view: the mirror glass of that model. Not
+// only after the first: the model's own glass can be a later draw entry of it (the Punto's rear
+// view mirror) whose material would otherwise cover the picture.
+// The car is also drawn into shadow maps, the environment map and the rear view: only the player
+// view's draw counts, the one into a target the size of the back buffer, with a depth buffer.
+static bool DrawingPlayerView() {
+    IDirect3DSurface9 *rt = nullptr, *ds = nullptr, *bb = nullptr;
+    bool ok = false;
+    if (SUCCEEDED(s_dev->GetRenderTarget(0, &rt)) && rt && SUCCEEDED(s_dev->GetDepthStencilSurface(&ds)) && ds &&
+        SUCCEEDED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
+        D3DSURFACE_DESC r, b;
+        ok = SUCCEEDED(rt->GetDesc(&r)) && SUCCEEDED(bb->GetDesc(&b)) && r.Width == b.Width && r.Height == b.Height;
+    }
+    if (rt) rt->Release();
+    if (ds) ds->Release();
+    if (bb) bb->Release();
+    return ok;
+}
+
+static void AfterModelDraw() {
+    if (!s_mirrorEye || s_pendingMirrors.empty()) return;
+    bool checked = false, playerView = false;
+    for (PendingMirror& m : s_pendingMirrors) {
+        if (m.ib != s_curIndices) continue;
+        if (!checked) {
+            checked = true;
+            playerView = DrawingPlayerView();
+        }
+        if (!playerView) return;
+        m.drawn = true;
+        DrawMirrorGlass(m, true);
+        static int logged;
+        if (logged < 3) {
+            logged++;
+            Log("d3d9: mirror drawn with its model (%u triangles)", (unsigned)(m.verts.size() / 15));
+        }
+    }
+}
+
+void D3D_EndMirrorEye(void* rearViewSurface) {
+    if (!s_mirrorEye) return;
+    s_mirrorEye = false;
+    for (PendingMirror& m : s_pendingMirrors) {
+        if (m.drawn) continue;
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: a mirror's model was not seen being drawn - drawn over the scene instead");
+        }
+        DrawMirrorGlass(m, false);
+    }
+    s_pendingMirrors.clear();
+    if (rearViewSurface) MirrorTexture((IDirect3DSurface9*)rearViewSurface);
+}
+
+// --- the in-car dashboard ---------------------------------------------------------------------------
+// Each HUD part has a fixed crop of the HUD (Config::dashCrop, set in F4 > VR > Adjust dashboard):
+// the minimap (bottom left), the cop radar (top middle), the speedometer (bottom right), the
+// pursuit info box (bottom middle), the leaderboard / bounty (upper right) and the messages
+// (middle). An element is shown while its crop has had anything of the HUD in it in the last 2 s.
+// Each part is copied at the HUD's own scale into its own cell of the dashboard texture and drawn
+// as its own quad on the panel's plane (Config::dashEl: position and size per element, F4 > VR >
+// Adjust dashboard); elements not placed yet start at fixed places (AutoLayout). While the panel
+// shows, the HUD is cleared from the headset's HUD layer, but for the messages in the middle.
+// The parts in DASH_EL_* order: minimap, cop radar (top middle), speedometer, pursuit info (bottom
+// middle), leaderboard, messages (the middle of the screen: busted, totaled, ...).
+static const char* kDashPartName[DASH_EL_COUNT] = {"minimap", "cop radar (top middle)", "speedometer",
+                                                   "pursuit info (bottom middle)", "leaderboard (upper side)", "messages"};
+static const int kAtlasW = 2048, kAtlasH = 1024, kCellW = 682, kCellH = 512, kProbe = 128;
+static IDirect3DTexture9* s_dashTex;
+static IDirect3DSurface9* s_dashSurf;
+static IDirect3DSurface9* s_probeRT;           // the HUD, small
+static IDirect3DSurface9* s_probeMem;          // ... read back
+static struct DashBox { float x0, y0, x1, y1; double seen; bool ok; } s_dashBox[DASH_EL_COUNT];
+static struct DashEl { bool ok; float u0, v0, u1, v1, wPx, hPx; } s_el[DASH_EL_COUNT];
+static double s_lastProbe;
+// Each element's crop as found on the HUD (DashAutoCrop). A part is collected (the box around
+// everything of it seen) until the box has stopped growing for 2 s, then settles: from then on that
+// is its crop, it holds still, and it is saved ([VR] DashFound<Part>=left,top,right,bottom), so the
+// next start uses it at once. Until a part has settled, its configured crop applies. A settled
+// part only moves again once it is found somewhere else for 5 s (another HUD layout: less than
+// half of it where its crop is); an icon appearing next to it (ABS, TC, nitrous) leaves it as it is.
+// A part is never taken bigger than its configured crop allows (FitsCrop): what is bigger has
+// other HUD pieces in it (a race's lap and time readouts beside a gauge, a banner across it) and is
+// left out, so a part can't swallow its neighbours and stay that way.
+static struct AutoCrop {
+    float box[4];          // the settled crop
+    bool settled;
+    float cand[4];         // being collected
+    bool collecting;
+    double candGrew;       // when the collected box last grew
+    double outsideSince;   // a settled part first seen outside its crop (0 = inside)
+} s_autoCrop[DASH_EL_COUNT];
+
+static const char* VrIni() {
+    static char path[MAX_PATH];
+    if (!path[0]) ConfigFile("nfsmw_vr.ini", path, false);
+    return path;
+}
+
+// Whether box `b` (left, top, right, bottom) is no bigger than element `i`'s configured crop
+// allows: a quarter more width and height than the crop (the parts sit a little differently with
+// another HUD layout, never much bigger).
+static bool FitsCrop(int i, const float* b) {
+    const float* c = g_cfg.dashCrop[i];
+    return b[2] - b[0] <= (c[2] - c[0]) * 1.25f + 0.01f && b[3] - b[1] <= (c[3] - c[1]) * 1.25f + 0.01f;
+}
+
+// The crops settled in an earlier session (one bigger than its crop allows is left out: found by
+// an earlier version that let a part grow over its neighbours).
+static void LoadFoundCrops() {
+    static bool loaded;
+    if (loaded) return;
+    loaded = true;
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        char key[32], buf[96];
+        snprintf(key, sizeof(key), "DashFound%s", kDashElKey[i]);
+        GetPrivateProfileStringA("VR", key, "", buf, sizeof(buf), VrIni());
+        float* b = s_autoCrop[i].box;
+        if (sscanf(buf, "%f,%f,%f,%f", &b[0], &b[1], &b[2], &b[3]) == 4 && b[2] > b[0] && b[3] > b[1]) {
+            s_autoCrop[i].settled = FitsCrop(i, b);
+            if (!s_autoCrop[i].settled)
+                Log("d3d9: in-car dashboard: the saved %s crop is too big for it, finding it again", kDashPartName[i]);
+        }
+    }
+}
+
+// The crop element `i` uses now: its settled one, else the configured one.
+static const float* Crop(int i) {
+    if (!g_cfg.dashAutoCrop) return g_cfg.dashCrop[i];
+    LoadFoundCrops();
+    return s_autoCrop[i].settled ? s_autoCrop[i].box : g_cfg.dashCrop[i];
+}
+
+// Finds the HUD's parts in the probe's coverage (kProbe x kProbe cells, 1 = HUD there): pieces of
+// the HUD (cells joined across a one-cell gap, so a gauge and its text are one piece) go to the
+// element whose configured crop's centre is nearest, among those whose crop, widened, has the
+// piece's centre in it; each element's part is the box around its pieces (a cell's margin).
+// The messages in the middle come and go with different shapes: they keep their configured crop.
+static void FindCrops(const uint8_t* cov) {
+    static uint8_t grown[kProbe * kProbe];
+    static int16_t label[kProbe * kProbe];
+    static int stack[kProbe * kProbe];
+    int total = 0;
+    for (int y = 0; y < kProbe; y++)
+        for (int x = 0; x < kProbe; x++) {
+            uint8_t v = 0;
+            for (int dy = -1; dy <= 1 && !v; dy++)
+                for (int dx = -1; dx <= 1 && !v; dx++) {
+                    int xx = x + dx, yy = y + dy;
+                    if (xx >= 0 && yy >= 0 && xx < kProbe && yy < kProbe) v = cov[yy * kProbe + xx];
+                }
+            grown[y * kProbe + x] = v;
+            total += cov[y * kProbe + x];
+        }
+    // Something over most of the screen (a menu, a fade, the pursuit's tint): not the HUD's parts.
+    if (total > kProbe * kProbe / 3) return;
+    memset(label, -1, sizeof(label));
+    float found[DASH_EL_COUNT][4];
+    bool any[DASH_EL_COUNT] = {};
+    int pieces = 0;
+    for (int start = 0; start < kProbe * kProbe; start++) {
+        if (!grown[start] || label[start] >= 0) continue;
+        int top = 0, n = 0, x0 = kProbe, y0 = kProbe, x1 = -1, y1 = -1;
+        stack[top++] = start;
+        label[start] = (int16_t)pieces;
+        while (top) {
+            int at = stack[--top], x = at % kProbe, y = at / kProbe;
+            if (cov[at]) {
+                n++;
+                x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
+            }
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    int xx = x + dx, yy = y + dy;
+                    if (xx < 0 || yy < 0 || xx >= kProbe || yy >= kProbe) continue;
+                    int nb = yy * kProbe + xx;
+                    if (grown[nb] && label[nb] < 0) label[nb] = (int16_t)pieces, stack[top++] = nb;
+                }
+        }
+        pieces++;
+        if (n < 3) continue;
+        float b[4] = {(x0 - 1) / (float)kProbe, (y0 - 1) / (float)kProbe, (x1 + 2) / (float)kProbe, (y1 + 2) / (float)kProbe};
+        float cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
+        int best = -1;
+        float bestD = 1e9f;
+        for (int i = 0; i < DASH_EL_COUNT; i++) {
+            if (i == DASH_EL_MSG) continue;
+            const float* c = g_cfg.dashCrop[i];
+            if (cx < c[0] - 0.15f || cx > c[2] + 0.15f || cy < c[1] - 0.08f || cy > c[3] + 0.08f) continue;
+            float dx = cx - (c[0] + c[2]) / 2, dy = cy - (c[1] + c[3]) / 2, d = dx * dx + dy * dy;
+            if (d < bestD) bestD = d, best = i;
+        }
+        // A piece in the messages' crop (the middle of the screen) stays out of the others'.
+        const float* m = g_cfg.dashCrop[DASH_EL_MSG];
+        if (best < 0 || (cx > m[0] && cx < m[2] && cy > m[1] && cy < m[3])) continue;
+        float* f = found[best];
+        if (!any[best]) memcpy(f, b, sizeof(b)), any[best] = true;
+        else f[0] = std::min(f[0], b[0]), f[1] = std::min(f[1], b[1]), f[2] = std::max(f[2], b[2]), f[3] = std::max(f[3], b[3]);
+    }
+    LoadFoundCrops();
+    double now = D3D_ProfNow();
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        if (!any[i]) continue;
+        AutoCrop& a = s_autoCrop[i];
+        const float* f = found[i];
+        if (!FitsCrop(i, f)) continue;     // other HUD pieces joined in: not this part alone
+        if (a.settled && !a.collecting) {
+            // Where its crop is (most of the smaller of the two boxes overlapping: a part animating,
+            // or with an icon beside it): nothing to do. Moved: found again.
+            float iw = std::min(f[2], a.box[2]) - std::max(f[0], a.box[0]), ih = std::min(f[3], a.box[3]) - std::max(f[1], a.box[1]);
+            float inter = iw > 0 && ih > 0 ? iw * ih : 0.0f;
+            float areaF = (f[2] - f[0]) * (f[3] - f[1]), areaS = (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]);
+            if (inter >= 0.5f * std::min(areaF, areaS)) {
+                a.outsideSince = 0;
+                continue;
+            }
+            if (a.outsideSince == 0) a.outsideSince = now;
+            if (now - a.outsideSince < 5.0) continue;
+            Log("d3d9: in-car dashboard: %s keeps showing somewhere else: finding it again", kDashPartName[i]);
+            a.outsideSince = 0;
+            a.collecting = false;    // collected afresh below
+        }
+        float* c = a.cand;
+        if (!a.collecting) {
+            memcpy(c, f, sizeof(float) * 4);
+            a.collecting = true;
+            a.candGrew = now;
+        } else if (f[0] < c[0] || f[1] < c[1] || f[2] > c[2] || f[3] > c[3]) {
+            float g[4] = {std::min(c[0], f[0]), std::min(c[1], f[1]), std::max(c[2], f[2]), std::max(c[3], f[3])};
+            // Grown past what the part can be (it moved, or something else was there): from this
+            // frame's box again.
+            memcpy(c, FitsCrop(i, g) ? g : f, sizeof(g));
+            a.candGrew = now;
+        }
+        for (int k = 0; k < 4; k++) c[k] = std::max(0.0f, std::min(1.0f, c[k]));
+        if (now - a.candGrew < 2.0) continue;
+        // Settled: its crop from now on, and saved for the next start.
+        memcpy(a.box, c, sizeof(float) * 4);
+        a.settled = true;
+        a.collecting = false;
+        const float* cfg = g_cfg.dashCrop[i];
+        Log("d3d9: in-car dashboard: %s found at %.3f %.3f %.3f %.3f (configured %.3f %.3f %.3f %.3f)", kDashPartName[i],
+            c[0], c[1], c[2], c[3], cfg[0], cfg[1], cfg[2], cfg[3]);
+        char key[32], val[96];
+        snprintf(key, sizeof(key), "DashFound%s", kDashElKey[i]);
+        snprintf(val, sizeof(val), "%.4f,%.4f,%.4f,%.4f", c[0], c[1], c[2], c[3]);
+        WritePrivateProfileStringA("VR", key, val, VrIni());
+    }
+}
+static struct {
+    bool on;
+    D3DMATRIX view, proj;
+    void* ib;
+    float origin[3], right[3], up[3], toEye[3];
+    bool added, drawn;
+    IDirect3DSurface9* ds;                     // the scene's depth buffer, from the interior's draw
+} s_dashEye;
+static bool s_dashThisFrame;                   // a panel was drawn in an eye this frame
+
+// Solid colour triangles drawn with a model (index buffer) right after its first draw in the player
+// view: the triangle editor's black triangles and the car's own gauges (opaque, writing depth), its
+// highlight (blended). World space, already pulled toward the eye by the cockpit.
+struct ColorTris {
+    void* ib;
+    std::vector<float> xyz;
+    D3DCOLOR color;
+    bool drawn;
+};
+static std::vector<ColorTris> s_colorTris;
+static std::unordered_map<void*, std::vector<size_t>> s_colorTrisByIb;
+static bool s_colorEye;
+
+static IDirect3DTexture9* s_glassTex;          // the glass sheen (white, its alpha the sheen)
+
+static void ReleaseDash() {
+    if (s_glassTex) s_glassTex->Release();
+    s_glassTex = nullptr;
+    if (s_dashSurf) s_dashSurf->Release();
+    if (s_dashTex) s_dashTex->Release();
+    if (s_probeRT) s_probeRT->Release();
+    if (s_probeMem) s_probeMem->Release();
+    s_dashSurf = s_probeRT = s_probeMem = nullptr;
+    s_dashTex = nullptr;
+    if (s_dashEye.ds) s_dashEye.ds->Release();
+    s_dashEye.ds = nullptr;
+    for (DashEl& e : s_el) e.ok = false;
+}
+
+static bool EnsureDash() {
+    if (s_dashTex && s_probeRT && s_probeMem) return true;
+    ReleaseDash();
+    bool ok = SUCCEEDED(s_dev->CreateTexture(kAtlasW, kAtlasH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+                                             &s_dashTex, nullptr)) &&
+              SUCCEEDED(s_dashTex->GetSurfaceLevel(0, &s_dashSurf)) &&
+              SUCCEEDED(s_dev->CreateRenderTarget(kProbe, kProbe, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &s_probeRT, nullptr)) &&
+              SUCCEEDED(s_dev->CreateOffscreenPlainSurface(kProbe, kProbe, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &s_probeMem, nullptr));
+    if (!ok) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: in-car dashboard: creating its textures failed");
+        }
+        ReleaseDash();
+        return false;
+    }
+    s_dev->ColorFill(s_dashSurf, nullptr, D3DCOLOR_ARGB(0, 0, 0, 0));
+    return true;
+}
+
+void D3D_BeginDashEye(bool on, const float* view, const float* proj) {
+    bool menuOk = s_uiMenuOpen < 0.5f || g_cfg.dashAdjust > 0.5f;
+    s_dashEye.on = on && menuOk;
+    s_dashEye.added = s_dashEye.drawn = false;
+    if (s_dashEye.ds) s_dashEye.ds->Release();
+    s_dashEye.ds = nullptr;
+    memcpy(&s_dashEye.view, view, sizeof(s_dashEye.view));
+    memcpy(&s_dashEye.proj, proj, sizeof(s_dashEye.proj));
+    s_colorTris.clear();
+    s_colorTrisByIb.clear();
+    s_colorEye = true;
+}
+
+void D3D_AddDash(void* indexBuffer, const float origin[3], const float right[3], const float up[3], const float toEye[3]) {
+    if (!s_dashEye.on || s_dashEye.added || !indexBuffer) return;
+    s_dashEye.ib = indexBuffer;
+    memcpy(s_dashEye.origin, origin, 12);
+    memcpy(s_dashEye.right, right, 12);
+    memcpy(s_dashEye.up, up, 12);
+    memcpy(s_dashEye.toEye, toEye, 12);
+    s_dashEye.added = true;
+}
+
+void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32_t argb) {
+    if (!s_colorEye || !indexBuffer || triangles <= 0) return;
+    auto& matching = s_colorTrisByIb[indexBuffer];
+    for (size_t i : matching)
+        if (s_colorTris[i].color == argb) return;
+    ColorTris c;
+    c.ib = indexBuffer;
+    c.xyz.assign(xyz, xyz + triangles * 9);
+    c.color = argb;
+    c.drawn = false;
+    s_colorTris.push_back(std::move(c));
+    matching.push_back(s_colorTris.size() - 1);
+}
+
+// Fixed-function state for our own quads and triangles in the eye: world space, the eye's view and
+// projection, depth tested, no depth bias (the geometry stands off what it covers).
+static void SetPanelState(const D3DMATRIX& view, const D3DMATRIX& proj) {
+    s_dev->SetVertexShader(nullptr);
+    s_dev->SetPixelShader(nullptr);
+    s_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
+    D3DMATRIX identity = {};
+    identity._11 = identity._22 = identity._33 = identity._44 = 1.0f;
+    s_dev->SetTransform(D3DTS_WORLD, &identity);
+    s_dev->SetTransform(D3DTS_VIEW, &view);
+    s_dev->SetTransform(D3DTS_PROJECTION, &proj);
+    s_dev->SetRenderState(D3DRS_ZENABLE, D3DZB_TRUE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+    s_dev->SetRenderState(D3DRS_DEPTHBIAS, 0);
+    s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, 0);
+    s_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    s_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+    s_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_CLIPPLANEENABLE, 0);
+    s_dev->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
+    s_dev->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    s_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    s_dev->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+    for (DWORD st = 0; st < 8; st++) s_dev->SetTexture(st, nullptr);
+    s_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    s_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    s_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+    s_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+    s_dev->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+    s_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    s_dev->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+}
+
+// Plain colour (TFACTOR): opaque writes depth, translucent blends over without writing it.
+static void SetColor(D3DCOLOR argb) {
+    bool blend = (argb >> 24) < 255;
+    s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, argb);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, blend);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, !blend);
+    s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TFACTOR);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TFACTOR);
+}
+
+// The dashboard texture, its alpha blended; depth written where it is drawn (alpha test), so the
+// interior drawn later stays behind it and the wheel and arms in front.
+static void SetPicture() {
+    s_dev->SetTexture(0, s_dashTex);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+    s_dev->SetRenderState(D3DRS_ALPHAREF, 8);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+}
+
+// How much nearer the eye the panel is for the depth test: each point slid along its line of sight
+// (the picture is the same), so the dashboard's own surfaces near or through the panel's plane (the
+// cluster hood, black triangles) stay behind it instead of fighting it; the wheel and arms, further
+// in front, still cover it.
+static const float kPanelDepthPull = 0.05f;
+
+// The eye's position in the world, from its view matrix.
+static void EyePos(const D3DMATRIX& v, float e[3]) {
+    for (int j = 0; j < 3; j++) e[j] = -(v.m[3][0] * v.m[j][0] + v.m[3][1] * v.m[j][1] + v.m[3][2] * v.m[j][2]);
+}
+
+// A quad on the panel's plane: centre (x, y) and half sizes (m, world), lifted `lift` m toward the eye.
+static void PanelQuad(float x, float y, float hw, float hh, float lift, const float uv[4], PanelVertex out[6]) {
+    const float *o = s_dashEye.origin, *r = s_dashEye.right, *u = s_dashEye.up, *t = s_dashEye.toEye;
+    float eye[3];
+    EyePos(s_dashEye.view, eye);
+    auto at = [&](float sx, float sy, float tu, float tv) {
+        PanelVertex p;
+        p.x = o[0] + r[0] * (x + sx) + u[0] * (y + sy) + t[0] * lift;
+        p.y = o[1] + r[1] * (x + sx) + u[1] * (y + sy) + t[1] * lift;
+        p.z = o[2] + r[2] * (x + sx) + u[2] * (y + sy) + t[2] * lift;
+        float d[3] = {eye[0] - p.x, eye[1] - p.y, eye[2] - p.z};
+        float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        float k = len > 1e-3f ? std::min(kPanelDepthPull, len * 0.5f) / len : 0.0f;
+        p.x += d[0] * k;
+        p.y += d[1] * k;
+        p.z += d[2] * k;
+        p.u = tu;
+        p.v = tv;
+        return p;
+    };
+    float u0 = uv ? uv[0] : 0, v0 = uv ? uv[1] : 0, u1 = uv ? uv[2] : 0, v1 = uv ? uv[3] : 0;
+    PanelVertex a = at(-hw, hh, u0, v0), b = at(hw, hh, u1, v0), c = at(hw, -hh, u1, v1), d = at(-hw, -hh, u0, v1);
+    out[0] = a; out[1] = b; out[2] = c; out[3] = a; out[4] = c; out[5] = d;
+}
+
+// A rounded rectangle's rim on the panel's plane (centre, half sizes, corner radius, m), lifted
+// `lift` toward the eye, UVs 0..1 across it; the same number of points whatever the size.
+static std::vector<PanelVertex> RoundedRim(float x, float y, float hw, float hh, float r, float lift) {
+    r = std::max(0.0f, std::min(r, std::min(hw, hh)));
+    const int seg = 6;
+    std::vector<PanelVertex> rim;
+    const float corner[4][2] = {{hw - r, hh - r}, {-(hw - r), hh - r}, {-(hw - r), -(hh - r)}, {hw - r, -(hh - r)}};
+    for (int c = 0; c < 4; c++)
+        for (int k = 0; k <= seg; k++) {
+            float a = (c * 90.0f + k * 90.0f / seg) * 3.14159265f / 180.0f;
+            float px = corner[c][0] + r * cosf(a), py = corner[c][1] + r * sinf(a);
+            PanelVertex q[6];
+            PanelQuad(x + px, y + py, 0, 0, lift, nullptr, q);
+            q[0].u = (px + hw) / (2 * hw);
+            q[0].v = (hh - py) / (2 * hh);
+            rim.push_back(q[0]);
+        }
+    return rim;
+}
+
+// The rounded rectangle's outline only: a band `t` wide outside it (the NFS MW orange rim). Drawn
+// filled under the screen, it showed through a see-through screen as a beige wash.
+static void PanelRoundedRing(float x, float y, float hw, float hh, float r, float t, float lift, D3DCOLOR argb) {
+    std::vector<PanelVertex> in = RoundedRim(x, y, hw, hh, r, lift), out = RoundedRim(x, y, hw + t, hh + t, r + t, lift);
+    std::vector<PanelVertex> tris;
+    for (size_t i = 0; i < in.size(); i++) {
+        size_t j = (i + 1) % in.size();
+        tris.insert(tris.end(), {in[i], out[i], out[j], in[i], out[j], in[j]});
+    }
+    SetColor(argb);
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(tris.size() / 3), tris.data(), sizeof(PanelVertex));
+}
+
+// A rounded rectangle on the panel's plane (centre, half sizes, corner radius, m), lifted `lift`
+// toward the eye: a fan of triangles from the centre.
+// With `tex`, the texture across it, times argb's alpha; `mapUv` sets each point's texture place.
+static void PanelRoundedRect(float x, float y, float hw, float hh, float r, float lift, D3DCOLOR argb,
+                             IDirect3DTexture9* tex = nullptr, void (*mapUv)(PanelVertex&) = nullptr) {
+    std::vector<PanelVertex> rim = RoundedRim(x, y, hw, hh, r, lift);
+    PanelVertex mid[6];
+    PanelQuad(x, y, 0, 0, lift, nullptr, mid);
+    mid[0].u = mid[0].v = 0.5f;
+    if (mapUv) {
+        for (PanelVertex& p : rim) mapUv(p);
+        mapUv(mid[0]);
+    }
+    std::vector<PanelVertex> tris;
+    for (size_t i = 0; i < rim.size(); i++) {
+        tris.push_back(mid[0]);
+        tris.push_back(rim[i]);
+        tris.push_back(rim[(i + 1) % rim.size()]);
+    }
+    SetColor(argb);
+    if (tex) {
+        s_dev->SetTexture(0, tex);
+        s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+        s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+        s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+        // A picture (the reflection) has no alpha of its own to go by: argb's alone.
+        if (mapUv) s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2);
+    }
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(tris.size() / 3), tris.data(), sizeof(PanelVertex));
+    if (tex) s_dev->SetTexture(0, nullptr);
+}
+
+// The glass sheen, made once: white, its alpha a faint wash brighter at the top, two diagonal
+// streaks and a bright top edge, like light on a screen's glass.
+static IDirect3DTexture9* GlassTexture() {
+    if (s_glassTex) return s_glassTex;
+    const int n = 256;
+    // A dynamic texture in the default pool (the device is D3D9Ex: no managed pool), so made again
+    // after a reset (ReleaseDash).
+    if (FAILED(s_dev->CreateTexture(n, n, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &s_glassTex, nullptr))) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: in-car dashboard: creating the glass texture failed");
+        }
+        s_glassTex = nullptr;
+        return nullptr;
+    }
+    D3DLOCKED_RECT lr;
+    if (FAILED(s_glassTex->LockRect(0, &lr, nullptr, D3DLOCK_DISCARD))) {
+        s_glassTex->Release();
+        s_glassTex = nullptr;
+        return nullptr;
+    }
+    for (int y = 0; y < n; y++) {
+        uint32_t* row = (uint32_t*)((uint8_t*)lr.pBits + y * lr.Pitch);
+        for (int x = 0; x < n; x++) {
+            float u = (x + 0.5f) / n, v = (y + 0.5f) / n;
+            float a = 0.14f + 0.30f * (1 - v) * (1 - v);
+            float d1 = u + 0.55f * v - 0.42f, d2 = u + 0.55f * v - 0.66f;
+            a += 0.65f * expf(-d1 * d1 / 0.006f) + 0.35f * expf(-d2 * d2 / 0.0012f);
+            a += 0.55f * expf(-v / 0.02f) + 0.25f * expf(-(1 - v) / 0.015f);
+            uint32_t A = (uint32_t)(std::min(1.0f, a) * 255);
+            row[x] = (A << 24) | 0xFFFFFF;
+        }
+    }
+    s_glassTex->UnlockRect(0);
+    return s_glassTex;
+}
+
+// The glass's reflection: what is behind the driver, taken from the rear view picture (the world
+// behind the car, as a mirror shows it). Each point of the glass looks up the picture along the
+// eye's ray reflected off the glass (normal: toward the driver), so it moves as the head moves.
+static float s_reflEye[3], s_reflScale[2];
+static void ReflectionUv(PanelVertex& p) {
+    const float *r = s_dashEye.right, *u = s_dashEye.up, *n = s_dashEye.toEye;
+    float d[3] = {p.x - s_reflEye[0], p.y - s_reflEye[1], p.z - s_reflEye[2]};
+    float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len < 1e-4f) return;
+    float dn = (d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) / len;
+    float R[3];
+    for (int i = 0; i < 3; i++) R[i] = d[i] / len - 2 * dn * n[i];
+    float x = R[0] * r[0] + R[1] * r[1] + R[2] * r[2], y = R[0] * u[0] + R[1] * u[1] + R[2] * u[2];
+    float z = std::max(0.2f, R[0] * n[0] + R[1] * n[1] + R[2] * n[2]);
+    p.u = 0.5f + 0.5f * x * s_reflScale[0] / z;
+    p.v = 0.5f - 0.5f * y * s_reflScale[1] / z;
+}
+
+// Everything the mirrors and the in-car dashboard need the first time they are drawn - the compiler
+// DLL, three pixel shaders, the dashboard's textures and the reusable state block. Each cost
+// milliseconds and they landed together as one hitch at the exact moment the mirrors or the in-car
+// dashboard first appeared in a race, so they are built here while the game is still loading.
+void D3D_WarmUp() {
+    if (!s_dev) return;
+    double t0 = D3D_ProfNow();
+    bool grade = Shader(s_gradeShader) != nullptr;
+    bool glass = Shader(s_glassShader) != nullptr;
+    bool map = Shader(s_mirrorMapShader) != nullptr;
+    bool dash = EnsureDash();
+    bool needed = g_cfg.dashGlass > 0.01f;
+    bool glassTex = !needed || GlassTexture() != nullptr;
+    bool state = SavedStateBlock() != nullptr;
+    Log("d3d9: warm-up %.1f ms: mirror shaders %d%d%d, dashboard %s, glass texture %s, state block %s",
+        (D3D_ProfNow() - t0) * 1000.0, (int)grade, (int)glass, (int)map,
+        dash ? "ready" : "unavailable", needed ? (glassTex ? "ready" : "unavailable") : "off", state ? "ready" : "failed");
+}
+
+static void DrawDash() {
+    if (!EnsureDash()) return;
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) return;
+    saved->Capture();
+    SetPanelState(s_dashEye.view, s_dashEye.proj);
+    bool adjust = g_cfg.dashAdjust > 0.5f;
+    int highlight = (int)lrintf(g_cfg.dashHighlight);
+    float zoom = std::max(0.2f, g_cfg.dashZoom);
+    // The HUD picture is the game's own 4:3 layout (FixHUD off) stretched over the eye texture: at
+    // zoom 1 the whole HUD is 36.4 cm wide and 27.3 cm high, whatever the resolution.
+    const float kHudW = 0.364f, kHudH = 0.273f;
+    PanelVertex q[6];
+    // The display: a gray screen (the game's HUD gray, DashColor) with rounded corners and an orange
+    // (NFS MW) outline, centred on the panel's anchor; the elements sit on it.
+    if (g_cfg.dashBox > 0.01f) {
+        float hw = std::max(0.01f, g_cfg.dashScreenW) * zoom / 2, hh = std::max(0.01f, g_cfg.dashScreenH) * zoom / 2;
+        float t = 0.0015f * zoom, r = std::min(hw, hh) * 0.18f;
+        BYTE a = (BYTE)(std::min(1.0f, g_cfg.dashBox) * 255);
+        BYTE ao = (BYTE)(std::min(1.0f, g_cfg.dashBox * 1.2f) * 255);
+        PanelRoundedRect(0, 0, hw, hh, r, 0.0001f, ((DWORD)a << 24) | (g_cfg.dashColor & 0xFFFFFF));
+        PanelRoundedRing(0, 0, hw, hh, r, t, 0.0001f, D3DCOLOR_ARGB(ao, 255, 150, 0));
+    }
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        const float* e = g_cfg.dashEl[i];
+        if (e[2] <= 0.001f || e[0] != e[0] || e[1] != e[1]) continue;
+        bool have = s_el[i].ok;
+        if (!have && !adjust) continue;
+        const float* crop = g_cfg.dashCrop[i];
+        float wPx = have ? s_el[i].wPx : (crop[2] - crop[0]) * s_eyeW, hPx = have ? s_el[i].hPx : (crop[3] - crop[1]) * s_eyeH;
+        float hw = wPx / std::max(s_eyeW, 1) * kHudW * zoom * e[2] / 2, hh = hPx / std::max(s_eyeH, 1) * kHudH * zoom * e[2] / 2;
+        float x = e[0] * zoom, y = e[1] * zoom, lift = 0.0005f * (i + 1);
+        if (have) {
+            const float uv[4] = {s_el[i].u0, s_el[i].v0, s_el[i].u1, s_el[i].v1};
+            PanelQuad(x, y, hw, hh, lift + 0.0002f, uv, q);
+            SetPicture();
+        } else {
+            PanelQuad(x, y, hw, hh, lift + 0.0002f, nullptr, q);   // not on the HUD now: where it will go
+            SetColor(D3DCOLOR_ARGB(110, 70, 70, 70));
+        }
+        s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, q, sizeof(PanelVertex));
+        if (adjust && i == highlight) {
+            // The element being adjusted: a yellow outline, 2 mm wide, just in front.
+            float t = 0.002f;
+            SetColor(D3DCOLOR_ARGB(255, 255, 210, 0));
+            const float strips[4][4] = {{x, y + hh, hw + t, t / 2}, {x, y - hh, hw + t, t / 2}, {x - hw, y, t / 2, hh},
+                                        {x + hw, y, t / 2, hh}};
+            for (const auto& s : strips) {
+                PanelQuad(s[0], s[1], s[2], s[3], lift + 0.0004f, nullptr, q);
+                s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 2, q, sizeof(PanelVertex));
+            }
+        }
+    }
+    // Glass in front of the screen and its elements (Display glass depth), blended over them: the
+    // world reflected in it (Display glass reflection), then its sheen (Display glass opacity).
+    {
+        float hw = std::max(0.01f, g_cfg.dashScreenW) * zoom / 2, hh = std::max(0.01f, g_cfg.dashScreenH) * zoom / 2;
+        float r = std::min(hw, hh) * 0.18f;
+        float depth = std::max(0.0045f, g_cfg.dashGlassDepth);   // never behind the elements
+        D3DSURFACE_DESC d;
+        if (g_cfg.dashReflect > 0.01f && s_mirrorTex && SUCCEEDED(s_mirrorTex->GetLevelDesc(0, &d)) && d.Height) {
+            EyePos(s_dashEye.view, s_reflEye);
+            s_reflScale[0] = 1.4f;                                   // about 70 degrees across
+            s_reflScale[1] = 1.4f * (float)d.Width / d.Height;
+            BYTE a = (BYTE)(std::min(1.0f, g_cfg.dashReflect) * 255);
+            PanelRoundedRect(0, 0, hw, hh, r, depth - 0.0002f, D3DCOLOR_ARGB(a, 255, 255, 255), s_mirrorTex, ReflectionUv);
+        }
+        IDirect3DTexture9* glass = g_cfg.dashGlass > 0.01f ? GlassTexture() : nullptr;
+        if (glass) {
+            BYTE a = (BYTE)(std::min(1.0f, g_cfg.dashGlass) * 255);
+            PanelRoundedRect(0, 0, hw, hh, r, depth, D3DCOLOR_ARGB(a, 255, 255, 255), glass);
+        }
+    }
+    saved->Apply();
+    s_dashThisFrame = true;
+    static bool logged;
+    if (!logged) {
+        logged = true;
+        Log("d3d9: in-car dashboard drawn with the interior");
+    }
+}
+
+// Triangles over the finished eye (no depth test: seen through what is in front), in one colour:
+// the triangle editor's reticle and selection.
+void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb) {
+    if (!s_dev || !s_colorEye || triangles <= 0) return;
+    IDirect3DSurface9* bb = nullptr;
+    if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb) return;
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) {
+        bb->Release();
+        return;
+    }
+    saved->Capture();
+    IDirect3DSurface9* rt = nullptr;
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->SetRenderTarget(0, bb);
+    SetPanelState(s_dashEye.view, s_dashEye.proj);
+    SetColor(argb);
+    s_dev->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    s_dev->SetFVF(D3DFVF_XYZ);
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)triangles, xyz, 3 * sizeof(float));
+    s_dev->SetRenderTarget(0, rt);
+    saved->Apply();
+    if (rt) rt->Release();
+    bb->Release();
+}
+
+static void DrawColorTris(ColorTris& c) {
+    IDirect3DStateBlock9* saved = SavedStateBlock();
+    if (!saved) return;
+    saved->Capture();
+    SetPanelState(s_dashEye.view, s_dashEye.proj);
+    SetColor(c.color);
+    // Drawn over the game's own triangles: pulled toward the eye in depth too (decal bias), so the
+    // two never fight.
+    float bias = -0.00005f, slope = -1.0f;
+    s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
+    s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, *(DWORD*)&slope);
+    s_dev->SetFVF(D3DFVF_XYZ);
+    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(c.xyz.size() / 9), c.xyz.data(), 3 * sizeof(float));
+    saved->Apply();
+}
+
+// After the first draw from the interior's index buffer in the player view, once per eye (its
+// picture is blended: drawn again it would grow more opaque); the same for coloured triangles.
+static void AfterModelDrawDash() {
+    if ((!s_colorEye || s_colorTris.empty()) && (!s_dashEye.on || !s_dashEye.added || s_dashEye.drawn)) return;
+    auto colorJobs = s_colorTrisByIb.find(s_curIndices);
+    if (s_colorEye && colorJobs != s_colorTrisByIb.end()) {
+        bool checked = false, player = false;
+        for (size_t i : colorJobs->second) {
+            ColorTris& c = s_colorTris[i];
+            if (c.drawn) continue;
+            if (!checked) {
+                checked = true;
+                player = DrawingPlayerView();
+            }
+            if (!player) break;
+            c.drawn = true;
+            DrawColorTris(c);
+        }
+    }
+    if (!s_dashEye.on || !s_dashEye.added || s_dashEye.drawn || s_dashEye.ib != s_curIndices || !DrawingPlayerView()) return;
+    s_dashEye.drawn = true;
+    if (s_dashEye.ds) s_dashEye.ds->Release();
+    s_dashEye.ds = nullptr;
+    s_dev->GetDepthStencilSurface(&s_dashEye.ds);
+}
+
+// After the eye's scene, post-processing included (drawn mid-scene, the bloom made the boxes glow
+// and the motion blur smeared the scene into them): the panel into the finished eye, depth tested
+// against the scene's depth buffer noted with the interior's draw, so the wheel stays in front.
+void D3D_EndDashEye() {
+    IDirect3DSurface9* ds = s_dashEye.ds;
+    s_dashEye.ds = nullptr;
+    if (!ds) return;
+    IDirect3DSurface9* bb = nullptr;
+    D3DSURFACE_DESC b, d;
+    if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb || FAILED(bb->GetDesc(&b)) || FAILED(ds->GetDesc(&d)) ||
+        d.Width < b.Width || d.Height < b.Height || d.MultiSampleType != b.MultiSampleType) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: in-car dashboard: the scene's depth buffer doesn't fit the back buffer, drawn without it");
+        }
+        if (bb) bb->Release();
+        ds->Release();
+        return;
+    }
+    IDirect3DSurface9 *rt = nullptr, *curDs = nullptr;
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->GetDepthStencilSurface(&curDs);
+    s_dev->SetRenderTarget(0, bb);
+    s_dev->SetDepthStencilSurface(ds);
+    DrawDash();
+    s_dev->SetRenderTarget(0, rt);
+    s_dev->SetDepthStencilSurface(curDs);
+    if (rt) rt->Release();
+    if (curDs) curDs->Release();
+    bb->Release();
+    ds->Release();
+}
+
+// Whether each element's crop (Config::dashCrop) has anything of the HUD in it now, from a small
+// copy read back a few times a second. A pursuit lays a faint layer over the whole screen: when most
+// cells read as covered at the lowest threshold, the threshold goes up until the parts stand apart.
+// The crops themselves are fixed (the HUD's layout), so nothing changes size or moves on the panel.
+// The HUD picture is copied to a small system-memory surface and read back to see which dashboard
+// elements are showing. Both the copy and the read-back used to wait for the GPU to finish the frame's
+// eye renders, which stalled the frame they ran in - exactly at the moments the HUD popped up. The
+// copy is now issued a few times a second and locked with D3DLOCK_DONOTWAIT: when the copy isn't done
+// yet the probe is skipped and retried on the next frame, so an element is still picked up a frame or
+// two after it appears. If the driver never reports the copy as ready the probe falls back to waiting.
+static bool s_probePending;
+static int s_probeSpin;
+static bool s_probeWaited;
+
+static bool ProbeHud() {
+    D3DLOCKED_RECT lr;
+    if (!s_probePending) {
+        if (D3D_ProfNow() - s_lastProbe < 0.3) return false;
+        s_lastProbe = D3D_ProfNow();
+        if (FAILED(s_dev->StretchRect(s_eyeSurf[2], nullptr, s_probeRT, nullptr, D3DTEXF_LINEAR)) ||
+            FAILED(s_dev->GetRenderTargetData(s_probeRT, s_probeMem)))
+            return false;
+        Trace_HudProbe();
+        s_probePending = true;
+        s_probeSpin = 0;
+    }
+    if (FAILED(s_probeMem->LockRect(&lr, nullptr, D3DLOCK_READONLY | D3DLOCK_DONOTWAIT))) {
+        if (++s_probeSpin < 90) return false;   // about a second at 72 Hz, then give up on DONOTWAIT
+        if (!s_probeWaited) {
+            s_probeWaited = true;
+            Log("d3d9: in-car dashboard: the probe's read-back never reports ready - waiting for the GPU");
+        }
+        if (FAILED(s_probeMem->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+            s_probePending = false;
+            return false;
+        }
+    }
+    static uint8_t alpha[kProbe * kProbe], cov[kProbe * kProbe];
+    for (int y = 0; y < kProbe; y++) {
+        const uint8_t* row = (const uint8_t*)lr.pBits + y * lr.Pitch;
+        for (int x = 0; x < kProbe; x++) alpha[y * kProbe + x] = row[x * 4 + 3];
+    }
+    s_probeMem->UnlockRect();
+    s_probePending = false;
+    int threshold = 20;
+    for (int pass = 0; pass < 3; pass++) {
+        int covered = 0;
+        for (int i = 0; i < kProbe * kProbe; i++) covered += cov[i] = alpha[i] > threshold;
+        if (covered < kProbe * kProbe * 4 / 10) break;
+        threshold = pass == 0 ? 100 : 180;
+    }
+    if (g_cfg.dashAutoCrop) FindCrops(cov);
+    double now = D3D_ProfNow();
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        const float* c = Crop(i);
+        int x0 = std::max(0, (int)(c[0] * kProbe)), y0 = std::max(0, (int)(c[1] * kProbe));
+        int x1 = std::min(kProbe, (int)ceilf(c[2] * kProbe)), y1 = std::min(kProbe, (int)ceilf(c[3] * kProbe));
+        int n = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++) n += cov[y * kProbe + x];
+        DashBox& d = s_dashBox[i];
+        d.x0 = c[0]; d.y0 = c[1]; d.x1 = c[2]; d.y1 = c[3];
+        if (n >= 2) {
+            if (!d.ok) Log("d3d9: in-car dashboard: %s showing (%d cells in its crop)", kDashPartName[i], n);
+            d.ok = true;
+            d.seen = now;
+        } else if (d.ok && now - d.seen > 2.0) {
+            d.ok = false;
+        }
+    }
+    return true;
+}
+
+static RECT HudRect(const DashBox& d) {
+    RECT r;
+    r.left = std::max(0L, (LONG)(d.x0 * s_eyeW));
+    r.top = std::max(0L, (LONG)(d.y0 * s_eyeH));
+    r.right = std::min((LONG)s_eyeW, (LONG)(d.x1 * s_eyeW));
+    r.bottom = std::min((LONG)s_eyeH, (LONG)(d.y1 * s_eyeH));
+    return r;
+}
+
+// On the Adjust dashboard page (menu open, the HUD on its floating layer): each element's crop
+// outlined on the HUD, the one being adjusted in yellow.
+static void OutlineCrops() {
+    int highlight = (int)lrintf(g_cfg.dashHighlight);
+    LONG t = std::max(2L, (LONG)(s_eyeH / 400));
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        DashBox d;
+        const float* c = Crop(i);
+        d.x0 = c[0]; d.y0 = c[1]; d.x1 = c[2]; d.y1 = c[3];
+        RECT r = HudRect(d);
+        if (r.right - r.left < 2 * t || r.bottom - r.top < 2 * t) continue;
+        D3DCOLOR col = i == highlight ? D3DCOLOR_ARGB(255, 255, 210, 0) : D3DCOLOR_ARGB(160, 200, 200, 200);
+        const RECT edges[4] = {{r.left, r.top, r.right, r.top + t}, {r.left, r.bottom - t, r.right, r.bottom},
+                               {r.left, r.top, r.left + t, r.bottom}, {r.right - t, r.top, r.right, r.bottom}};
+        for (const RECT& e : edges) s_dev->ColorFill(s_eyeSurf[2], &e, col);
+    }
+}
+
+// Elements not placed yet get a fixed place (metres at zoom 1, x right, y up from the panel's
+// anchor): the cop radar on top, the minimap left and the speedometer right, the pursuit info in
+// the middle below and the leaderboard right below. Never moved after that but by hand.
+static void AutoLayout() {
+    static const float kPlace[DASH_EL_COUNT][2] = {{-0.08f, 0.0f}, {0.0f, 0.05f}, {0.08f, 0.0f}, {0.0f, -0.035f}, {0.13f, -0.055f},
+                                                {0.0f, 0.0f}};
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        float* e = g_cfg.dashEl[i];
+        if (e[0] != e[0]) e[0] = kPlace[i][0];
+        if (e[1] != e[1]) e[1] = kPlace[i][1];
+    }
+}
+
+// In the HUD phase's end, with the HUD in s_eyeSurf[2]: each part into its cell of the dashboard
+// texture, then the HUD cleared from the headset's HUD layer (and the spectator) but the messages.
+static void ComposeDash() {
+    bool on = s_dashThisFrame;
+    s_dashThisFrame = false;
+    s_dashEye.on = false;                        // until the next frame's eyes say so
+    s_colorEye = false;
+    if (!on || !s_hudValid || !s_eyeSurf[2] || !EnsureDash()) {
+        s_probePending = false;   // no HUD this frame: the pending read-back would be stale
+        return;
+    }
+    if (s_uiMenuOpen > 0.5f) {
+        s_probePending = false;   // the HUD is on its floating layer: don't read a picture from before
+        if (g_cfg.dashAdjust > 0.5f) OutlineCrops();
+        return;
+    }
+    ProbeHud();
+    s_dev->ColorFill(s_dashSurf, nullptr, D3DCOLOR_ARGB(0, 0, 0, 0));
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        s_el[i].ok = false;
+        if (!s_dashBox[i].ok) continue;
+        RECT src = HudRect(s_dashBox[i]);
+        float w = (float)(src.right - src.left), h = (float)(src.bottom - src.top);
+        if (w < 2 || h < 2) continue;
+        float k = std::min(1.0f, std::min(kCellW / w, kCellH / h));
+        LONG cx = (LONG)((i % 3) * kCellW), cy = (LONG)((i / 3) * kCellH);
+        RECT dst = {cx, cy, cx + (LONG)(w * k), cy + (LONG)(h * k)};
+        if (FAILED(s_dev->StretchRect(s_eyeSurf[2], &src, s_dashSurf, &dst, D3DTEXF_LINEAR))) continue;
+        // Where a smaller element's crop reaches into this one, that part is the smaller element's
+        // only: cut out here. (The minimap's and the speedometer's crops reach into the pursuit info
+        // box; their pieces of it met in the middle of the display as a second, squashed copy.)
+        const float* ci = Crop(i);
+        float areaI = (ci[2] - ci[0]) * (ci[3] - ci[1]);
+        for (int j = 0; j < DASH_EL_COUNT; j++) {
+            const float* cj = Crop(j);
+            float areaJ = (cj[2] - cj[0]) * (cj[3] - cj[1]);
+            if (j == i || areaJ <= 0 || areaJ > areaI || (areaJ == areaI && j > i)) continue;
+            DashBox b = {cj[0], cj[1], cj[2], cj[3], 0, true};
+            RECT o = HudRect(b);
+            o.left = std::max(o.left, src.left);
+            o.top = std::max(o.top, src.top);
+            o.right = std::min(o.right, src.right);
+            o.bottom = std::min(o.bottom, src.bottom);
+            if (o.right <= o.left || o.bottom <= o.top) continue;
+            RECT cut = {dst.left + (LONG)floorf((o.left - src.left) * k), dst.top + (LONG)floorf((o.top - src.top) * k),
+                        dst.left + (LONG)ceilf((o.right - src.left) * k), dst.top + (LONG)ceilf((o.bottom - src.top) * k)};
+            cut.right = std::min(cut.right, dst.right);
+            cut.bottom = std::min(cut.bottom, dst.bottom);
+            if (cut.right > cut.left && cut.bottom > cut.top) s_dev->ColorFill(s_dashSurf, &cut, D3DCOLOR_ARGB(0, 0, 0, 0));
+        }
+        s_el[i] = {true, dst.left / (float)kAtlasW, dst.top / (float)kAtlasH, dst.right / (float)kAtlasW,
+                   dst.bottom / (float)kAtlasH, w, h};
+    }
+    AutoLayout();
+    // The whole HUD off the headset's HUD layer: its parts, the messages too, are on the display.
+    s_dev->ColorFill(s_eyeSurf[2], nullptr, D3DCOLOR_ARGB(0, 0, 0, 0));
+}
+
+// The flat screen (no headset): the display was drawn with the interior as in an eye, but empty
+// (the HUD stays on the screen); its frame's state reset as ComposeDash does in the headset.
+void D3D_EndFlatDash() {
+    s_dashThisFrame = false;
+    s_dashEye.on = false;
+    s_colorEye = false;
+    for (DashEl& e : s_el) e.ok = false;
+}
+
+// True for a return address inside speed.exe (as opposed to another mod's DLL).
+static bool FromGame(void* addr) {
+    static uintptr_t end;
+    if (!end) {
+        uint8_t* base = (uint8_t*)GetModuleHandleA(nullptr);
+        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+        end = (uintptr_t)base + nt->OptionalHeader.SizeOfImage;
+    }
+    uintptr_t a = (uintptr_t)addr;
+    return a >= (uintptr_t)GetModuleHandleA(nullptr) && a < end;
+}
+
+// Colour writes in the HUD phase include alpha (see DeviceWrap::SetRenderState).
+static DWORD HudColorWrite(DWORD mask) {
+    return mask & (D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE)
+               ? mask | D3DCOLORWRITEENABLE_ALPHA : mask;
+}
+
+// After the last eye's scene render: keep the scene, then point everything the game
+// draws next (HUD, frontend) at a transparent render target.
+void D3D_BeginHudPhase() {
+    D3D_CaptureEye(1);
+    if (!s_dev || !s_hudRT || s_hudPhase) return;
+    if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &s_backBuffer))) return;
+    D3DVIEWPORT9 vp;
+    s_dev->GetViewport(&vp);
+    IDirect3DSurface9* cur = nullptr;
+    s_dev->GetRenderTarget(0, &cur);
+    s_dev->SetRenderTarget(0, s_hudRT);
+    s_dev->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0);
+    s_dev->SetRenderTarget(0, cur == s_backBuffer ? s_hudRT : cur);
+    if (cur) cur->Release();
+    s_dev->SetViewport(&vp);
+    DWORD mask;
+    if (SUCCEEDED(s_dev->GetRenderState(D3DRS_COLORWRITEENABLE, &mask))) s_dev->SetRenderState(D3DRS_COLORWRITEENABLE, HudColorWrite(mask));
+    s_hudPhase = true;
+}
+
+static void EndHudPhase() {
+    if (s_frameRT) s_frameRT->Release();
+    if (s_frameDS) s_frameDS->Release();
+    s_frameRT = s_frameDS = nullptr;
+    s_skipPostPass = false;
+    if (!s_hudPhase) return;
+    s_hudPhase = false;
+    IDirect3DSurface9* cur = nullptr;
+    s_dev->GetRenderTarget(0, &cur);
+    if (cur == s_hudRT) s_dev->SetRenderTarget(0, s_backBuffer);
+    if (cur) cur->Release();
+    s_hudValid = s_eyeSurf[2] && SUCCEEDED(s_dev->StretchRect(s_hudRT, nullptr, s_eyeSurf[2], nullptr, D3DTEXF_NONE));
+    ComposeDash();
+    if (s_hudValid && s_hudInEyes < 2 && Spectator_Mode() == SpectatorMode::Eye)
+        Spectator_BlendFullscreen(s_dev, s_eyeTex[2], s_eyeW, s_eyeH);
+    s_backBuffer->Release();
+    s_backBuffer = nullptr;
+}
+
+// --- frame timing ---------------------------------------------------------------------------------
+static struct {
+    double sum[PROF_COUNT], max[PROF_COUNT];   // over the 5 s window
+    double frame[PROF_COUNT];                  // this frame
+    double worst[PROF_COUNT];                  // the slots of the window's longest frame
+    double gameSum, gameMax, worstGame;        // the frame's time outside the measured slots
+    double frameMax, worstFrame, last, since;
+    int frames;
+} s_prof;
+static double s_profLastAvg;                   // the previous window's average frame
+static double s_profLastHitch;                 // when the last hitch was logged
+
+double D3D_ProfNow() {
+    static LARGE_INTEGER f;
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)f.QuadPart;
+}
+
+void D3D_ProfAdd(int slot, double seconds) {
+    if (slot < 0 || slot >= PROF_COUNT) return;
+    s_prof.sum[slot] += seconds;
+    s_prof.frame[slot] += seconds;
+    if (seconds > s_prof.max[slot]) s_prof.max[slot] = seconds;
+}
+
+// How often the game binds each of its own render targets over one report (see [VR] LogPasses): a
+// pass rendered for both eyes is counted twice per frame, a shared one (the eye-independent views,
+// and anything the game renders once) once. The counters are split by where the binding happened -
+// an eye's scene render or outside the eyes - so a pass can be told from a per-eye one. Colours and
+// depth buffers are counted separately (a shadow map can be depth-only). Only while the flag is set;
+// the flag also costs a GetDesc per binding, so it stays off.
+struct PassTally {
+    IDirect3DSurface9* surf;
+    UINT w, h;
+    bool depth;
+    int count;
+    int eye[3];   // outside the eyes, eye 0, eye 1
+    int draws;    // draws while it was bound
+    void* from;   // the game code that bound it first (see [VR] LogPasses: which pass this is)
+};
+static PassTally s_passTally[24];
+static int s_passTallyN;
+static int s_passColor = -1, s_passDepth = -1;   // the tally entries bound now (-1: none, or not tallied)
+static int s_tallyEye = -1;   // 0/1 while that eye's scene renders, -1 outside
+static double s_eyeSceneSum[2], s_eyeSceneMax[2];
+static unsigned s_eyeDrawCalls[2];
+
+static unsigned s_eyeDrawsAtBegin[2];
+
+void D3D_EyePassBegin(int eye) {
+    s_tallyEye = eye;
+    if (eye >= 0 && eye < 2) {
+        s_eyeDrawsAtBegin[eye] = s_eyeDrawCalls[eye];
+        Trace_EyeBegin(eye);
+    }
+}
+
+void D3D_EyeRenderProfile(int eye, double seconds) {
+    if (eye < 0 || eye > 1) return;
+    Trace_EyeEnd(eye, seconds, s_eyeDrawCalls[eye] - s_eyeDrawsAtBegin[eye]);
+    s_eyeSceneSum[eye] += seconds;
+    if (seconds > s_eyeSceneMax[eye]) s_eyeSceneMax[eye] = seconds;
+}
+
+static double s_updateStart = 0;   // end of the last Present (see D3D_ProfUpdateDone)
+
+void D3D_ProfUpdateDone() {
+    if (s_updateStart > 0) D3D_ProfAdd(PROF_UPDATE, D3D_ProfNow() - s_updateStart);
+    s_updateStart = 0;
+}
+
+static bool s_dropDraws = false;
+void D3D_DropDraws(bool on) { s_dropDraws = on; }
+
+static inline void CountEyeDrawCall() {
+    if (s_tallyEye >= 0 && s_tallyEye < 2) s_eyeDrawCalls[s_tallyEye]++;
+    if (s_passColor >= 0) s_passTally[s_passColor].draws++;
+    if (s_passDepth >= 0) s_passTally[s_passDepth].draws++;
+}
+
+static void TallySurface(IDirect3DSurface9* surf, bool depth) {
+    if (!g_cfg.logPasses) return;
+    int& current = depth ? s_passDepth : s_passColor;
+    current = -1;
+    if (!surf) return;
+    void* from = _ReturnAddress();
+    if (!depth) {
+        if (surf == s_frameRT || surf == s_backBuffer || surf == s_hudRT || surf == s_mirrorSurf || surf == s_mirrorRawSurf ||
+            surf == s_dashSurf || surf == s_probeRT)
+            return;
+        for (int i = 0; i < 3; i++)
+            if (surf == s_eyeSurf[i]) return;
+    }
+    for (int i = 0; i < s_passTallyN; i++)
+        if (s_passTally[i].surf == surf) {
+            s_passTally[i].count++;
+            s_passTally[i].eye[s_tallyEye + 1]++;
+            current = i;
+            return;
+        }
+    if (s_passTallyN >= 24) return;
+    D3DSURFACE_DESC d;
+    if (FAILED(surf->GetDesc(&d))) return;
+    PassTally& t = s_passTally[s_passTallyN++];
+    memset(&t, 0, sizeof(t));
+    t.surf = surf;
+    t.w = d.Width;
+    t.h = d.Height;
+    t.depth = depth;
+    t.count = 1;
+    t.eye[s_tallyEye + 1] = 1;
+    t.from = from;
+    current = s_passTallyN - 1;
+}
+
+// Once per Present: the frame's length, and every 5 s the breakdown. The breakdown's last entry,
+// "game", is everything the frame spent outside the measured slots - the game's own update and
+// render, its streaming and the work around the eye passes - which is where the spikes without a
+// matching phase live, so it is tracked with a maximum of its own.
+static void ProfFrame() {
+    double now = D3D_ProfNow();
+    if (s_prof.last > 0) {
+        double frame = now - s_prof.last;
+        s_prof.frames++;
+        double known = 0;
+        for (int i = 0; i < PROF_COUNT; i++) known += s_prof.frame[i];
+        double game = frame - known;
+        s_prof.gameSum += game;
+        if (game > s_prof.gameMax) s_prof.gameMax = game;
+        if (frame > s_prof.frameMax) {
+            s_prof.frameMax = frame;
+            s_prof.worstFrame = frame;
+            s_prof.worstGame = game;
+            memcpy(s_prof.worst, s_prof.frame, sizeof(s_prof.worst));
+        }
+        // A frame that overran the 5 s average by half is one the headset had to reproject or drop, so
+        // it is felt as a skip. Name every phase of the frame that went over (at most once a second).
+        // At least 5 ms over, too: at a flat screen's hundreds of fps every small wobble is "half".
+        if (s_profLastAvg > 0 && now - s_profLastHitch > 1.0 && frame > s_profLastAvg * 1.5 &&
+            frame - s_profLastAvg > 0.005) {
+            s_profLastHitch = now;
+            Log("hitch: frame %.1f ms (%.0f%% over the %.1f ms average): headset wait %.1f eyes (CPU) %.1f GPU wait %.1f "
+                "submit %.1f spectator %.1f present %.1f update %.1f game %.1f ms",
+                frame * 1000.0, (frame / s_profLastAvg - 1.0) * 100.0, s_profLastAvg * 1000.0,
+                s_prof.frame[PROF_WAITFRAME] * 1000.0, s_prof.frame[PROF_EYES] * 1000.0, s_prof.frame[PROF_GPUWAIT] * 1000.0,
+                s_prof.frame[PROF_SUBMIT] * 1000.0, s_prof.frame[PROF_SPECTATOR] * 1000.0, s_prof.frame[PROF_PRESENT] * 1000.0,
+                s_prof.frame[PROF_UPDATE] * 1000.0, game * 1000.0);
+        }
+        Trace_Frame(s_prof.frame, PROF_COUNT, frame, game);
+    } else {
+        s_prof.since = now;
+    }
+    memset(s_prof.frame, 0, sizeof(s_prof.frame));
+    s_prof.last = now;
+    double span = now - s_prof.since;
+    if (span < 5.0 || s_prof.frames == 0) return;
+    if (g_cfg.logPasses) {
+        s_passTallyN = 0;
+        s_passColor = s_passDepth = -1;
+    }
+    memset(s_eyeSceneSum, 0, sizeof(s_eyeSceneSum));
+    memset(s_eyeSceneMax, 0, sizeof(s_eyeSceneMax));
+    memset(s_eyeDrawCalls, 0, sizeof(s_eyeDrawCalls));
+    s_profLastAvg = span / s_prof.frames;
+    memset(&s_prof, 0, sizeof(s_prof));
+    s_prof.last = now;
+    s_prof.since = now;
+}
+
+// D3D9Ex has no keyed mutex, so wait for the GPU before D3D11 reads the shared textures.
+// It spun on the fence at full speed: on a busy CPU that starved the game's other threads and the
+// runtime's (SteamVR, Link) right before the hand-off. It spins for the first 1.5 ms (the usual
+// wait is ~0.5 ms), then gives its core to any other ready thread between checks (SwitchToThread
+// returns at once when none is waiting, so the hand-off is not delayed).
+static void WaitForGpu() {
+    if (!s_fence && FAILED(s_dev->CreateQuery(D3DQUERYTYPE_EVENT, &s_fence))) return;
+    s_fence->Issue(D3DISSUE_END);
+    double start = D3D_ProfNow();
+    while (s_fence->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE) {
+        if (D3D_ProfNow() - start < 0.0015) YieldProcessor();
+        else SwitchToThread();
+    }
+}
+
+// The render thread (the game's, which runs the eyes and the hand-off) registered with Windows'
+// multimedia scheduler as a "Games" task, and the system timer at 1 ms, once ([VR] RenderPriority).
+// The missed headset slots came with ~5 ms of headroom: the thread being scheduled late, not out
+// of time. Both are loaded by name so nothing new is linked; the eyes are not affected.
+static void RaiseRenderPriority() {
+    static bool done;
+    if (done || g_cfg.renderPriority <= 0) return;
+    done = true;
+    HMODULE winmm = LoadLibraryA("winmm.dll");
+    auto beginPeriod = winmm ? (UINT(WINAPI*)(UINT))GetProcAddress(winmm, "timeBeginPeriod") : nullptr;
+    bool timer = beginPeriod && beginPeriod(1) == 0;
+    HMODULE avrt = LoadLibraryA("avrt.dll");
+    auto setTask = avrt ? (HANDLE(WINAPI*)(LPCSTR, LPDWORD))GetProcAddress(avrt, "AvSetMmThreadCharacteristicsA") : nullptr;
+    DWORD index = 0;
+    HANDLE task = setTask ? setTask("Games", &index) : nullptr;
+    Log("d3d9: render thread %s, timer resolution %s", task ? "registered as a \"Games\" multimedia task" : "left at its priority (MMCSS unavailable)",
+        timer ? "1 ms" : "unchanged");
+}
+
+static void DumpEyes() {
+    for (int i = 0; i < 3; i++) {
+        if (!s_eyeSurf[i]) continue;
+        IDirect3DSurface9* sys = nullptr;
+        if (FAILED(s_dev->CreateOffscreenPlainSurface(s_eyeW, s_eyeH, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr))) continue;
+        D3DLOCKED_RECT lr;
+        if (SUCCEEDED(s_dev->GetRenderTargetData(s_eyeSurf[i], sys)) && SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+            char path[MAX_PATH];
+            snprintf(path, sizeof(path), "%svr_dump_%03d_%s.bmp", GameDir(), s_dumpIndex, i == 0 ? "left" : i == 1 ? "right" : "hud");
+            FILE* f = fopen(path, "wb");
+            if (f) {
+                BITMAPFILEHEADER fh = {};
+                BITMAPINFOHEADER ih = {};
+                ih.biSize = sizeof(ih);
+                ih.biWidth = s_eyeW;
+                ih.biHeight = -s_eyeH; // top-down
+                ih.biPlanes = 1;
+                ih.biBitCount = 32;
+                fh.bfType = 0x4D42;
+                fh.bfOffBits = sizeof(fh) + sizeof(ih);
+                fh.bfSize = fh.bfOffBits + s_eyeW * s_eyeH * 4;
+                fwrite(&fh, sizeof(fh), 1, f);
+                fwrite(&ih, sizeof(ih), 1, f);
+                for (int y = 0; y < s_eyeH; y++) fwrite((char*)lr.pBits + y * lr.Pitch, 4, s_eyeW, f);
+                fclose(f);
+                Log("d3d9: wrote %s", path);
+            }
+            sys->UnlockRect();
+        }
+        sys->Release();
+    }
+    s_dumpIndex++;
+}
+
+// The widescreen fix's ini (it sets the shadow map size: ShadowsRes, read when the game starts).
+static std::string WidescreenIni() {
+    std::string dir = GameDir();
+    for (const char* p : {"scripts\\NFSMostWanted.WidescreenFix.ini", "NFSMostWanted.WidescreenFix.ini"}) {
+        std::string f = dir + p;
+        if (GetFileAttributesA(f.c_str()) != INVALID_FILE_ATTRIBUTES) return f;
+    }
+    return std::string();
+}
+
+// ShadowsRes's value in the widescreen fix's ini, or 0. Its lines are "Key = value ; comment".
+static int ReadShadowsRes(const std::string& ini) {
+    return ini.empty() ? 0 : (int)GetPrivateProfileIntA("GRAPHICS", "ShadowsRes", 0, ini.c_str());
+}
+
+// Rewrites the number on a "Key = value ; comment" line of the widescreen fix's ini, keeping the
+// line's spacing and comment.
+static bool WriteWsfixInt(const std::string& ini, const char* key, int value) {
+    FILE* f = fopen(ini.c_str(), "rb");
+    if (!f) return false;
+    std::string text;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+    fclose(f);
+    size_t at = 0;
+    size_t keyLen = strlen(key);
+    while ((at = text.find(key, at)) != std::string::npos) {
+        bool lineStart = at == 0 || text[at - 1] == '\n';
+        size_t eq = text.find_first_not_of(" \t", at + keyLen);
+        if (!lineStart || eq == std::string::npos || text[eq] != '=') {
+            at += keyLen;
+            continue;
+        }
+        size_t num = text.find_first_not_of(" \t", eq + 1);
+        size_t end = num;
+        if (end < text.size() && text[end] == '-') end++;
+        while (end < text.size() && isdigit((unsigned char)text[end])) end++;
+        if (num == std::string::npos || end == num) return false;
+        text.replace(num, end - num, std::to_string(value));
+        f = fopen(ini.c_str(), "wb");
+        if (!f) return false;
+        fwrite(text.data(), 1, text.size(), f);
+        fclose(f);
+        return true;
+    }
+    return false;
+}
+
+static bool WriteShadowsRes(const std::string& ini, int value) { return WriteWsfixInt(ini, "ShadowsRes", value); }
+
+// The game's physics rate follows the headset. The widescreen fix sets it from its [MISC] SimRate
+// when the game starts (-1 = the desktop monitor's refresh rate: ~103 Hz here against the
+// headset's 72, so a frame got one or two physics steps in an uneven pattern, and motion stepped).
+// Once the headset's rate is known, SimRate is set to a whole multiple of it near 144 Hz (72 -> 144,
+// two steps a frame; 90 -> 180; 120 -> 120), from the next start. [VR] SimRateFromHeadset=0 = off.
+static void MatchSimRateToHeadset(const std::string& ini) {
+    static bool done;
+    static int stableFrames;
+    static float lastHz;
+    if (done || ini.empty() || g_cfg.simRateFromHeadset <= 0) return;
+    float hz = Xr_DisplayHz();
+    if (hz < 30.0f || hz > 500.0f) return;
+    stableFrames = fabsf(hz - lastHz) < 0.5f ? stableFrames + 1 : 0;
+    lastHz = hz;
+    if (stableFrames < 72) return;   // a second of the same rate
+    done = true;
+    int headset = (int)lrintf(hz);
+    int target = headset * std::max(1, (int)lrintf(144.0f / (float)headset));
+    int now = (int)GetPrivateProfileIntA("MISC", "SimRate", 0, ini.c_str());
+    if (now == target) {
+        Log("d3d9: physics rate %d Hz matches the headset's %d Hz (%d steps a frame)", now, headset, target / headset);
+        return;
+    }
+    if (WriteWsfixInt(ini, "SimRate", target))
+        Log("d3d9: physics rate was %d (widescreen fix SimRate, -1 = monitor); set to %d Hz for the headset's %d Hz (%d steps a "
+            "frame) from the next start", now, target, headset, target / headset);
+    else
+        Log("d3d9: physics rate: SimRate not found in the widescreen fix's ini, left at %d", now);
+}
+
+// Once a frame: the anisotropic switch takes effect on every stage, and a new shadow resolution
+// from F4 is written into the widescreen fix's ini for the next start.
+static void UpdatePictureSettings() {
+    int idx = std::max(0, std::min(4, (int)lrintf(g_cfg.anisotropic)));
+    int level = idx ? 1 << idx : 0;
+    if (level != s_anisoLevel && s_dev) {
+        s_anisoLevel = level;
+        for (DWORD s = 0; s < 16; s++) {
+            s_setMinFilter[s] = ~0u;     // set again, with the new maximum
+            ApplyMinFilter(s_dev, s);
+        }
+        if (level) Log("d3d9: anisotropic filtering %dx", level);
+        else Log("d3d9: anisotropic filtering off");
+    }
+    static std::string ini;
+    static int applied = -1;       // the ShadowsRes the ini has
+    if (applied < 0) {
+        ini = WidescreenIni();
+        applied = ReadShadowsRes(ini);
+        if (applied > 0) g_cfg.shadowRes = applied / 1024.0f;
+        Log("d3d9: shadow resolution %d (widescreen fix ShadowsRes%s)", applied, ini.empty() ? ": its ini not found" : "");
+        if (applied == 0) applied = 1;   // looked; nothing to keep in step with
+    }
+    MatchSimRateToHeadset(ini);
+    int want = (int)lrintf(std::max(1.0f, std::min(16.0f, g_cfg.shadowRes))) * 1024;
+    if (ini.empty() || want == applied) return;
+    static DWORD lastTry;
+    if (GetTickCount() - lastTry < 1000) return;
+    lastTry = GetTickCount();
+    if (WriteShadowsRes(ini, want)) {
+        Log("d3d9: shadow resolution %d written to the widescreen fix's ini (ShadowsRes), from the next start", want);
+        applied = want;
+    }
+}
+
+static bool KeyPressed(int vk) {
+    if (vk <= 0 || vk > 255) return false;
+    static bool down[256];
+    bool now = (GetAsyncKeyState(vk) & 0x8001) != 0; // bit 0 catches taps between frames
+    bool pressed = now && !down[vk & 0xff];
+    down[vk & 0xff] = now;
+    return pressed;
+}
+
+static void AdjustPresentParams(D3DPRESENT_PARAMETERS* pp) {
+    if (g_cfg.forceWindowed) {
+        pp->Windowed = TRUE;
+        pp->FullScreen_RefreshRateInHz = 0;
+    }
+    if (g_cfg.disableVSync) pp->PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    Log("d3d9: present params %ux%u fmt=%d windowed=%d msaa=%d interval=0x%x", pp->BackBufferWidth, pp->BackBufferHeight,
+        pp->BackBufferFormat, pp->Windowed, pp->MultiSampleType, pp->PresentationInterval);
+}
+
+static HWND s_wnd;
+static UINT s_bbW, s_bbH;
+static void FitWindow(HWND wnd, UINT w, UINT h);
+
+// --- the gameplay mod's overlay (its telemetry panel) --------------------------------------------
+// Drawn here rather than with the HUD: in the headset the in-car display takes its crops of the HUD
+// at the end of the HUD phase and clears the HUD layer (ComposeDash), so a panel drawn with the HUD
+// would vanish or turn up on the display. Painted onto the HUD layer after that, it stays in front
+// of the eyes with the rest of the HUD (and goes behind the steering wheel with it, as the layer
+// does). Flat frames and no headset: the back buffer.
+typedef int(__cdecl* OverlayShown_t)();
+typedef int(__cdecl* OverlayDraw_t)(IDirect3DDevice9* dev, int w, int h);
+static OverlayShown_t s_overlayShown;
+static OverlayDraw_t s_overlayDraw;
+
+// Onto `target`, with no depth buffer bound: the HUD layer can be larger than the game's.
+static void DrawOverlay(IDirect3DSurface9* target) {
+    if (!s_overlayDraw || !s_dev || !target || !s_overlayShown()) return;
+    D3DSURFACE_DESC desc;
+    if (FAILED(target->GetDesc(&desc))) return;
+    IDirect3DSurface9 *rt = nullptr, *ds = nullptr;
+    s_dev->GetRenderTarget(0, &rt);
+    s_dev->GetDepthStencilSurface(&ds);
+    D3DVIEWPORT9 vp;
+    s_dev->GetViewport(&vp);
+    s_dev->SetRenderTarget(0, target);
+    s_dev->SetDepthStencilSurface(nullptr);
+    s_overlayDraw(s_dev, (int)desc.Width, (int)desc.Height);
+    s_dev->SetRenderTarget(0, rt);
+    s_dev->SetDepthStencilSurface(ds);
+    s_dev->SetViewport(&vp);
+    if (rt) rt->Release();
+    if (ds) ds->Release();
+}
+
+static void DrawOverlayOnBackBuffer() {
+    IDirect3DSurface9* bb = nullptr;
+    if (!s_overlayDraw || !s_dev || FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb) return;
+    DrawOverlay(bb);
+    bb->Release();
+}
+
+static void OnPresent() {
+    RaiseRenderPriority();
+    if (KeyPressed(g_cfg.keySpectator)) {
+        Spectator_CycleMode();
+        FitWindow(s_wnd, s_bbW, s_bbH);
+    }
+    if (KeyPressed(g_cfg.keyRecenter)) Xr_Recenter();
+    if (KeyPressed(g_cfg.keyToggle)) Game_ToggleStereo();
+    if (KeyPressed(g_cfg.keyLevel)) Game_ToggleLevel();
+    if (KeyPressed(g_cfg.keyDump)) s_dumpRequested = g_cfg.dumpFrames > 0 ? g_cfg.dumpFrames : 1;
+    Trace_KeyCheck(g_cfg.keyTrace, s_dev);
+    // Debug key: the same frame with the shared-view rule flipped, to tell a pass that differs
+    // between the eyes from one that does not. (There is no key for StableReflections: a stray
+    // press - F12 is also Steam's screenshot key - left reflections turning with the head.)
+    if (KeyPressed(g_cfg.keyToggleShared)) {
+        g_cfg.sharedViewsOnce = !g_cfg.sharedViewsOnce;
+        Log("d3d9: rear-view/environment-map views %s",
+            g_cfg.sharedViewsOnce ? "rendered for the first eye only" : "rendered for every eye");
+    }
+    Cockpit_Keys();
+    UpdatePictureSettings();
+
+    if (s_xr) {
+        bool stereo = Game_StereoThisFrame(), captured = false;
+        if (stereo) {
+            captured = true;
+            EndHudPhase();
+            if (s_hudValid) DrawOverlay(s_eyeSurf[2]);
+            double t0 = D3D_ProfNow();
+            Trace_BeforeGpuWait();
+            WaitForGpu();
+            Trace_AfterGpuWait();
+            double t1 = D3D_ProfNow();
+            float tx, ty;
+            Game_RenderedFov(&tx, &ty);
+            // With the steering wheel in front of the HUD, the HUD is already in both eyes.
+            Xr_EndFrame(LayerMode::Stereo, tx, ty, s_hudValid && s_hudInEyes < 2);
+            D3D_ProfAdd(PROF_GPUWAIT, t1 - t0);
+            D3D_ProfAdd(PROF_SUBMIT, D3D_ProfNow() - t1);
+        } else if (Xr_BeginFrame()) {
+            // Menus, movies, loading screens: show the flat frame on a virtual screen.
+            DrawOverlayOnBackBuffer();
+            D3D_CaptureEye(0);
+            captured = true;
+            WaitForGpu();
+            Xr_EndFrame(LayerMode::Screen, 0, 0, false);
+        } else {
+            DrawOverlayOnBackBuffer();
+            Xr_EndFrame(LayerMode::None, 0, 0, false);
+        }
+        if (captured && s_eyeOk && Spectator_Mode() != SpectatorMode::Eye) {
+            SpectatorFrame sf = {};
+            sf.eye[0] = s_eyeTex[0];
+            sf.eye[1] = s_eyeTex[1];
+            sf.hud = stereo && s_hudValid && s_hudInEyes < 2 ? s_eyeTex[2] : nullptr;
+            sf.stereo = stereo;
+            Game_RenderedFov(&sf.eyeTanX, &sf.eyeTanY);
+            const EyeView& e0 = Xr_Eye(0);
+            const EyeView& e1 = Xr_Eye(1);
+            sf.eyeRot[0] = e0.relOrientation;
+            sf.eyeRot[1] = e1.relOrientation;
+            sf.headPos = (e0.relPosition + e1.relPosition) * 0.5f;
+            sf.hmdTanX = std::max(std::max(e0.tanLeft, e0.tanRight), std::max(e1.tanLeft, e1.tanRight));
+            sf.hmdTanY = std::max(std::max(e0.tanUp, e0.tanDown), std::max(e1.tanUp, e1.tanDown));
+            sf.bbWidth = s_eyeW;
+            sf.bbHeight = s_eyeH;
+            double ts = D3D_ProfNow();
+            Spectator_Draw(s_dev, sf);
+            D3D_ProfAdd(PROF_SPECTATOR, D3D_ProfNow() - ts);
+            if (Spectator_ConsumeResize()) FitWindow(s_wnd, s_bbW, s_bbH);
+        }
+        if (s_dumpRequested > 0) {
+            s_dumpRequested--;
+            DumpEyes();
+        }
+    } else {
+        DrawOverlayOnBackBuffer();
+    }
+    Game_EndOfFrame();
+}
+
+static void ConvertPool(D3DPOOL& pool, DWORD& usage, bool texture) {
+    if (pool != D3DPOOL_MANAGED) return;
+    pool = D3DPOOL_DEFAULT;
+    if (texture) usage |= D3DUSAGE_DYNAMIC;
+}
+
+// ---------------------------------------------------------------------------
+// Device wrapper. d3d9 rewrites its per-device vtable (e.g. around Reset), so
+// in-place vtable patches don't stick; the game gets this forwarding object instead.
+// ---------------------------------------------------------------------------
+class DeviceWrap : public DeviceWrapBase {
+    ULONG refs = 1;
+
+public:
+    using DeviceWrapBase::DeviceWrapBase;
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IDirect3DDevice9)) {
+            *out = this;
+            AddRef();
+            return S_OK;
+        }
+        return real->QueryInterface(riid, out);
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG r = --refs;
+        if (r == 0) {
+            Log("d3d9: device released");
+            ReleaseEyeTargets();
+            if (s_fence) s_fence->Release();
+            s_fence = nullptr;
+            real->Release();
+            s_dev = nullptr;
+            delete this;
+        }
+        return r;
+    }
+
+    HRESULT STDMETHODCALLTYPE Reset(D3DPRESENT_PARAMETERS* pp) override {
+        EndHudPhase();
+        ReleaseEyeTargets();
+        AdjustPresentParams(pp);
+        HRESULT hr = real->Reset(pp);
+        Log("d3d9: Reset -> 0x%08lx", hr);
+        if (SUCCEEDED(hr)) {
+            D3D_WarmUp();   // the eye targets (and with them the dashboard's) were released above
+            FitWindow(pp->hDeviceWindow ? pp->hDeviceWindow : s_wnd, pp->BackBufferWidth, pp->BackBufferHeight);
+        }
+        return hr;
+    }
+
+    // The HUD layer's alpha is its coverage in the headset. The game's masked HUD images (nitro
+    // and speedbreaker arcs, IDI_FE_MASK_FX) never get FEColorWriteFlag set, so their effect
+    // writes colour without alpha and they would be invisible there.
+    HRESULT STDMETHODCALLTYPE SetRenderState(D3DRENDERSTATETYPE state, DWORD value) override {
+        if (s_hudPhase && state == D3DRS_COLORWRITEENABLE) value = HudColorWrite(value);
+        return real->SetRenderState(state, value);
+    }
+
+    HRESULT STDMETHODCALLTYPE SetRenderTarget(DWORD index, IDirect3DSurface9* surf) override {
+        if (s_hudPhase && index == 0 && surf == s_backBuffer) surf = s_hudRT;
+        if (index == 0) TallySurface(surf, false);
+        return real->SetRenderTarget(index, surf);
+    }
+
+    // A shadow map can be depth-only: the pass then binds only its depth buffer.
+    HRESULT STDMETHODCALLTYPE SetDepthStencilSurface(IDirect3DSurface9* surf) override {
+        TallySurface(surf, true);
+        return real->SetDepthStencilSurface(surf);
+    }
+
+    // Post-processing from other mods at the end of the frame (the widescreen fix's ConsoleGamma
+    // and SMAA) copies the current render target and draws it back full-screen. In a stereo frame
+    // that target is the transparent HUD layer: the pass would fill the HUD panel with black, and
+    // the eyes were captured before it anyway. Such a copy of the HUD layer by code outside
+    // speed.exe skips the draws that follow, up to EndScene. Flat frames (menus on the virtual
+    // screen, movies) keep the pass.
+    HRESULT STDMETHODCALLTYPE StretchRect(IDirect3DSurface9* src, CONST RECT* srcRect, IDirect3DSurface9* dst,
+                                          CONST RECT* dstRect, D3DTEXTUREFILTERTYPE filter) override {
+        if (s_hudPhase && src == s_hudRT && !s_skipPostPass && !FromGame(_ReturnAddress())) {
+            s_skipPostPass = true;
+            static bool logged;
+            if (!logged) Log("d3d9: skipping another mod's post-processing pass on the HUD layer (e.g. widescreen fix ConsoleGamma)");
+            logged = true;
+        }
+        return real->StretchRect(src, srcRect, dst, dstRect, filter);
+    }
+    // Same for other mods' colour clears on the HUD layer (the widescreen fix's HideAABug clears
+    // 1px black lines along the screen edges, which framed the HUD panel).
+    HRESULT STDMETHODCALLTYPE Clear(DWORD count, CONST D3DRECT* rects, DWORD flags, D3DCOLOR color, float z,
+                                    DWORD stencil) override {
+        if (s_dropDraws) return D3D_OK;
+        if (s_hudPhase && (flags & D3DCLEAR_TARGET) && !FromGame(_ReturnAddress())) {
+            static bool logged;
+            if (!logged) Log("d3d9: skipping another mod's clear of the HUD layer (e.g. widescreen fix HideAABug)");
+            logged = true;
+            flags &= ~D3DCLEAR_TARGET;
+            if (!flags) return D3D_OK;
+        }
+        return real->Clear(count, rects, flags, color, z, stencil);
+    }
+    HRESULT STDMETHODCALLTYPE EndScene() override {
+        s_skipPostPass = false;
+        return real->EndScene();
+    }
+    HRESULT STDMETHODCALLTYPE SetSamplerState(DWORD stage, D3DSAMPLERSTATETYPE type, DWORD value) override {
+        if (type != D3DSAMP_MINFILTER || stage >= 16) return real->SetSamplerState(stage, type, value);
+        s_gameMinFilter[stage] = value;
+        s_setMinFilter[stage] = ~0u;     // passed on now, whatever it was
+        DWORD want = EffectiveMinFilter(stage);
+        s_minFilterAsked[value <= D3DTEXF_ANISOTROPIC ? value : 4]++;
+        if (want != value) s_minFilterTurned++;
+        if (want == D3DTEXF_ANISOTROPIC) real->SetSamplerState(stage, D3DSAMP_MAXANISOTROPY, s_anisoLevel ? s_anisoLevel : 1);
+        s_setMinFilter[stage] = want;
+        return real->SetSamplerState(stage, type, want);
+    }
+    HRESULT STDMETHODCALLTYPE GetSamplerState(DWORD stage, D3DSAMPLERSTATETYPE type, DWORD* value) override {
+        if (type == D3DSAMP_MINFILTER && stage < 16 && value) {
+            *value = s_gameMinFilter[stage];
+            return D3D_OK;
+        }
+        return real->GetSamplerState(stage, type, value);
+    }
+    HRESULT STDMETHODCALLTYPE SetTexture(DWORD stage, IDirect3DBaseTexture9* tex) override {
+        if (stage < 16) {
+            bool depth = tex && !s_depthTex.empty() && std::find(s_depthTex.begin(), s_depthTex.end(), (void*)tex) != s_depthTex.end();
+            if (depth != s_stageDepth[stage]) {
+                s_stageDepth[stage] = depth;
+                ApplyMinFilter(real, stage);
+            }
+        }
+        if (stage < 4) {
+            s_boundTex[stage] = tex;
+            s_texHidden = false;
+            for (void* t : s_boundTex) s_texHidden = s_texHidden || IsHidden(t);
+        }
+        return real->SetTexture(stage, tex);
+    }
+    HRESULT STDMETHODCALLTYPE DrawPrimitive(D3DPRIMITIVETYPE type, UINT start, UINT count) override {
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
+        CountEyeDrawCall();
+        return real->DrawPrimitive(type, start, count);
+    }
+    HRESULT STDMETHODCALLTYPE SetIndices(IDirect3DIndexBuffer9* ib) override {
+        s_curIndices = ib;
+        return real->SetIndices(ib);
+    }
+    HRESULT STDMETHODCALLTYPE DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts, UINT start,
+                                                   UINT count) override {
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
+        CountEyeDrawCall();
+        bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
+        bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
+        bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
+        if (!mirrorJobs && !wheelJobs && !dashJobs) return real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+        HRESULT hr;
+        if (!DrawMirrorGlassNative(real, type, base, minIndex, verts, start, count, &hr) &&
+            !DrawWheelMarked(real, type, base, minIndex, verts, start, count, &hr))
+            hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+        AfterModelDraw();
+        AfterModelDrawDash();
+        return hr;
+    }
+    HRESULT STDMETHODCALLTYPE DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, CONST void* data, UINT stride) override {
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
+        CountEyeDrawCall();
+        return real->DrawPrimitiveUP(type, count, data, stride);
+    }
+    HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE type, UINT minIndex, UINT verts, UINT count,
+                                                     CONST void* indices, D3DFORMAT fmt, CONST void* data,
+                                                     UINT stride) override {
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
+        CountEyeDrawCall();
+        return real->DrawIndexedPrimitiveUP(type, minIndex, verts, count, indices, fmt, data, stride);
+    }
+
+    HRESULT STDMETHODCALLTYPE Present(CONST RECT* src, CONST RECT* dst, HWND wnd, CONST RGNDATA* dirty) override {
+        OnPresent();
+        double tp = D3D_ProfNow();
+        HRESULT hr = real->Present(src, dst, wnd, dirty);
+        D3D_ProfAdd(PROF_PRESENT, D3D_ProfNow() - tp);
+        ProfFrame();
+        s_updateStart = D3D_ProfNow();
+        return hr;
+    }
+
+    HRESULT STDMETHODCALLTYPE CreateTexture(UINT w, UINT h, UINT levels, DWORD usage, D3DFORMAT fmt, D3DPOOL pool,
+                                            IDirect3DTexture9** tex, HANDLE* shared) override {
+        D3DPOOL p = pool;
+        DWORD u = usage;
+        ConvertPool(p, u, true);
+        HRESULT hr = real->CreateTexture(w, h, levels, u, fmt, p, tex, shared);
+        if (FAILED(hr) && p != pool) {
+            Log("d3d9: dynamic texture %ux%u fmt=%d failed 0x%08lx, retrying static", w, h, fmt, hr);
+            hr = real->CreateTexture(w, h, levels, usage, fmt, p, tex, shared);
+        }
+        // Depth textures (the shadow map) keep their linear filter (see ApplyMinFilter).
+        if (SUCCEEDED(hr) && tex && *tex && ((usage & D3DUSAGE_DEPTHSTENCIL) || IsDepthFormat(fmt))) {
+            if (s_depthTex.size() > 64) s_depthTex.erase(s_depthTex.begin());
+            s_depthTex.push_back(*tex);
+            Log("d3d9: depth texture %ux%u fmt=%d: no anisotropic filtering on it", w, h, (int)fmt);
+        }
+        return hr;
+    }
+
+    HRESULT STDMETHODCALLTYPE CreateVolumeTexture(UINT w, UINT h, UINT d, UINT levels, DWORD usage, D3DFORMAT fmt, D3DPOOL pool,
+                                                  IDirect3DVolumeTexture9** tex, HANDLE* shared) override {
+        ConvertPool(pool, usage, true);
+        return real->CreateVolumeTexture(w, h, d, levels, usage, fmt, pool, tex, shared);
+    }
+
+    HRESULT STDMETHODCALLTYPE CreateCubeTexture(UINT edge, UINT levels, DWORD usage, D3DFORMAT fmt, D3DPOOL pool,
+                                                IDirect3DCubeTexture9** tex, HANDLE* shared) override {
+        ConvertPool(pool, usage, true);
+        return real->CreateCubeTexture(edge, levels, usage, fmt, pool, tex, shared);
+    }
+
+    HRESULT STDMETHODCALLTYPE CreateVertexBuffer(UINT len, DWORD usage, DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer9** vb,
+                                                 HANDLE* shared) override {
+        D3DPOOL p = pool;
+        ConvertPool(p, usage, false);
+        HRESULT hr = real->CreateVertexBuffer(len, usage, fvf, p, vb, shared);
+        if (FAILED(hr)) Log("d3d9: CreateVertexBuffer(%u, usage 0x%lx, pool %d->%d) failed 0x%08lx", len, usage, pool, p, hr);
+        return hr;
+    }
+
+    HRESULT STDMETHODCALLTYPE CreateIndexBuffer(UINT len, DWORD usage, D3DFORMAT fmt, D3DPOOL pool, IDirect3DIndexBuffer9** ib,
+                                                HANDLE* shared) override {
+        D3DPOOL p = pool;
+        ConvertPool(p, usage, false);
+        HRESULT hr = real->CreateIndexBuffer(len, usage, fmt, p, ib, shared);
+        if (FAILED(hr)) Log("d3d9: CreateIndexBuffer(%u, usage 0x%lx, pool %d->%d) failed 0x%08lx", len, usage, pool, p, hr);
+        return hr;
+    }
+};
+
+// Starts OpenXR once, before the game picks its resolution (the headset's
+// recommended per-eye size feeds the resolution hook in game.cpp).
+bool D3D_EnsureXr() {
+    static bool attempted;
+    if (attempted || !g_cfg.enabled) return s_xr;
+    attempted = true;
+    Crash_Initialize();
+    LUID luid = {};
+    auto create9ex = Real<HRESULT(WINAPI*)(UINT, IDirect3D9Ex**)>("Direct3DCreate9Ex");
+    IDirect3D9Ex* ex = nullptr;
+    if (create9ex && SUCCEEDED(create9ex(D3D_SDK_VERSION, &ex))) {
+        ex->GetAdapterLUID(D3DADAPTER_DEFAULT, &luid);
+        ex->Release();
+    }
+    s_xr = Xr_Init(luid);
+    Log("d3d9: VR %s", s_xr ? "active" : "unavailable - running flat");
+    return s_xr;
+}
+
+// Sizes the game window for the spectator view: its aspect (16:9 / 32:9 / back
+// buffer), limited to SpectatorWidth and the monitor. Present scales the back buffer
+// to the client area.
+static void FitWindow(HWND wnd, UINT w, UINT h) {
+    if (!wnd || !g_cfg.forceWindowed || !w || !h) return;
+    s_wnd = wnd;
+    s_bbW = w;
+    s_bbH = h;
+    MONITORINFO mi = {sizeof(mi)};
+    if (!GetMonitorInfoA(MonitorFromWindow(wnd, MONITOR_DEFAULTTOPRIMARY), &mi)) return;
+    float maxW = (mi.rcWork.right - mi.rcWork.left) * 0.9f, maxH = (mi.rcWork.bottom - mi.rcWork.top) * 0.9f;
+    float aspect = s_xr ? Spectator_WindowAspect((int)w, (int)h) : (float)w / h;
+    float cw = s_xr && Spectator_Mode() != SpectatorMode::Eye ? (float)g_cfg.spectatorWidth : (float)w;
+    cw = std::min(cw, std::min(maxW, maxH * aspect));
+    float ch = cw / aspect;
+    RECT r = {0, 0, (LONG)cw, (LONG)ch};
+    AdjustWindowRectEx(&r, (DWORD)GetWindowLongA(wnd, GWL_STYLE), FALSE, (DWORD)GetWindowLongA(wnd, GWL_EXSTYLE));
+    SetWindowPos(wnd, nullptr, mi.rcWork.left, mi.rcWork.top, r.right - r.left, r.bottom - r.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    Log("d3d9: window client %.0fx%.0f", cw, ch);
+}
+
+static HRESULT WINAPI hkCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, HWND focus, DWORD flags,
+                                     D3DPRESENT_PARAMETERS* pp, IDirect3DDevice9** out) {
+    IDirect3D9Ex* ex = (IDirect3D9Ex*)d3d;
+    AdjustPresentParams(pp);
+    D3DDISPLAYMODEEX mode = {sizeof(mode)};
+    if (!pp->Windowed) {
+        mode.Width = pp->BackBufferWidth;
+        mode.Height = pp->BackBufferHeight;
+        mode.RefreshRate = pp->FullScreen_RefreshRateInHz;
+        mode.Format = pp->BackBufferFormat;
+        mode.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+    }
+    IDirect3DDevice9Ex* dev = nullptr;
+    HRESULT hr = ex->CreateDeviceEx(adapter, type, focus, flags, pp, pp->Windowed ? nullptr : &mode, &dev);
+    Log("d3d9: CreateDeviceEx(adapter %u, flags 0x%lx) -> 0x%08lx", adapter, flags, hr);
+    if (FAILED(hr)) return hr;
+
+    s_dev = dev;
+    *out = new DeviceWrap(dev);
+    D3D_EnsureXr();
+    D3D_WarmUp();
+    FitWindow(pp->hDeviceWindow ? pp->hDeviceWindow : focus, pp->BackBufferWidth, pp->BackBufferHeight);
+    return hr;
+}
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
+extern "C" {
+
+IDirect3D9* WINAPI Proxy_Direct3DCreate9(UINT sdk) {
+    auto create9 = Real<IDirect3D9*(WINAPI*)(UINT)>("Direct3DCreate9");
+    if (!g_cfg.enabled) return create9 ? create9(sdk) : nullptr;
+    auto create9ex = Real<HRESULT(WINAPI*)(UINT, IDirect3D9Ex**)>("Direct3DCreate9Ex");
+    IDirect3D9Ex* ex = nullptr;
+    if (!create9ex || FAILED(create9ex(sdk, &ex))) {
+        Log("d3d9: Direct3DCreate9Ex unavailable, VR disabled");
+        return create9 ? create9(sdk) : nullptr;
+    }
+    PatchVtable(ex, kD3D_CreateDevice, (CreateDevice_t)hkCreateDevice, &oCreateDevice);
+    D3D_EnsureXr();
+    return ex;
+}
+
+HRESULT WINAPI Proxy_Direct3DCreate9Ex(UINT sdk, IDirect3D9Ex** out) {
+    return Real<HRESULT(WINAPI*)(UINT, IDirect3D9Ex**)>("Direct3DCreate9Ex")(sdk, out);
+}
+
+int WINAPI Proxy_D3DPERF_BeginEvent(D3DCOLOR c, LPCWSTR n) {
+    auto f = Real<int(WINAPI*)(D3DCOLOR, LPCWSTR)>("D3DPERF_BeginEvent");
+    return f ? f(c, n) : 0;
+}
+int WINAPI Proxy_D3DPERF_EndEvent() {
+    auto f = Real<int(WINAPI*)()>("D3DPERF_EndEvent");
+    return f ? f() : 0;
+}
+void WINAPI Proxy_D3DPERF_SetMarker(D3DCOLOR c, LPCWSTR n) {
+    auto f = Real<void(WINAPI*)(D3DCOLOR, LPCWSTR)>("D3DPERF_SetMarker");
+    if (f) f(c, n);
+}
+void WINAPI Proxy_D3DPERF_SetRegion(D3DCOLOR c, LPCWSTR n) {
+    auto f = Real<void(WINAPI*)(D3DCOLOR, LPCWSTR)>("D3DPERF_SetRegion");
+    if (f) f(c, n);
+}
+BOOL WINAPI Proxy_D3DPERF_QueryRepeatFrame() {
+    auto f = Real<BOOL(WINAPI*)()>("D3DPERF_QueryRepeatFrame");
+    return f ? f() : FALSE;
+}
+void WINAPI Proxy_D3DPERF_SetOptions(DWORD o) {
+    auto f = Real<void(WINAPI*)(DWORD)>("D3DPERF_SetOptions");
+    if (f) f(o);
+}
+DWORD WINAPI Proxy_D3DPERF_GetStatus() {
+    auto f = Real<DWORD(WINAPI*)()>("D3DPERF_GetStatus");
+    return f ? f() : 0;
+}
+
+// Marker: lets an .asi copy of this mod see that the d3d9.dll proxy is installed too.
+int WINAPI Proxy_NfsmwVr_Loaded() { return 1; }
+
+// For the gameplay mod's F4 menu (found by these exports, like the FFB mod's NfsmwFfb_Setting).
+// Live [VR] values: HudWidth, HudDistance, HudHeight, ScreenWidth, ScreenDistance, NearZ, and the
+// gameplay mod's SteeringWheelAngle (written every frame, not saved). Null if
+// unknown, or in a copy that isn't the one running (an .asi next to the d3d9.dll proxy).
+float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
+    if (!s_active || !name) return nullptr;
+    if (!strcmp(name, "HudWidth")) return &g_cfg.hudWidth;
+    if (!strcmp(name, "HudDistance")) return &g_cfg.hudDistance;
+    if (!strcmp(name, "HudHeight")) return &g_cfg.hudHeight;
+    if (!strcmp(name, "HudRight")) return &g_cfg.hudRight;
+    if (!strcmp(name, "ScreenWidth")) return &g_cfg.screenWidth;
+    if (!strcmp(name, "ScreenDistance")) return &g_cfg.screenDistance;
+    if (!strcmp(name, "NearZ")) return &g_cfg.nearZ;
+    if (!strcmp(name, "SteeringWheelAngle")) return &g_steeringWheelAngle;
+    if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
+    if (!strcmp(name, "WheelOverHud")) return &g_cfg.wheelOverHud;
+    if (!strcmp(name, "HudPerCar")) return &g_cfg.hudPerCar;
+    if (!strcmp(name, "Dash")) return &g_cfg.dash;
+    if (!strcmp(name, "RearViewEvery")) return &g_cfg.rearViewEvery;
+    if (!strcmp(name, "DepthSplit")) return &g_cfg.depthSplit;
+    if (!strcmp(name, "SharedShadows")) return &g_cfg.sharedShadows;
+    if (!strcmp(name, "Anisotropic")) return &g_cfg.anisotropic;
+    if (!strcmp(name, "ShadowRes")) return &g_cfg.shadowRes;
+    if (!strcmp(name, "DashRight")) return &g_cfg.dashRight;
+    if (!strcmp(name, "DashUp")) return &g_cfg.dashUp;
+    if (!strcmp(name, "DashZoom")) return &g_cfg.dashZoom;
+    if (!strcmp(name, "DashDepth")) return &g_cfg.dashDepth;
+    if (!strcmp(name, "DashYaw")) return &g_cfg.dashYaw;
+    if (!strcmp(name, "DashPitch")) return &g_cfg.dashPitch;
+    if (!strcmp(name, "DashRoll")) return &g_cfg.dashRoll;
+    if (!strcmp(name, "DashBox")) return &g_cfg.dashBox;
+    if (!strcmp(name, "DashScreenW")) return &g_cfg.dashScreenW;
+    if (!strcmp(name, "DashGlass")) return &g_cfg.dashGlass;
+    if (!strcmp(name, "DashGlassDepth")) return &g_cfg.dashGlassDepth;
+    if (!strcmp(name, "DashReflect")) return &g_cfg.dashReflect;
+    if (!strcmp(name, "WheelPivotRight")) return &g_cfg.wheelPivot[0];
+    if (!strcmp(name, "WheelPivotUp")) return &g_cfg.wheelPivot[1];
+    if (!strcmp(name, "DashScreenH")) return &g_cfg.dashScreenH;
+    if (!strcmp(name, "MirrorOffset")) return &g_cfg.mirrorOffset;
+    if (!strcmp(name, "DashAdjust")) return &g_cfg.dashAdjust;
+    if (!strcmp(name, "DashHighlight")) return &g_cfg.dashHighlight;
+    if (!strcmp(name, "EditorOn")) return &g_cfg.editorOn;
+    if (!strcmp(name, "EditCommand")) return &g_cfg.editCommand;
+    if (!strcmp(name, "EditPicking")) return &g_cfg.editPicking;
+    if (!strcmp(name, "EditLayer")) return &g_cfg.editLayer;
+    if (!strcmp(name, "EditMode")) return &g_cfg.editMode;
+    if (!strcmp(name, "EditPicked")) return &g_cfg.editPicked;
+    // Dash<Element>X / Y / Size, Config::dashEl.
+    for (int i = 0; i < DASH_EL_COUNT; i++) {
+        size_t n = strlen(kDashElKey[i]);
+        if (strncmp(name, "Dash", 4) || strncmp(name + 4, kDashElKey[i], n)) continue;
+        const char* field = name + 4 + n;
+        if (!strcmp(field, "X")) return &g_cfg.dashEl[i][0];
+        if (!strcmp(field, "Y")) return &g_cfg.dashEl[i][1];
+        if (!strcmp(field, "Size")) return &g_cfg.dashEl[i][2];
+        if (!strcmp(field, "L")) return &g_cfg.dashCrop[i][0];
+        if (!strcmp(field, "T")) return &g_cfg.dashCrop[i][1];
+        if (!strcmp(field, "R")) return &g_cfg.dashCrop[i][2];
+        if (!strcmp(field, "B")) return &g_cfg.dashCrop[i][3];
+    }
+    if (!strcmp(name, "MenuOpen")) return &s_uiMenuOpen;
+    if (!strcmp(name, "MirrorBrightness")) return &g_cfg.mirrorBrightness;
+    if (!strcmp(name, "MirrorContrast")) return &g_cfg.mirrorContrast;
+    if (!strcmp(name, "SeatRight")) return &g_seatInput[0];
+    if (!strcmp(name, "SeatUp")) return &g_seatInput[1];
+    if (!strcmp(name, "SeatForward")) return &g_seatInput[2];
+    if (!strcmp(name, "SeatReset")) return &g_seatInput[3];
+    return nullptr;
+}
+
+// For the gameplay mod: its overlay, drawn by this mod after the HUD phase (see DrawOverlay).
+// `shown` says whether it has anything to draw this frame. 0 in a copy that isn't the running one.
+int __cdecl Proxy_NfsmwVr_SetOverlay(OverlayShown_t shown, OverlayDraw_t draw) {
+    if (!s_active || !shown || !draw) return 0;
+    s_overlayShown = shown;
+    s_overlayDraw = draw;
+    Log("d3d9: the gameplay mod's overlay is drawn after the HUD phase");
+    return 1;
+}
+
+// This build's release (git describe), for the gameplay mod's menu.
+const char* __cdecl Proxy_NfsmwVr_Version() { return MOD_VERSION; }
+
+// Same as the recentre key. 0 when no headset session is running.
+int __cdecl Proxy_NfsmwVr_Recenter() {
+    if (!s_active || !s_xr) return 0;
+    Xr_Recenter();
+    Log("d3d9: recentred from the gameplay mod's menu");
+    return 1;
+}
+
+} // extern "C"
+
+static LONG CALLBACK CrashLogger(EXCEPTION_POINTERS* ep) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = ep->ContextRecord;
+    Log("CRASH at %08lx: eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx esi=%08lx edi=%08lx esp=%08lx ebp=%08lx", c->Eip, c->Eax,
+        c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Esp, c->Ebp);
+    DWORD* sp = (DWORD*)c->Esp;
+    Log("  stack: %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx", sp[0], sp[1], sp[2], sp[3], sp[4],
+        sp[5], sp[6], sp[7], sp[8], sp[9], sp[10], sp[11]);
+    void* game = *(void**)0x982bdc;
+    if (game) {
+        void** vt = *(void***)game;
+        Log("  game device %p vt=%p, real device %p", game, vt, s_dev);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static bool LoadedAsProxy(HINSTANCE inst) {
+    char path[MAX_PATH];
+    GetModuleFileNameA(inst, path, MAX_PATH);
+    const char* name = strrchr(path, '\\');
+    return _stricmp(name ? name + 1 : path, "d3d9.dll") == 0;
+}
+
+// The game's import slot for d3d9.dll!Direct3DCreate9, by its import directory (not by where it
+// points now: an overlay may have redirected it already).
+static bool IsD3D9CreateSlot(void** slot) {
+    BYTE* base = (BYTE*)GetModuleHandleA(nullptr);
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir.VirtualAddress) return false;
+    for (IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
+        if (_stricmp((const char*)(base + imp->Name), "d3d9.dll") != 0 || !imp->OriginalFirstThunk) continue;
+        IMAGE_THUNK_DATA* names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
+        void** slots = (void**)(base + imp->FirstThunk);
+        for (int i = 0; names[i].u1.AddressOfData; i++) {
+            if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) continue;
+            IMAGE_IMPORT_BY_NAME* byName = (IMAGE_IMPORT_BY_NAME*)(base + names[i].u1.AddressOfData);
+            if (strcmp((const char*)byName->Name, "Direct3DCreate9") == 0) return &slots[i] == slot;
+        }
+    }
+    return false;
+}
+
+// .asi mode: redirect the game's D3D9.dll!Direct3DCreate9 IAT slot to the proxy export.
+static bool PatchImport() {
+    void** slot = (void**)0x8904A8;
+    HMODULE target = nullptr;
+    bool resolved = GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       (LPCSTR)*slot, &target) &&
+                    GetProcAddress(target, "Direct3DCreate9") == *slot;
+    char path[MAX_PATH] = "an unknown module";
+    if (target) GetModuleFileNameA(target, path, MAX_PATH);
+    if (!resolved) {
+        // An overlay (RivaTuner's RTSSHooks.dll injects early) can point the import at a hook of its
+        // own before this runs. It is still the game's slot: the device then comes straight from
+        // System32's d3d9.dll (Real() loads it), past that hook.
+        if (!IsD3D9CreateSlot(slot)) {
+            Log("asi mode: Direct3DCreate9 import not found (not speed.exe v1.3?), VR inactive");
+            return false;
+        }
+        Log("asi mode: Direct3DCreate9 import already redirected to %s (an overlay?); using the system d3d9.dll", path);
+        target = nullptr;
+    }
+    s_real = target;
+    DWORD old;
+    VirtualProtect(slot, 4, PAGE_READWRITE, &old);
+    *slot = (void*)&Proxy_Direct3DCreate9;
+    VirtualProtect(slot, 4, old, &old);
+    Log("asi mode: redirected Direct3DCreate9 import (real d3d9: %s)", target ? path : "System32");
+    return true;
+}
+
+BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(inst);
+        // Installed both as d3d9.dll and as an .asi: the proxy runs, this copy stays out of the
+        // way (and out of the log the proxy already has open).
+        HMODULE proxy = GetModuleHandleA("d3d9.dll");
+        if (!LoadedAsProxy(inst) && proxy && GetProcAddress(proxy, "NfsmwVr_Loaded")) return TRUE;
+        LogInit();
+        Log("NFSMW VR mod " MOD_VERSION " loaded");
+        // Capture the mod's built-in defaults before the INI is read: the F4 menu writes the current
+        // car's values to [VR], so the INI can't be where a fresh car model starts from.
+        Cockpit_PerCarDefaults();
+        LoadConfig();
+        if (g_cfg.enabled && !Game_ValidateHooks()) g_cfg.enabled = false;
+        if (g_cfg.enabled && !LoadedAsProxy(inst) && !PatchImport()) g_cfg.enabled = false;
+        if (g_cfg.enabled) {
+            if (Game_InstallHooks()) {
+                s_active = true;
+                AddVectoredExceptionHandler(0, CrashLogger);
+                Cockpit_Install();
+            } else g_cfg.enabled = false;
+        }
+    }
+    return TRUE;
+}

@@ -1,0 +1,22 @@
+diff --git "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/common.h" "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/common.h"
+index c7b29bb..422391e 100644
+--- "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/common.h"	
++++ "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/common.h"	
+@@ -97,6 +97,8 @@ struct Config {
+     float dashGlass = 0.05f;              // the glass sheen over the display and its elements: its opacity (0 = none)
+     float dashGlassDepth = 0.01f;         // ... how far in front of the display (m)
+     float dashReflect = 0.05f;             // ... the world (the rear view picture) reflected in it: strength (0 = none)
++    float windshieldTransparency = 0.97f; // interior glass transmission, 0..1
++    float windshieldReflections = 0.08f;  // environment reflection strength, 0..1
+     float wheelPivot[2] = {0, 0};         // the steering wheel's turning centre moved right, up in its plane (m; per car, [WheelPivot])
+     float dashScreenW = 0.30f, dashScreenH = 0.13f;   // ... its size (m, at zoom 1; per car in [Dash]), centred on the panel's anchor
+     // Live from F4, not saved: the Adjust dashboard page is open (the panel shows with the menu open,
+@@ -108,7 +110,7 @@ struct Config {
+     // the triangles along the gaze (0 = nearest), the selection's size (0 one triangle, 1..3 within
+     // 2 / 5 / 10 cm, 4 the connected piece, 5 the whole draw entry); out: triangles selected.
+     // Commands besides those above: 9 drop the selection, 10 fit the steering wheel's turning centre,
+-    // 11 reset it, 12 copy the selection's triangle IDs to the clipboard.
++    // 11 reset it, 12 copy IDs, 13 add to windshield, 14 remove from windshield.
+     float editPicking = 0, editLayer = 0, editMode = 0, editPicked = 0;
+     float headSize = 0.25f;          // how far down from the top of the driver model the head reaches (m)
+     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye

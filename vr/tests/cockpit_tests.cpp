@@ -31,6 +31,34 @@ static void Check(bool ok, const char* message) {
     if (!ok) { fprintf(stderr, "FAIL: %s\n", message); exit(1); }
 }
 static void Near(float a, float b, const char* message) { Check(fabsf(a - b) < 0.0002f, message); }
+static void TestWheelPositionSave() {
+    char directory[MAX_PATH], temporary[MAX_PATH];
+    Check(GetTempPathA(MAX_PATH, directory) != 0, "temporary directory available");
+    Check(GetTempFileNameA(directory, "whl", 0, temporary) != 0, "temporary wheel ini created");
+    CarIniFile* file = nullptr;
+    for (auto& entry : s_carInis)
+        if (!strcmp(entry.section, "WheelPosition")) file = &entry;
+    Check(file != nullptr, "wheel location has its own ini mapping");
+    char savedPath[MAX_PATH];
+    strcpy(savedPath, file->path);
+    strcpy(file->path, temporary);
+    PerCar position = s_wheelPositionCar;
+    position.car = "SAVED_WHEEL_A";
+    g_cfg.wheelPosition[0] = 0.023f;
+    g_cfg.wheelPosition[1] = -0.041f;
+    SavePerCar(position);
+    g_cfg.wheelPosition[0] = g_cfg.wheelPosition[1] = 0;
+    position.car.clear();
+    UpdatePerCar(position, "SAVED_WHEEL_A");
+    Near(g_cfg.wheelPosition[0], 0.023f, "wheel right position reloads from ini");
+    Near(g_cfg.wheelPosition[1], -0.041f, "wheel up position reloads from ini");
+    UpdatePerCar(position, "UNSAVED_WHEEL_B");
+    Near(g_cfg.wheelPosition[0], 0, "another car does not inherit saved wheel right");
+    Near(g_cfg.wheelPosition[1], 0, "another car does not inherit saved wheel up");
+    strcpy(file->path, savedPath);
+    Check(DeleteFileA(temporary) != 0, "temporary wheel ini removed");
+}
+
 static void TestWheelOctants() {
     for (int x = -20; x <= 20; x++) {
         for (int y = -20; y <= 20; y++) {
@@ -311,6 +339,18 @@ static void TestSteeringWheel() {
 
     // Turning right by 90 degrees: the top of the rim goes to the driver's right (-y).
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, turned[16];
+    for (float angle : {0.0f, 90.0f, -90.0f}) {
+        float baseline[16], moved[16];
+        TurnedMatrix(*w, angle, identity, baseline);
+        g_cfg.wheelPosition[0] = 0.02f;
+        g_cfg.wheelPosition[1] = 0.04f;
+        TurnedMatrix(*w, angle, identity, moved);
+        for (int i = 0; i < 12; ++i) Near(moved[i], baseline[i], "location preserves rotation");
+        Near(moved[12], baseline[12], "location preserves forward coordinate");
+        Near(moved[13] - baseline[13], -0.02f, "location moves right independently of steering");
+        Near(moved[14] - baseline[14], 0.04f, "location moves up independently of steering");
+        g_cfg.wheelPosition[0] = g_cfg.wheelPosition[1] = 0;
+    }
     TurnedMatrix(*w, 90.0f, identity, turned);
     float top[3] = {w->centre[0] + up[0] * radius, w->centre[1], w->centre[2] + up[2] * radius};
     float out[3];
@@ -663,6 +703,7 @@ int main() {
     Check(CamaroTriangle(0, camaroLeft) && !CamaroTriangle(1, camaroLeft), "Camaro left selection ignores winding and side-specific");
     Check(!CamaroTriangle(1, camaroBody) && !CamaroTriangle(0, camaroBody), "Camaro body triangle excluded");
     TestWheelOctants();
+    TestWheelPositionSave();
     TestDash();
     TestEditsText();
     TestLevelUpsideDown();

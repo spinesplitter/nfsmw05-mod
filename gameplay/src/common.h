@@ -46,10 +46,10 @@ constexpr int kMaxGears = 7;    // forward gears on the shifter
 
 struct Config {
     bool enabled = true;
-    bool disableRubberband = false; // [Races], racer catch-up only
+    float raceTrafficFloor = 75.0f; // offline race density floor; -1 keeps event settings
+    float careerTrafficMultiplier = 3.0f; // live Career race/free-roam post-curve spawn-rate request
+    float opponentSpeed = 1.0f; // Career AI target speed multiplier; player/cops/traffic unchanged
     float tollboothTimeBonus = 0.0f; // seconds, once per tollbooth start/restart
-    float opponentSpeed = 1.0f;      // AI racer target speed multiplier; not world time
-    float trafficMultiplier = 1.0f; // civilian density request, bounded to the game's 0..100
     float engineSmokeBack = 0.0f; // [Smoke.<car>] only, never a class/group tuning value
 
     // [Devices] JoyN = name substring; empty = Nth attached game controller

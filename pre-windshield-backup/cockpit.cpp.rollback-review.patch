@@ -1,0 +1,157 @@
+diff --git "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/cockpit.cpp" "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/cockpit.cpp"
+index c0478fc..7c1f635 100644
+--- "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/cockpit.cpp"	
++++ "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/cockpit.cpp"	
+@@ -157,10 +157,10 @@ struct TriRef {
+ // are not read.)
+ struct EditSet {
+     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
+-    std::set<uint64_t> black, wheel, noWheel, show;
++    std::set<uint64_t> black, wheel, noWheel, show, windshield, noWindshield;
+     bool loaded = false;
+ };
+-const char* const kEditKeys[4] = {"Black", "Wheel", "NoWheel", "Show"};
++const char* const kEditKeys[6] = {"Black", "Wheel", "NoWheel", "Show", "Windshield", "NoWindshield"};
+ int s_editsGen = 0;                                 // counts edits, for caches built from them
+ std::unordered_map<std::string, EditSet> s_edits;
+ 
+@@ -216,8 +216,8 @@ EditSet& EditsFor(const std::string& solidName) {
+         return ParseTris(buf.data());
+     };
+     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
+-    std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
+-    for (int k = 0; k < 4; k++)
++    std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.windshield, &e.noWindshield};
++    for (int k = 0; k < 6; k++)
+         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
+     size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size();
+     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
+@@ -228,9 +228,9 @@ void SaveEdits(const std::string& solidName) {
+     const EditSet& e = EditsFor(solidName);
+     std::vector<std::array<uint16_t, 3>> hide;
+     for (auto& h : e.hide) hide.push_back(h.second);
+-    const std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
++    const std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.windshield, &e.noWindshield};
+     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
+-    for (int k = 0; k < 4; k++) {
++    for (int k = 0; k < 6; k++) {
+         std::vector<std::array<uint16_t, 3>> v;
+         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
+         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
+@@ -264,6 +264,9 @@ struct SolidInfo {
+     std::map<uint64_t, std::array<uint16_t, 3>> hidden;
+     std::vector<V3> black;                          // model space, 3 points per triangle
+     bool blackDirty = true;
++    int windshieldGen = -1;
++    int windshieldEye = -1;
++    std::vector<V3> windshield;
+ };
+ std::unordered_map<uint8_t*, SolidInfo> s_solids;
+ std::unordered_map<std::string, std::vector<WheelTemplate>> s_wheelTemplates;
+@@ -1946,6 +1949,59 @@ V3 ToWorld(const V3& p, const float* m) {
+             p.x * m[2] + p.y * m[6] + p.z * m[10] + m[14]};
+ }
+ 
++// Car coordinates: x forward, y left, z up. Require the entire triangle inside the
++// front glazing region and a sloping front-facing normal, never the roof or side windows.
++bool WindshieldCandidate(const TriRef& t, const V3& head) {
++    for (const V3& p : t.p)
++        if (p.x < head.x + 0.20f || p.x > head.x + 1.65f || fabsf(p.y) > 0.92f ||
++            p.z < head.z - 0.40f || p.z > head.z + 0.50f) return false;
++    V3 n = Cross(Sub(t.p[1], t.p[0]), Sub(t.p[2], t.p[0]));
++    float len = sqrtf(Dot(n, n));
++    return len > 1e-6f && fabsf(n.x) > len * 0.35f && fabsf(n.z) > len * 0.20f && fabsf(n.y) < len * 0.55f;
++}
++
++void NoteWindshield(uint8_t* solid, SolidInfo& info, const float* m) {
++    // Do not add glass to traffic, exterior cameras or a player car not currently seated.
++    if (!s_seatedConn || s_curConn != s_seatedConn) return;
++    int eyeSerial = s_hashSerial * 4 + s_eyeIndex;
++    if (info.windshieldEye == eyeSerial) return;
++    info.windshieldEye = eyeSerial;
++    std::string name = SolidName(info);
++    const HeadPos* head = CarHead(name.c_str());
++    if (!head) return; // retry after the driver has been measured
++    if (info.windshieldGen != s_editsGen || info.trisDirty) {
++        if (info.trisDirty) BuildTris(solid, info);
++        info.windshield.clear();
++        const EditSet& e = EditsFor(name);
++        std::vector<const TriRef*> automatic;
++        float area = 0, lo = 1e9f, hi = -1e9f;
++        bool body = name.find("_BODY_") != std::string::npos || name.find("_WINDOW") != std::string::npos;
++        for (const TriRef& t : info.tris) {
++            if (body && !t.hidden && WindshieldCandidate(t, {head->v[0], head->v[1], head->v[2]})) {
++                automatic.push_back(&t);
++                V3 n = Cross(Sub(t.p[1], t.p[0]), Sub(t.p[2], t.p[0]));
++                area += sqrtf(Dot(n, n)) * 0.5f;
++                for (const V3& p : t.p) { lo = std::min(lo, p.y); hi = std::max(hi, p.y); }
++            }
++        }
++        std::set<uint64_t> ids;
++        if (area > 0.18f && hi - lo > 0.70f)
++            for (auto t : automatic) ids.insert(t->id);
++        ids.insert(e.windshield.begin(), e.windshield.end());
++        for (const TriRef& t : info.tris)
++            if (ids.count(t.id) && !e.noWindshield.count(t.id) && !e.hide.count(t.id) && !e.black.count(t.id))
++                info.windshield.insert(info.windshield.end(), t.p, t.p + 3);
++        info.windshieldGen = s_editsGen;
++        Log("windshield: %s: %u interior glass triangles", name.c_str(), (unsigned)info.windshield.size() / 3);
++    }
++    std::vector<float> xyz;
++    for (const V3& p : info.windshield) {
++        V3 w = ToWorld(p, m);
++        xyz.insert(xyz.end(), {w.x, w.y, w.z});
++    }
++    if (!xyz.empty()) D3D_AddWindshield(info.ib, xyz.data(), (int)xyz.size() / 9);
++}
++
+ // Model-space triangles to the world for the current eye, each vertex lifted `lift` m toward the
+ // eyes (last frame's gaze position: the game camera's own is not where the eyes are).
+ void AddColor(void* ib, const std::vector<V3>& tris, const float* m, float lift, uint32_t argb) {
+@@ -2261,15 +2317,28 @@ void RunEditCommand(int cmd) {
+                 wheel = true;
+                 break;
+             case 5:
++                e.windshield.erase(id);
++                e.noWindshield.erase(id);
+                 wheel |= e.wheel.erase(id) + e.noWheel.erase(id) > 0;
+                 e.hide.erase(id);
+                 e.black.erase(id);
+                 if (info.driver) e.show.insert(id);   // drawn even inside the seated driver's hidden arms / head
+                 break;
++            case 13:
++                e.windshield.insert(id);
++                e.noWindshield.erase(id);
++                e.hide.erase(id);
++                e.black.erase(id);
++                break;
++            case 14:
++                e.noWindshield.insert(id);
++                e.windshield.erase(id);
++                break;
+         }
+     }
+     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
+-    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), kWhat[cmd]);
++    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(),
++        cmd == 13 ? "added to windshield" : cmd == 14 ? "removed from windshield" : kWhat[cmd]);
+     s_editsGen++;
+     SaveEdits(s_pick.name);
+     ApplyEditsTo(s_pick.name, wheel);
+@@ -2388,6 +2457,7 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
+         D3D_AddDash(At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer), origin, right, up, toEye);
+     }
+     if (player) NoteEditor(solid, *info, m);
++    if (player) NoteWindshield(solid, *info, m);
+     Driver* d = info ? info->driver : nullptr;
+     if (!d || !d->ok || !m) return entry;
+     const float* h = d->head;
+@@ -2668,7 +2738,7 @@ void Cockpit_EndFrame() {
+     int cmd = (int)lrintf(g_cfg.editCommand);
+     if (cmd) {
+         g_cfg.editCommand = 0;
+-        if (cmd >= 1 && cmd <= 6) RunEditCommand(cmd);
++        if ((cmd >= 1 && cmd <= 6) || cmd == 13 || cmd == 14) RunEditCommand(cmd);
+         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
+         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
+         if (cmd == 12) CopySelection();

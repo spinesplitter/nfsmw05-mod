@@ -1,0 +1,1019 @@
+diff --git a/gameplay/src/ui.cpp b/gameplay/src/ui.cpp
+index e47a194..a8fcb31 100644
+--- a/gameplay/src/ui.cpp
++++ b/gameplay/src/ui.cpp
+@@ -146,7 +146,7 @@ constexpr struct {
+     {MOD_VR, "DashScreenW", 0.30f}, {MOD_VR, "DashScreenH", 0.13f},
+     {MOD_VR, "DashGlass", 0.05f}, {MOD_VR, "WheelPivotRight", 0.0f}, {MOD_VR, "WheelPivotUp", 0.0f},
+     {MOD_VR, "DashGlassDepth", 0.01f}, {MOD_VR, "DashReflect", 0.05f},
+-    {MOD_VR, "DashYaw", 0.0f}, {MOD_VR, "DashPitch", 0.0f},
++    {MOD_VR, "DashYaw", 0.0f}, {MOD_VR, "DashPitch", 0.0f}, {MOD_VR, "DashRoll", 0.0f},
+     {MOD_VR, "Anisotropic", 0.0f}, {MOD_VR, "ShadowRes", 2.0f},
+     {MOD_VR, "RearViewEvery", 1.0f}, {MOD_VR, "DepthSplit", 1.0f}, {MOD_VR, "SharedShadows", 1.0f},
+     {MOD_FFB, "ParkingFriction", 0.2f},
+@@ -157,6 +157,7 @@ constexpr struct {
+     {MOD_FFB, "SurfaceRumble", 0.0f},
+     {MOD_FFB, "MinForce", 0.0f},
+     {MOD_FFB, "RearSlide", 0.0f},
++    {MOD_VR, "WindshieldTransparency", 0.97f}, {MOD_VR, "WindshieldReflections", 0.08f},
+ };
+ enum {
+     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
+@@ -177,8 +178,8 @@ enum {
+     VR_DASHGLASS = VR_DASHSCREEN + 2,
+     VR_WHEELPIVOT,              // 2: the steering wheel's turning centre moved right, up
+     VR_DASHGLASSDEPTH = VR_WHEELPIVOT + 2, VR_DASHREFLECT,
+-    VR_DASHANGLE,               // 2: the in-car dashboard turned left / right (yaw), tilted up / down (pitch)
+-    VR_ANISOTROPIC = VR_DASHANGLE + 2, VR_SHADOWRES, VR_REARVIEWEVERY, VR_DEPTHSPLIT, VR_SHAREDSHADOWS,
++    VR_DASHANGLE,               // 3: yaw, pitch and roll
++    VR_ANISOTROPIC = VR_DASHANGLE + 3, VR_SHADOWRES, VR_REARVIEWEVERY, VR_DEPTHSPLIT, VR_SHAREDSHADOWS,
+     FFB_PARKINGFRICTION,
+     FFB_TYRESCRUB,
+     FFB_CASTER, FFB_CARWEIGHT, FFB_LOADSENSITIVITY,
+@@ -187,12 +188,15 @@ enum {
+     FFB_SURFACE,
+     FFB_MINFORCE,
+     FFB_REARSLIDE,
++    VR_WINDSHIELDTRANSPARENCY, VR_WINDSHIELDREFLECTIONS,
+     EXT_COUNT
+ };
+ static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
+ // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
+ // made every dashboard setting move another element).
+ constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
++static_assert(KeyIs(kExt[VR_WINDSHIELDTRANSPARENCY].key, "WindshieldTransparency"), "windshield transparency key order");
++static_assert(KeyIs(kExt[VR_WINDSHIELDREFLECTIONS].key, "WindshieldReflections"), "windshield reflection key order");
+ static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
+ static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
+ static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
+@@ -228,6 +232,7 @@ static_assert(KeyIs(kExt[VR_WHEELPIVOT + 1].key, "WheelPivotUp"), "kExt out of o
+ static_assert(KeyIs(kExt[VR_DASHGLASSDEPTH].key, "DashGlassDepth"), "kExt out of order at VR_DASHGLASSDEPTH");
+ static_assert(KeyIs(kExt[VR_DASHREFLECT].key, "DashReflect"), "kExt out of order at VR_DASHREFLECT");
+ static_assert(KeyIs(kExt[VR_DASHANGLE + 1].key, "DashPitch"), "kExt out of order at VR_DASHANGLE + 1");
++static_assert(KeyIs(kExt[VR_DASHANGLE + 2].key, "DashRoll"), "kExt out of order at VR_DASHANGLE + 2");
+ float s_ext[EXT_COUNT];         // the menu's copies, read from the mods when the menu opens
+ // The traction control row: 0 off, 1 the game's own (TractionControl), 2 that plus the throttle
+ // trim and launch control (TC). Follows g_cfg every frame; the row sets both.
+@@ -669,6 +674,7 @@ const Item kItems[] = {
+     {NUMBER, "Car dashboard GUI depth", "VR", "DashDepth", &s_ext[VR_DASHDEPTH], -0.15f, 0.25f, 0.0025f, 100, "%+.2f cm", 0},
+     {NUMBER, "Dashboard angle left / right", "VR", "DashYaw", &s_ext[VR_DASHANGLE], -60.0f, 60.0f, 0.5f, 1, "%+.1f deg", 0},
+     {NUMBER, "Dashboard angle up / down", "VR", "DashPitch", &s_ext[VR_DASHANGLE + 1], -60.0f, 60.0f, 0.5f, 1, "%+.1f deg", 0},
++    {NUMBER, "Dashboard rotation clockwise / counterclockwise", "VR", "DashRoll", &s_ext[VR_DASHANGLE + 2], -180.0f, 180.0f, 0.1f, 1, "%+.1f deg", 0},
+     {NUMBER, "Display width", "VR", "DashScreenW", &s_ext[VR_DASHSCREEN], 0.04f, 0.8f, 0.005f, 100, "%.1f cm", 0},
+     {NUMBER, "Display height", "VR", "DashScreenH", &s_ext[VR_DASHSCREEN + 1], 0.02f, 0.5f, 0.005f, 100, "%.1f cm", 0},
+     {NUMBER, "Display opacity", "VR", "DashBox", &s_ext[VR_DASHBOX], 0.0f, 1.0f, 0.05f, 100, "%.0f%%", 0},
+@@ -685,6 +691,10 @@ const Item kItems[] = {
+     {NUMBER, "Near clip plane", "VR", "NearZ", &s_ext[VR_NEARZ], 0.001f, 0.25f, 0.001f, 100, "%.1f cm", 0},
+     RESET_,
+ 
++    HEADER_("INTERIOR WINDSHIELD"),
++    {NUMBER, "Windshield transparency", "VR", "WindshieldTransparency", &s_ext[VR_WINDSHIELDTRANSPARENCY], 0.0f, 1.0f, 0.001f, 100, "%.1f%%", 0},
++    {NUMBER, "Windshield reflections", "VR", "WindshieldReflections", &s_ext[VR_WINDSHIELDREFLECTIONS], 0.0f, 1.0f, 0.001f, 100, "%.1f%%", 0},
++
+     PAGE_("ADJUST DASHBOARD"),
+     LINK_("< Back", "VR"),
+     {NUMBER, "Whole dashboard size (this car)", "VR", "DashZoom", &s_ext[VR_DASHZOOM], 0.3f, 3.0f, 0.05f, 100, "%.0f%%", 0},
+@@ -744,10 +754,13 @@ const Item kItems[] = {
+     {ACTION, "Pick triangles (the menu hides)", nullptr, "EdPick", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {NUMBER, "Selection size", "VR", "EditMode", &s_ext[VR_EDITMODE], 0.0f, 5.0f, 1.0f, 1, "%.0f", 0},
+     HEADER_("DO WITH THE SELECTION"),
++    {ACTION, "Copy triangle IDs to clipboard", nullptr, "EdCopy", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Hide", nullptr, "EdHide", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Take off the steering wheel", nullptr, "EdNoWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
++    {ACTION, "Add to windshield", nullptr, "EdWindshield", nullptr, 0, 0, 0, 0, nullptr, 0},
++    {ACTION, "Remove from windshield", nullptr, "EdNoWindshield", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
+ 
+@@ -1591,7 +1604,9 @@ void Change(int index, int dir) {
+             static const struct { const char* key; int cmd; const char* note; } kEd[] = {
+                 {"EdHide", 1, "Hidden"}, {"EdBlack", 2, "Drawn black"}, {"EdWheel", 3, "On the steering wheel"},
+                 {"EdNoWheel", 4, "Off the steering wheel"}, {"EdRestore", 5, "Restored"}, {"EdUndo", 6, "Undone"},
+-                {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"}};
++                {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"},
++                {"EdCopy", 12, "Copy requested (check clipboard)"},
++                {"EdWindshield", 13, "Added to windshield"}, {"EdNoWindshield", 14, "Removed from windshield"}};
+             if (strcmp(it.key, "EdPick") == 0) {
+                 StartPicking();
+                 return;
+diff --git a/vr/src/cockpit.cpp b/vr/src/cockpit.cpp
+index 8ad7157..7c1f635 100644
+--- a/vr/src/cockpit.cpp
++++ b/vr/src/cockpit.cpp
+@@ -157,10 +157,10 @@ struct TriRef {
+ // are not read.)
+ struct EditSet {
+     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
+-    std::set<uint64_t> black, wheel, noWheel, show;
++    std::set<uint64_t> black, wheel, noWheel, show, windshield, noWindshield;
+     bool loaded = false;
+ };
+-const char* const kEditKeys[4] = {"Black", "Wheel", "NoWheel", "Show"};
++const char* const kEditKeys[6] = {"Black", "Wheel", "NoWheel", "Show", "Windshield", "NoWindshield"};
+ int s_editsGen = 0;                                 // counts edits, for caches built from them
+ std::unordered_map<std::string, EditSet> s_edits;
+ 
+@@ -216,8 +216,8 @@ EditSet& EditsFor(const std::string& solidName) {
+         return ParseTris(buf.data());
+     };
+     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
+-    std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
+-    for (int k = 0; k < 4; k++)
++    std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.windshield, &e.noWindshield};
++    for (int k = 0; k < 6; k++)
+         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
+     size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size();
+     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
+@@ -228,9 +228,9 @@ void SaveEdits(const std::string& solidName) {
+     const EditSet& e = EditsFor(solidName);
+     std::vector<std::array<uint16_t, 3>> hide;
+     for (auto& h : e.hide) hide.push_back(h.second);
+-    const std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
++    const std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.windshield, &e.noWindshield};
+     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
+-    for (int k = 0; k < 4; k++) {
++    for (int k = 0; k < 6; k++) {
+         std::vector<std::array<uint16_t, 3>> v;
+         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
+         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
+@@ -264,6 +264,9 @@ struct SolidInfo {
+     std::map<uint64_t, std::array<uint16_t, 3>> hidden;
+     std::vector<V3> black;                          // model space, 3 points per triangle
+     bool blackDirty = true;
++    int windshieldGen = -1;
++    int windshieldEye = -1;
++    std::vector<V3> windshield;
+ };
+ std::unordered_map<uint8_t*, SolidInfo> s_solids;
+ std::unordered_map<std::string, std::vector<WheelTemplate>> s_wheelTemplates;
+@@ -415,10 +418,10 @@ struct PerCar {
+ PerCar s_hudCar = {"Hud", "HUD", 4, {&g_cfg.hudWidth, &g_cfg.hudDistance, &g_cfg.hudHeight, &g_cfg.hudRight},
+                    {0.1f, 0.1f, -5, -5}, {10, 10, 5, 5}, 3, false};
+ float s_retiredDashCover = 1.3f;                    // a retired size, kept so saved [Dash] lines read the same
+-PerCar s_dashCar = {"Dash", "dashboard", 9,
++PerCar s_dashCar = {"Dash", "dashboard", 10,
+                     {&g_cfg.dashRight, &g_cfg.dashUp, &g_cfg.dashZoom, &s_retiredDashCover, &g_cfg.dashDepth,
+-                     &g_cfg.dashScreenW, &g_cfg.dashScreenH, &g_cfg.dashYaw, &g_cfg.dashPitch},
+-                    {-1, -1, 0.2f, 1, -0.2f, 0.02f, 0.02f, -90, -90}, {1, 1, 4, 4, 0.3f, 1, 1, 90, 90}, 3, false, true};
++                     &g_cfg.dashScreenW, &g_cfg.dashScreenH, &g_cfg.dashYaw, &g_cfg.dashPitch, &g_cfg.dashRoll},
++                    {-1, -1, 0.2f, 1, -0.2f, 0.02f, 0.02f, -90, -90, -180}, {1, 1, 4, 4, 0.3f, 1, 1, 90, 90, 180}, 3, false, true};
+ // Each dashboard element's x, y and size (Config::dashEl), in that order per element.
+ PerCar s_dashLayoutCar = {"DashLayout", "dashboard layout", 18,
+                           {&g_cfg.dashEl[0][0], &g_cfg.dashEl[0][1], &g_cfg.dashEl[0][2], &g_cfg.dashEl[1][0],
+@@ -815,7 +818,7 @@ void FindDash(Wheel& w, const std::vector<TriRef>& tris, const float headPos[3],
+ // The panel's plane in the world: origin (with the offsets from F4, dashRight / dashUp / dashDepth,
+ // per car model), right, up and toward the driver (unit). The panel is turned about its own centre:
+ // dashYaw about its up axis (+ = its face turned to the driver's right), then dashPitch about its
+-// right axis (+ = its face tilted up).
++// right axis (+ = its face tilted up), then roll clockwise as seen by the driver.
+ void DashBasis(const Wheel& w, const float* m, float origin[3], float right[3], float up[3], float toEye[3]) {
+     V3 o = w.dash + w.dashRight * g_cfg.dashRight + w.dashUp * g_cfg.dashUp + w.dashN * g_cfg.dashDepth;
+     const float kDeg = 0.017453293f;
+@@ -823,14 +826,16 @@ void DashBasis(const Wheel& w, const float* m, float origin[3], float right[3],
+     float cp = cosf(g_cfg.dashPitch * kDeg), sp = sinf(g_cfg.dashPitch * kDeg);
+     V3 r1 = w.dashRight * cy - w.dashN * sy, n1 = w.dashN * cy + w.dashRight * sy;
+     V3 u2 = w.dashUp * cp - n1 * sp, n2 = n1 * cp + w.dashUp * sp;
++    float cr = cosf(g_cfg.dashRoll * kDeg), sr = sinf(g_cfg.dashRoll * kDeg);
++    V3 r3 = r1 * cr - u2 * sr, u3 = u2 * cr + r1 * sr;
+     for (int a = 0; a < 3; a++) origin[a] = o.x * m[a] + o.y * m[4 + a] + o.z * m[8 + a] + m[12 + a];
+     auto dir = [&](V3 v, float* out) {
+         V3 r = {v.x * m[0] + v.y * m[4] + v.z * m[8], v.x * m[1] + v.y * m[5] + v.z * m[9], v.x * m[2] + v.y * m[6] + v.z * m[10]};
+         r = Norm(r);
+         out[0] = r.x; out[1] = r.y; out[2] = r.z;
+     };
+-    dir(r1, right);
+-    dir(u2, up);
++    dir(r3, right);
++    dir(u3, up);
+     dir(n2, toEye);
+ }
+ 
+@@ -1264,6 +1269,17 @@ template <class Keep> void SolidTriangles(uint8_t* solid, std::vector<V3>& out,
+         if (tris <= 0 || first < 0 || first + tris * 3 > m.numIndices) continue;
+         for (int t = 0; t < tris; t++) {
+             const uint16_t* tri = m.indices + first + t * 3;
++            // Editor hides collapse indices in the live mesh. Detection must still see the
++            // original geometry, otherwise hiding the glass also removes our mirror anchor.
++            auto found = s_solids.find(solid);
++            if (tri[0] != tri[1] && tri[1] == tri[2] && found != s_solids.end()) {
++                for (const auto& hidden : found->second.hidden)
++                    if (hidden.second[0] == tri[0] && hidden.second[1] == tri[1]) {
++                        tri = hidden.second.data();
++                        break;
++                    }
++            }
++            if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
+             if (tri[0] >= m.numVerts || tri[1] >= m.numVerts || tri[2] >= m.numVerts) continue;
+             V3 p[3] = {m.at(tri[0]), m.at(tri[1]), m.at(tri[2])};
+             if (keep(p)) out.insert(out.end(), p, p + 3);
+@@ -1285,6 +1301,82 @@ bool OnGlass(const SolidMesh& m, const MirrorGlass& g, const uint16_t* tri, floa
+     return true;
+ }
+ 
++// User-picked stock Carrera glass, sorted vertex triples. Do not apply to other kits or LODs.
++int CarreraSide(const char* name) {
++    if (!strcmp(name, "CARRERAGT_KIT00_LEFT_SIDE_MIRROR_A")) return 0;
++    if (!strcmp(name, "CARRERAGT_KIT00_RIGHT_SIDE_MIRROR_A")) return 1;
++    return -1;
++}
++bool CarreraTriangle(int side, const uint16_t* tri) {
++    static const uint16_t ids[2][18][3] = {
++        {{252,253,254},{252,254,271},{254,270,271},{255,256,257},{255,257,258},{257,258,259},
++         {258,259,260},{259,260,261},{260,261,262},{261,262,263},{262,263,264},{263,264,265},
++         {264,265,266},{265,266,267},{266,267,268},{267,268,269},{268,269,270},{269,270,271}},
++        {{252,253,254},{252,254,255},{252,255,271},{255,270,271},{256,257,258},{256,258,259},
++         {256,259,260},{259,260,261},{260,261,262},{261,262,263},{262,263,264},{263,264,265},
++         {264,265,266},{265,266,267},{266,267,268},{267,268,269},{268,269,270},{269,270,271}}
++    };
++    if (side < 0 || side > 1) return false;
++    uint16_t sorted[3] = {tri[0], tri[1], tri[2]};
++    std::sort(sorted, sorted + 3);
++    for (const auto& id : ids[side])
++        if (std::equal(sorted, sorted + 3, id)) return true;
++    return false;
++}
++
++bool CamaroTriangle(int side, const uint16_t* tri) {
++    static const uint16_t ids[2][14][3] = {
++        {{9164,9165,9166},{9164,9166,9178},{9164,9178,9179},{9166,9167,9168},
++         {9166,9168,9170},{9166,9170,9174},{9166,9174,9178},{9168,9169,9170},
++         {9170,9171,9172},{9170,9172,9174},{9172,9173,9174},{9174,9175,9176},
++         {9174,9176,9178},{9176,9177,9178}},
++        {
++        {7003,7004,7005},{7003,7005,7017},{7003,7017,7018},{7005,7006,7007},
++        {7005,7007,7009},{7005,7009,7017},{7007,7008,7009},{7009,7010,7011},
++        {7009,7011,7013},{7009,7013,7017},{7011,7012,7013},{7013,7014,7015},
++        {7013,7015,7017},{7015,7016,7017}}
++    };
++    if (side < 0 || side > 1) return false;
++    uint16_t sorted[3] = {tri[0], tri[1], tri[2]};
++    std::sort(sorted, sorted + 3);
++    for (const auto& id : ids[side]) if (std::equal(sorted, sorted + 3, id)) return true;
++    return false;
++}
++
++// Require the complete distinct selection before using a model-specific override.
++bool PickedGlass(const SolidMesh& m, int side, bool camaro, MirrorGlass& g) {
++    std::vector<std::vector<uint16_t>> found;
++    std::vector<V3> points;
++    for (int i = 0; i < m.n; i++) {
++        uint8_t* e = m.entries + i * kEntrySize;
++        int count = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
++        if (count <= 0 || first < 0 || count > (m.numIndices - first) / 3) continue;
++        for (int t = 0; t < count; t++) {
++            const uint16_t* tri = m.indices + first + 3 * t;
++            if (!(camaro ? CamaroTriangle(side, tri) : CarreraTriangle(side, tri)) || tri[0] >= m.numVerts || tri[1] >= m.numVerts || tri[2] >= m.numVerts) continue;
++            std::vector<uint16_t> key(tri, tri + 3);
++            std::sort(key.begin(), key.end());
++            if (std::find(found.begin(), found.end(), key) != found.end()) continue;
++            found.push_back(key);
++            for (int k = 0; k < 3; k++) points.push_back(m.at(tri[k]));
++        }
++    }
++    if (found.size() != (camaro ? 14u : 18u) || !g.ok) return false;
++    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
++    for (V3 p : points) {
++        float u = mirror::Dot(p, g.u), v = mirror::Dot(p, g.v);
++        minU = std::min(minU, u); maxU = std::max(maxU, u);
++        minV = std::min(minV, v); maxV = std::max(maxV, v);
++    }
++    float du = (minU + maxU) * 0.5f - mirror::Dot(g.centre, g.u);
++    float dv = (minV + maxV) * 0.5f - mirror::Dot(g.centre, g.v);
++    g.centre = {g.centre.x + g.u.x * du + g.v.x * dv, g.centre.y + g.u.y * du + g.v.y * dv,
++                g.centre.z + g.u.z * du + g.v.z * dv};
++    g.halfU = (maxU - minU) * 0.5f; g.halfV = (maxV - minV) * 0.5f;
++    g.tris = points;
++    return true;
++}
++
+ // The part of the rear view (u from, to) a side mirror shows: [VR] SideMirrorWidth of its width
+ // from that side (the left mirror the left part), mirrored with MirrorFlip.
+ void SideMirrorRange(int side, float* u0, float* u1) {
+@@ -1405,7 +1497,7 @@ bool RegisterSharedGlass(uint8_t* solid, SolidInfo& info) {
+ }
+ 
+ // Glass without an entry of its own: split out of the entries it shares (GlassSplit).
+-void SplitSharedGlass(uint8_t* solid, SolidInfo& info, const bool need[2]) {
++void SplitSharedGlass(uint8_t* solid, SolidInfo& info, const bool need[2], int carrera = -1, int camaro = 0) {
+     char name[65] = {};
+     memcpy(name, info.name, 64);
+     SolidMesh m;
+@@ -1425,7 +1517,9 @@ void SplitSharedGlass(uint8_t* solid, SolidInfo& info, const bool need[2]) {
+             const uint16_t* tri = idx + t * 3;
+             int cls = 0;
+             for (int side = 0; side < 2 && !cls; side++)
+-                if (need[side] && info.glass[side].ok && OnGlass(m, info.glass[side], tri)) cls = side + 1;
++                if (need[side] && info.glass[side].ok &&
++                    (carrera >= 0 ? side == carrera && CarreraTriangle(carrera, tri) :
++                     (camaro & (1 << side)) ? CamaroTriangle(side, tri) : OnGlass(m, info.glass[side], tri))) cls = side + 1;
+             part[cls].insert(part[cls].end(), tri, tri + 3);
+         }
+         // A few stray triangles are not a mirror's glass.
+@@ -1486,6 +1580,8 @@ void SplitSharedGlass(uint8_t* solid, SolidInfo& info, const bool need[2]) {
+ void FindMirrors(uint8_t* solid, SolidInfo& info) {
+     char name[65] = {};
+     memcpy(name, info.name, 64);
++    int carrera = -1;
++    int camaro = 0;
+     if (info.interior) {
+         const HeadPos* head = CarHead(name);
+         if (!head) return;
+@@ -1508,6 +1604,12 @@ void FindMirrors(uint8_t* solid, SolidInfo& info) {
+         std::vector<V3> tris;
+         SolidTriangles(solid, tris, [](const V3*) { return true; });
+         info.glass[left ? 0 : 1] = mirror::FindGlass(tris);
++        int side = CarreraSide(name);
++        SolidMesh m;
++        if (side >= 0 && ReadMesh(solid, m) && PickedGlass(m, side, false, info.glass[side])) {
++            carrera = side;
++            Log("mirrors: %s: using all 18 user-picked glass triangles", name);
++        }
+         info.mirrorKind = 1;
+         if (info.glass[left ? 0 : 1].ok) s_hasMirrorSolids[CarOf(name)] = true;
+     } else if (strstr(name, "_KIT") && strstr(name, "_BODY_")) {
+@@ -1530,6 +1632,13 @@ void FindMirrors(uint8_t* solid, SolidInfo& info) {
+             });
+             info.glass[side] = mirror::FindGlass(tris, false);
+         }
++        SolidMesh m;
++        if (!strcmp(name, "CAMARO_KIT00_BODY_A") && ReadMesh(solid, m))
++            for (int side = 0; side < 2; side++)
++                if (PickedGlass(m, side, true, info.glass[side])) {
++                    camaro |= 1 << side;
++                    Log("mirrors: %s: using all 14 user-picked %s glass triangles", name, side ? "right" : "left");
++                }
+         info.mirrorKind = 2;
+     }
+     for (int side = 0; side < 2; side++) {
+@@ -1540,14 +1649,16 @@ void FindMirrors(uint8_t* solid, SolidInfo& info) {
+     }
+     if (info.mirrorKind == 1 && !info.glass[0].ok && !info.glass[1].ok) Log("mirrors: %s: no glass found", name);
+     for (int side = 0; side < 2; side++)
+-        if (info.glass[side].ok && g_cfg.gameMirrors && !SkipGameMirrors(CarOf(name))) RegisterGlassEntry(solid, info, side);
+-    if (g_cfg.gameMirrors && !SkipGameMirrors(CarOf(name)) && info.glass[0].ok && info.glass[1].ok &&
+-        info.glassFirsts[0].empty() && info.glassFirsts[1].empty())
+-        if (!RegisterSharedGlass(solid, info)) {
+-            // Mixed into the body's entries: split out of them.
+-            const bool need[2] = {true, true};
+-            SplitSharedGlass(solid, info, need);
++        if (carrera < 0 && !(camaro & (1 << side)) && info.glass[side].ok && g_cfg.gameMirrors && !SkipGameMirrors(CarOf(name))) RegisterGlassEntry(solid, info, side);
++    if (g_cfg.gameMirrors && !SkipGameMirrors(CarOf(name))) {
++        const bool need[2] = {info.glass[0].ok && info.glassFirsts[0].empty(),
++                              info.glass[1].ok && info.glassFirsts[1].empty()};
++        if (need[0] && need[1]) {
++            if (camaro || !RegisterSharedGlass(solid, info)) SplitSharedGlass(solid, info, need, carrera, camaro);
++        } else if (need[0] || need[1]) {
++            SplitSharedGlass(solid, info, need, carrera, camaro);
+         }
++    }
+ }
+ 
+ // The glass's outline in its own plane, across and up (u, v): the convex hull of the patch's
+@@ -1587,11 +1698,41 @@ void GlassOutline(const MirrorGlass& g, std::vector<std::pair<float, float>>& hu
+ // The glass's triangles in world space, `lift` metres toward the driver and shrunk by `scale`
+ // about the glass's centre, with their place in the glass (0..1 across, 0..1 down) as texture
+ // coordinates: x, y, z, u, v per vertex.
+-void GlassVertices(const MirrorGlass& g, const M4& m, std::vector<float>& out, float lift = 0.008f, float scale = 1.0f) {
++void GlassVertices(const MirrorGlass& g, const M4& m, std::vector<float>& out, float lift = 0.008f, float scale = 1.0f,
++                   bool symmetric = false) {
+     float cu = mirror::Dot(g.centre, g.u), cv = mirror::Dot(g.centre, g.v), cd = mirror::Dot(g.centre, g.normal);
+     out.clear();
+     std::vector<std::pair<float, float>> hull;
+     GlassOutline(g, hull);
++    if (symmetric && hull.size() >= 3) {
++        // Intersect the outline with its horizontal reflection. Unlike a union, this cannot
++        // extend the overlay beyond the detected glass and into the housing.
++        auto original = hull;
++        std::vector<std::pair<float, float>> reflected;
++        for (auto it = original.rbegin(); it != original.rend(); ++it)
++            reflected.push_back({2 * cu - it->first, it->second});
++        for (size_t edge = 0; edge < reflected.size() && !hull.empty(); edge++) {
++            auto a = reflected[edge], b = reflected[(edge + 1) % reflected.size()];
++            auto side = [a, b](std::pair<float, float> p) {
++                return (b.first - a.first) * (p.second - a.second) - (b.second - a.second) * (p.first - a.first);
++            };
++            std::vector<std::pair<float, float>> clipped;
++            for (size_t i = 0; i < hull.size(); i++) {
++                auto p = hull[i], q = hull[(i + 1) % hull.size()];
++                float dp = side(p), dq = side(q);
++                if (dp >= 0) clipped.push_back(p);
++                if ((dp < 0 && dq > 0) || (dp > 0 && dq < 0)) {
++                    float t = dp / (dp - dq);
++                    clipped.push_back({p.first + t * (q.first - p.first), p.second + t * (q.second - p.second)});
++                }
++            }
++            hull.swap(clipped);
++        }
++        float area = 0;
++        for (size_t i = 0; i < hull.size(); i++)
++            area += hull[i].first * hull[(i + 1) % hull.size()].second - hull[(i + 1) % hull.size()].first * hull[i].second;
++        if (hull.size() < 3 || fabsf(area) < 1e-7f) hull.swap(original);
++    }
+     for (size_t i = 1; i + 1 < hull.size(); i++) {
+         const std::pair<float, float>* fan[3] = {&hull[0], &hull[i], &hull[i + 1]};
+         for (const std::pair<float, float>* at : fan) {
+@@ -1634,8 +1775,11 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
+         std::vector<float> verts, frame;
+         float inner = std::min(std::max(g_cfg.mirrorScale, 0.5f), 1.0f);
+         // MirrorOffset (per car, F4 > Menu and testing) moves it toward the driver or back into the glass.
+-        GlassVertices(glass, mat, frame, 0.006f + g_cfg.mirrorOffset, 1.0f);
+-        GlassVertices(glass, mat, verts, 0.010f + g_cfg.mirrorOffset, inner);
++        char name[65] = {};
++        memcpy(name, info.name, 64);
++        bool symmetric = CarOf(name) == "PUNTO";
++        GlassVertices(glass, mat, frame, 0.006f + g_cfg.mirrorOffset, 1.0f, symmetric);
++        GlassVertices(glass, mat, verts, 0.010f + g_cfg.mirrorOffset, inner, symmetric);
+         if (g_cfg.mirrorFlip)
+             for (size_t i = 3; i < verts.size(); i += 5) verts[i] = 1.0f - verts[i];
+         uint8_t* plat = At<uint8_t*>(solid, kSolidPlat);
+@@ -1805,6 +1949,59 @@ V3 ToWorld(const V3& p, const float* m) {
+             p.x * m[2] + p.y * m[6] + p.z * m[10] + m[14]};
+ }
+ 
++// Car coordinates: x forward, y left, z up. Require the entire triangle inside the
++// front glazing region and a sloping front-facing normal, never the roof or side windows.
++bool WindshieldCandidate(const TriRef& t, const V3& head) {
++    for (const V3& p : t.p)
++        if (p.x < head.x + 0.20f || p.x > head.x + 1.65f || fabsf(p.y) > 0.92f ||
++            p.z < head.z - 0.40f || p.z > head.z + 0.50f) return false;
++    V3 n = Cross(Sub(t.p[1], t.p[0]), Sub(t.p[2], t.p[0]));
++    float len = sqrtf(Dot(n, n));
++    return len > 1e-6f && fabsf(n.x) > len * 0.35f && fabsf(n.z) > len * 0.20f && fabsf(n.y) < len * 0.55f;
++}
++
++void NoteWindshield(uint8_t* solid, SolidInfo& info, const float* m) {
++    // Do not add glass to traffic, exterior cameras or a player car not currently seated.
++    if (!s_seatedConn || s_curConn != s_seatedConn) return;
++    int eyeSerial = s_hashSerial * 4 + s_eyeIndex;
++    if (info.windshieldEye == eyeSerial) return;
++    info.windshieldEye = eyeSerial;
++    std::string name = SolidName(info);
++    const HeadPos* head = CarHead(name.c_str());
++    if (!head) return; // retry after the driver has been measured
++    if (info.windshieldGen != s_editsGen || info.trisDirty) {
++        if (info.trisDirty) BuildTris(solid, info);
++        info.windshield.clear();
++        const EditSet& e = EditsFor(name);
++        std::vector<const TriRef*> automatic;
++        float area = 0, lo = 1e9f, hi = -1e9f;
++        bool body = name.find("_BODY_") != std::string::npos || name.find("_WINDOW") != std::string::npos;
++        for (const TriRef& t : info.tris) {
++            if (body && !t.hidden && WindshieldCandidate(t, {head->v[0], head->v[1], head->v[2]})) {
++                automatic.push_back(&t);
++                V3 n = Cross(Sub(t.p[1], t.p[0]), Sub(t.p[2], t.p[0]));
++                area += sqrtf(Dot(n, n)) * 0.5f;
++                for (const V3& p : t.p) { lo = std::min(lo, p.y); hi = std::max(hi, p.y); }
++            }
++        }
++        std::set<uint64_t> ids;
++        if (area > 0.18f && hi - lo > 0.70f)
++            for (auto t : automatic) ids.insert(t->id);
++        ids.insert(e.windshield.begin(), e.windshield.end());
++        for (const TriRef& t : info.tris)
++            if (ids.count(t.id) && !e.noWindshield.count(t.id) && !e.hide.count(t.id) && !e.black.count(t.id))
++                info.windshield.insert(info.windshield.end(), t.p, t.p + 3);
++        info.windshieldGen = s_editsGen;
++        Log("windshield: %s: %u interior glass triangles", name.c_str(), (unsigned)info.windshield.size() / 3);
++    }
++    std::vector<float> xyz;
++    for (const V3& p : info.windshield) {
++        V3 w = ToWorld(p, m);
++        xyz.insert(xyz.end(), {w.x, w.y, w.z});
++    }
++    if (!xyz.empty()) D3D_AddWindshield(info.ib, xyz.data(), (int)xyz.size() / 9);
++}
++
+ // Model-space triangles to the world for the current eye, each vertex lifted `lift` m toward the
+ // eyes (last frame's gaze position: the game camera's own is not where the eyes are).
+ void AddColor(void* ib, const std::vector<V3>& tris, const float* m, float lift, uint32_t argb) {
+@@ -2035,6 +2232,38 @@ void CentreWheelPivot() {
+     Log("cockpit: steering wheel turning centre: no steering wheel for %s", car.c_str());
+ }
+ 
++std::string SelectionText(const std::string& name, const std::vector<uint64_t>& ids) {
++    std::set<uint64_t> unique(ids.begin(), ids.end());
++    std::string text = "Solid: " + name + "\r\nTriangles (sorted vertex indices):\r\n";
++    for (uint64_t id : unique) {
++        char line[64];
++        sprintf(line, "%u.%u.%u\r\n", (unsigned)((id >> 32) & 0xffff),
++                (unsigned)((id >> 16) & 0xffff), (unsigned)(id & 0xffff));
++        text += line;
++    }
++    return text;
++}
++
++void CopySelection() {
++    auto it = s_solids.find(s_pick.solid);
++    if (!s_pick.solid || it == s_solids.end() || SolidName(it->second) != s_pick.name || s_brush.empty()) {
++        Log("editor: nothing picked to copy");
++        return;
++    }
++    std::string text = SelectionText(s_pick.name, s_brush);
++    HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
++    if (!data) { Log("editor: clipboard allocation failed"); return; }
++    void* p = GlobalLock(data);
++    if (!p) { GlobalFree(data); Log("editor: clipboard lock failed"); return; }
++    memcpy(p, text.c_str(), text.size() + 1);
++    GlobalUnlock(data);
++    if (!OpenClipboard(nullptr)) { GlobalFree(data); Log("editor: clipboard is unavailable"); return; }
++    bool copied = EmptyClipboard() && SetClipboardData(CF_TEXT, data);
++    CloseClipboard();
++    if (!copied) GlobalFree(data);
++    Log("editor: %s", copied ? "triangle IDs copied to clipboard" : "clipboard copy failed");
++}
++
+ // The F4 page's command for the selection (see Config::editCommand).
+ void RunEditCommand(int cmd) {
+     if (cmd == 6) {
+@@ -2088,15 +2317,28 @@ void RunEditCommand(int cmd) {
+                 wheel = true;
+                 break;
+             case 5:
++                e.windshield.erase(id);
++                e.noWindshield.erase(id);
+                 wheel |= e.wheel.erase(id) + e.noWheel.erase(id) > 0;
+                 e.hide.erase(id);
+                 e.black.erase(id);
+                 if (info.driver) e.show.insert(id);   // drawn even inside the seated driver's hidden arms / head
+                 break;
++            case 13:
++                e.windshield.insert(id);
++                e.noWindshield.erase(id);
++                e.hide.erase(id);
++                e.black.erase(id);
++                break;
++            case 14:
++                e.noWindshield.insert(id);
++                e.windshield.erase(id);
++                break;
+         }
+     }
+     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
+-    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), kWhat[cmd]);
++    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(),
++        cmd == 13 ? "added to windshield" : cmd == 14 ? "removed from windshield" : kWhat[cmd]);
+     s_editsGen++;
+     SaveEdits(s_pick.name);
+     ApplyEditsTo(s_pick.name, wheel);
+@@ -2215,6 +2457,7 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
+         D3D_AddDash(At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer), origin, right, up, toEye);
+     }
+     if (player) NoteEditor(solid, *info, m);
++    if (player) NoteWindshield(solid, *info, m);
+     Driver* d = info ? info->driver : nullptr;
+     if (!d || !d->ok || !m) return entry;
+     const float* h = d->head;
+@@ -2495,9 +2738,10 @@ void Cockpit_EndFrame() {
+     int cmd = (int)lrintf(g_cfg.editCommand);
+     if (cmd) {
+         g_cfg.editCommand = 0;
+-        if (cmd >= 1 && cmd <= 6) RunEditCommand(cmd);
++        if ((cmd >= 1 && cmd <= 6) || cmd == 13 || cmd == 14) RunEditCommand(cmd);
+         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
+         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
++        if (cmd == 12) CopySelection();
+         if (cmd == 9) {   // picking cancelled: no selection
+             s_pick = Pick();
+             s_brush.clear();
+diff --git a/vr/src/common.cpp b/vr/src/common.cpp
+index 5f2f1c7..e07d90c 100644
+--- a/vr/src/common.cpp
++++ b/vr/src/common.cpp
+@@ -1,4 +1,5 @@
+ #include "common.h"
++#include <algorithm>
+ #include <stdio.h>
+ #include <stdarg.h>
+ #include <stdlib.h>
+@@ -164,11 +165,14 @@ void LoadConfig() {
+     c.dashDepth = ReadFloat(ini, "DashDepth", c.dashDepth);
+     c.dashYaw = ReadFloat(ini, "DashYaw", c.dashYaw);
+     c.dashPitch = ReadFloat(ini, "DashPitch", c.dashPitch);
++    c.dashRoll = ReadFloat(ini, "DashRoll", c.dashRoll);
+     c.dashBox = ReadFloat(ini, "DashBox", c.dashBox);
+     c.dashScreenW = ReadFloat(ini, "DashScreenW", c.dashScreenW);
+     c.dashGlass = ReadFloat(ini, "DashGlass", c.dashGlass);
+     c.dashGlassDepth = ReadFloat(ini, "DashGlassDepth", c.dashGlassDepth);
+     c.dashReflect = ReadFloat(ini, "DashReflect", c.dashReflect);
++    c.windshieldTransparency = std::max(0.0f, std::min(1.0f, ReadFloat(ini, "WindshieldTransparency", c.windshieldTransparency)));
++    c.windshieldReflections = std::max(0.0f, std::min(1.0f, ReadFloat(ini, "WindshieldReflections", c.windshieldReflections)));
+     {
+         char col[32];
+         GetPrivateProfileStringA("VR", "DashColor", "3C3F44", col, sizeof(col), ini);
+diff --git a/vr/src/common.h b/vr/src/common.h
+index 5072082..422391e 100644
+--- a/vr/src/common.h
++++ b/vr/src/common.h
+@@ -73,6 +73,7 @@ struct Config {
+     float dashDepth = 0.0f;          // ... and toward the driver (m) from 3 cm off the gauge cluster
+     float dashYaw = 0.0f;            // ... turned to the right (+) / left (-) about its own up axis, degrees
+     float dashPitch = 0.0f;          // ... tilted to face up (+) / down (-) about its own right axis, degrees
++    float dashRoll = 0.0f;           // clockwise (+) as viewed by the driver, degrees
+     // Each dashboard element (DASH_EL_*): x right, y up (m, at zoom 1, from the panel's anchor) and
+     // size (1 = the HUD's own scale, 0 = hidden). x/y NaN = automatic layout. F4 > VR > Adjust dashboard;
+     // shared by all cars in [DashLayout] Default.
+@@ -96,6 +97,8 @@ struct Config {
+     float dashGlass = 0.05f;              // the glass sheen over the display and its elements: its opacity (0 = none)
+     float dashGlassDepth = 0.01f;         // ... how far in front of the display (m)
+     float dashReflect = 0.05f;             // ... the world (the rear view picture) reflected in it: strength (0 = none)
++    float windshieldTransparency = 0.97f; // interior glass transmission, 0..1
++    float windshieldReflections = 0.08f;  // environment reflection strength, 0..1
+     float wheelPivot[2] = {0, 0};         // the steering wheel's turning centre moved right, up in its plane (m; per car, [WheelPivot])
+     float dashScreenW = 0.30f, dashScreenH = 0.13f;   // ... its size (m, at zoom 1; per car in [Dash]), centred on the panel's anchor
+     // Live from F4, not saved: the Adjust dashboard page is open (the panel shows with the menu open,
+@@ -107,7 +110,7 @@ struct Config {
+     // the triangles along the gaze (0 = nearest), the selection's size (0 one triangle, 1..3 within
+     // 2 / 5 / 10 cm, 4 the connected piece, 5 the whole draw entry); out: triangles selected.
+     // Commands besides those above: 9 drop the selection, 10 fit the steering wheel's turning centre,
+-    // 11 reset it.
++    // 11 reset it, 12 copy IDs, 13 add to windshield, 14 remove from windshield.
+     float editPicking = 0, editLayer = 0, editMode = 0, editPicked = 0;
+     float headSize = 0.25f;          // how far down from the top of the driver model the head reaches (m)
+     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye
+diff --git a/vr/src/d3d9hook.h b/vr/src/d3d9hook.h
+index c202611..8d9eccf 100644
+--- a/vr/src/d3d9hook.h
++++ b/vr/src/d3d9hook.h
+@@ -93,6 +93,8 @@ void D3D_EndDashEye();
+ // depth (black triangles of the triangle editor, the car's own gauges), translucent ones don't
+ // (the editor's highlight). One batch per index buffer and colour per eye.
+ void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32_t argb);
++// Interior windshield, world-space triangle list. Drawn after the scene against its depth.
++void D3D_AddWindshield(void* indexBuffer, const float* xyz, int triangles);
+ // Triangles (world) drawn over the finished eye right away, without depth test, in one colour.
+ void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb);
+ 
+diff --git a/vr/src/d3d9proxy.cpp b/vr/src/d3d9proxy.cpp
+index 0e89095..b965972 100644
+--- a/vr/src/d3d9proxy.cpp
++++ b/vr/src/d3d9proxy.cpp
+@@ -493,17 +493,12 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
+ 
+ // Texture coordinates across the glass for the glass's own vertices (in the game's own vertex
+ // buffer, once per buffer and base): u along the glass within the job's range, v top to bottom.
+-static void MapGlassVertices(MirrorGlassJob& j, INT base) {
++struct SavedGlassUV { UINT offset; float uv[2]; };
++static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlassUV>& saved) {
+     if (j.parts.empty()) return;
+     IDirect3DVertexBuffer9* vb = nullptr;
+     UINT offset = 0, stride = 0;
+     if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
+-    for (auto& m : j.mapped)
+-        if (m.first == vb && m.second == base) {
+-            vb->Release();
+-            return;
+-        }
+-    j.mapped.push_back({vb, base});
+     int posOfs = -1, uvOfs = -1;
+     IDirect3DVertexDeclaration9* decl = nullptr;
+     if (SUCCEEDED(s_dev->GetVertexDeclaration(&decl)) && decl) {
+@@ -544,6 +539,8 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base) {
+             UINT i = v - lo;
+             const float* pos = (const float*)(p + i * stride + posOfs);
+             float* uv = (float*)(p + i * stride + uvOfs);
++            SavedGlassUV old = {offset + (firstVertex + i) * stride + (UINT)uvOfs, {uv[0], uv[1]}};
++            saved.push_back(old);
+             float pu = pos[0] * b[3] + pos[1] * b[4] + pos[2] * b[5], pv = pos[0] * b[6] + pos[1] * b[7] + pos[2] * b[8];
+             float s = b[9] > 0 ? (pu - (cu - b[9])) / (2 * b[9]) : 0.5f, t = b[10] > 0 ? ((cv + b[10]) - pv) / (2 * b[10]) : 0.5f;
+             s = s < 0 ? 0 : s > 1 ? 1 : s;
+@@ -558,6 +555,23 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base) {
+     if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
+ }
+ 
++// The body and mirror may share vertices. Restore their original texture coordinates after
++// the mirror draw so subsequent body draws never inherit the rear-view mapping.
++static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
++    if (saved.empty()) return;
++    IDirect3DVertexBuffer9* vb = nullptr;
++    UINT offset = 0, stride = 0;
++    if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
++    for (auto it = saved.rbegin(); it != saved.rend(); ++it) {
++        void* p = nullptr;
++        if (SUCCEEDED(vb->Lock(it->offset, sizeof(it->uv), &p, 0)) && p) {
++            memcpy(p, it->uv, sizeof(it->uv));
++            vb->Unlock();
++        }
++    }
++    vb->Release();
++}
++
+ 
+ // The glass's draw: its own texture (sampler 0, a 2D texture; the car shader's environment cube is
+ // on sampler 1) is the rear view for this draw.
+@@ -569,7 +583,8 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
+     for (size_t i : jobs->second) {
+         MirrorGlassJob& j = s_glassJobs[i];
+         if (j.first != start) continue;
+-        MapGlassVertices(j, base);
++        std::vector<SavedGlassUV> saved;
++        MapGlassVertices(j, base, saved);
+         int stage = -1;
+         IDirect3DBaseTexture9* t0 = nullptr;
+         real->GetTexture(0, &t0);
+@@ -591,6 +606,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
+                     if (t) t->Release();
+                 }
+             }
++            RestoreGlassVertices(saved);
+             return false;
+         }
+         IDirect3DBaseTexture9* orig = nullptr;
+@@ -615,6 +631,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
+             real->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+         }
+         *hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
++        RestoreGlassVertices(saved);
+         if (map) {
+             real->SetPixelShaderConstantF(0, oldC, 2);
+             real->SetSamplerState(0, D3DSAMP_ADDRESSU, oldAddr[0]);
+@@ -1139,9 +1156,29 @@ static std::vector<ColorTris> s_colorTris;
+ static std::unordered_map<void*, std::vector<size_t>> s_colorTrisByIb;
+ static bool s_colorEye;
+ 
++struct WindshieldDraw { void* ib; std::vector<float> xyz; };
++static std::vector<WindshieldDraw> s_windshields;
++static IDirect3DBaseTexture9* s_windshieldCube;
++static LazyShader s_windshieldShader = {"interior windshield",
++    "samplerCUBE env : register(s0); float4 k : register(c0);"
++    "float4 main(float3 r : TEXCOORD0, float f : TEXCOORD1) : COLOR {"
++    " float a = saturate(k.y * k.z * (0.15 + 0.85 * f));"
++    " float opacity = 1 - k.x; float total = opacity + a * (1 - opacity);"
++    " float3 c = k.z * texCUBE(env, r).rgb;"
++    " return float4((float3(0.12,0.17,0.18) * opacity + c * a * (1-opacity)) / max(total,0.00001), total); }"};
++
++void D3D_AddWindshield(void* ib, const float* xyz, int triangles) {
++    if (!s_colorEye || !ib || triangles <= 0) return;
++    for (const auto& w : s_windshields) if (w.ib == ib) return;
++    s_windshields.push_back({ib, std::vector<float>(xyz, xyz + triangles * 9)});
++}
++
+ static IDirect3DTexture9* s_glassTex;          // the glass sheen (white, its alpha the sheen)
+ 
+ static void ReleaseDash() {
++    if (s_windshieldCube) s_windshieldCube->Release();
++    s_windshieldCube = nullptr;
++    s_windshields.clear();
+     if (s_glassTex) s_glassTex->Release();
+     s_glassTex = nullptr;
+     if (s_dashSurf) s_dashSurf->Release();
+@@ -1186,6 +1223,9 @@ void D3D_BeginDashEye(bool on, const float* view, const float* proj) {
+     memcpy(&s_dashEye.proj, proj, sizeof(s_dashEye.proj));
+     s_colorTris.clear();
+     s_colorTrisByIb.clear();
++    s_windshields.clear();
++    if (s_windshieldCube) s_windshieldCube->Release();
++    s_windshieldCube = nullptr;
+     s_colorEye = true;
+ }
+ 
+@@ -1592,6 +1632,18 @@ static void DrawColorTris(ColorTris& c) {
+ // After the first draw from the interior's index buffer in the player view, once per eye (its
+ // picture is blended: drawn again it would grow more opaque); the same for coloured triangles.
+ static void AfterModelDrawDash() {
++    if (!s_windshields.empty() && DrawingPlayerView()) {
++        for (const auto& w : s_windshields) if (w.ib == s_curIndices) {
++            if (!s_dashEye.ds) s_dev->GetDepthStencilSurface(&s_dashEye.ds);
++            if (!s_windshieldCube) for (DWORD stage = 0; stage < 8; stage++) {
++                IDirect3DBaseTexture9* tex = nullptr;
++                s_dev->GetTexture(stage, &tex);
++                if (tex && tex->GetType() == D3DRTYPE_CUBETEXTURE) { s_windshieldCube = tex; break; }
++                if (tex) tex->Release();
++            }
++            break;
++        }
++    }
+     if ((!s_colorEye || s_colorTris.empty()) && (!s_dashEye.on || !s_dashEye.added || s_dashEye.drawn)) return;
+     auto colorJobs = s_colorTrisByIb.find(s_curIndices);
+     if (s_colorEye && colorJobs != s_colorTrisByIb.end()) {
+@@ -1640,7 +1692,47 @@ void D3D_EndDashEye() {
+     s_dev->GetDepthStencilSurface(&curDs);
+     s_dev->SetRenderTarget(0, bb);
+     s_dev->SetDepthStencilSurface(ds);
+-    DrawDash();
++    if (s_dashEye.on && s_dashEye.drawn) DrawDash();
++    IDirect3DPixelShader9* glass = !s_windshields.empty() ? Shader(s_windshieldShader) : nullptr;
++    IDirect3DStateBlock9* saved = glass ? SavedStateBlock() : nullptr;
++    if (saved) {
++        saved->Capture();
++        SetPanelState(s_dashEye.view, s_dashEye.proj);
++        s_dev->SetPixelShader(glass);
++        s_dev->SetTexture(0, s_windshieldCube);
++        s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
++        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
++        float bias = -0.00001f;
++        s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
++        s_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX2 | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEXCOORDSIZE1(1));
++        float k[4] = {g_cfg.windshieldTransparency, g_cfg.windshieldReflections, s_windshieldCube ? 1.0f : 0.0f, 0};
++        s_dev->SetPixelShaderConstantF(0, k, 1);
++        float eye[3]; EyePos(s_dashEye.view, eye);
++        struct Vertex { float p[3], r[3], fresnel; };
++        for (const auto& w : s_windshields) {
++            std::vector<Vertex> vertices;
++            for (size_t t = 0; t + 8 < w.xyz.size(); t += 9) {
++                const float* p = w.xyz.data() + t;
++                float a[3], b[3], n[3];
++                for (int j = 0; j < 3; j++) { a[j] = p[3+j]-p[j]; b[j] = p[6+j]-p[j]; }
++                n[0]=a[1]*b[2]-a[2]*b[1]; n[1]=a[2]*b[0]-a[0]*b[2]; n[2]=a[0]*b[1]-a[1]*b[0];
++                float len = sqrtf(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
++                if (len < 1e-8f) continue;
++                for (float& v : n) v /= len;
++                for (int v = 0; v < 3; v++) {
++                    Vertex out = {}; float d[3], length = 0, dot = 0;
++                    for (int j = 0; j < 3; j++) { out.p[j]=p[v*3+j]; d[j]=out.p[j]-eye[j]; length+=d[j]*d[j]; }
++                    length=sqrtf(length);
++                    for (int j = 0; j < 3; j++) { d[j]/=std::max(length,0.00001f); dot+=d[j]*n[j]; }
++                    for (int j = 0; j < 3; j++) out.r[j]=d[j]-2*dot*n[j];
++                    out.fresnel=powf(1-std::min(1.0f,fabsf(dot)),5);
++                    vertices.push_back(out);
++                }
++            }
++            if (!vertices.empty()) s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)vertices.size()/3, vertices.data(), sizeof(Vertex));
++        }
++        saved->Apply();
++    }
+     s_dev->SetRenderTarget(0, rt);
+     s_dev->SetDepthStencilSurface(curDs);
+     if (rt) rt->Release();
+@@ -2537,7 +2629,7 @@ public:
+         CountEyeDrawCall();
+         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
+         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
+-        bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
++        bool dashJobs = (s_colorEye && (!s_colorTris.empty() || !s_windshields.empty())) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
+         if (!mirrorJobs && !wheelJobs && !dashJobs) return real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+         HRESULT hr;
+         if (!DrawMirrorGlassNative(real, type, base, minIndex, verts, start, count, &hr) &&
+@@ -2770,11 +2862,14 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
+     if (!strcmp(name, "DashDepth")) return &g_cfg.dashDepth;
+     if (!strcmp(name, "DashYaw")) return &g_cfg.dashYaw;
+     if (!strcmp(name, "DashPitch")) return &g_cfg.dashPitch;
++    if (!strcmp(name, "DashRoll")) return &g_cfg.dashRoll;
+     if (!strcmp(name, "DashBox")) return &g_cfg.dashBox;
+     if (!strcmp(name, "DashScreenW")) return &g_cfg.dashScreenW;
+     if (!strcmp(name, "DashGlass")) return &g_cfg.dashGlass;
+     if (!strcmp(name, "DashGlassDepth")) return &g_cfg.dashGlassDepth;
+     if (!strcmp(name, "DashReflect")) return &g_cfg.dashReflect;
++    if (!strcmp(name, "WindshieldTransparency")) return &g_cfg.windshieldTransparency;
++    if (!strcmp(name, "WindshieldReflections")) return &g_cfg.windshieldReflections;
+     if (!strcmp(name, "WheelPivotRight")) return &g_cfg.wheelPivot[0];
+     if (!strcmp(name, "WheelPivotUp")) return &g_cfg.wheelPivot[1];
+     if (!strcmp(name, "DashScreenH")) return &g_cfg.dashScreenH;
+diff --git a/vr/tests/cockpit_tests.cpp b/vr/tests/cockpit_tests.cpp
+index ee977c3..3eba171 100644
+--- a/vr/tests/cockpit_tests.cpp
++++ b/vr/tests/cockpit_tests.cpp
+@@ -16,6 +16,7 @@ void D3D_RegisterWheelDraw(void*, int) {}
+ void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
+ void D3D_AddColorTris(void*, const float*, int, uint32_t) {}
+ void D3D_DrawOverlay(const float*, int, uint32_t) {}
++void D3D_AddWindshield(void*, const float*, int) {}
+ 
+ static uint8_t connData[0x500], anchorData[0xD0], moverData[16];
+ static void* moverVtbl[8];
+@@ -32,6 +33,30 @@ static void Check(bool ok, const char* message) {
+ }
+ static void Near(float a, float b, const char* message) { Check(fabsf(a - b) < 0.0002f, message); }
+ static void TestWheelOctants() {
++    TriRef glass = {};
++    glass.p[0] = {0.5f, -0.7f, 1.0f};
++    glass.p[1] = {0.5f, 0.7f, 1.0f};
++    glass.p[2] = {0.9f, 0.7f, 1.5f};
++    Check(WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "front sloped glass detected");
++    std::swap(glass.p[0], glass.p[1]);
++    Check(WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "windshield detection accepts either winding");
++    for (V3& p : glass.p) p.x -= 2;
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "rear windows excluded");
++    for (V3& p : glass.p) { p.x += 2; p.z = 1.5f; }
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "roof excluded");
++    glass.p[0] = {0.5f, 0.8f, 1.0f};
++    glass.p[1] = {1.0f, 0.8f, 1.0f};
++    glass.p[2] = {0.5f, 0.8f, 1.5f};
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "side window excluded");
++    glass.p[2] = glass.p[0];
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "degenerate triangle excluded");
++    EditSet original;
++    original.windshield.insert(TriId(7, 8, 9));
++    EditSet edited = original;
++    edited.windshield.erase(TriId(7, 8, 9));
++    edited.noWindshield.insert(TriId(7, 8, 9));
++    edited = original;
++    Check(edited.windshield.count(TriId(7, 8, 9)) && edited.noWindshield.empty(), "undo snapshot retains windshield overrides");
+     for (int x = -20; x <= 20; x++) {
+         for (int y = -20; y <= 20; y++) {
+             float du = x * 0.13f, dw = y * 0.17f;
+@@ -155,6 +180,33 @@ static void TestReloadedDriver() {
+     Check(s_retired.empty(), "retired drivers freed at the end of the frame");
+ }
+ 
++static void TestHiddenMirrorGeometry() {
++    static uint8_t solid[0x100], plat[0x40], entry[kEntrySize], format[16];
++    static float verts[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
++    static uint16_t indices[] = {0, 1, 1};
++    static FakeIb ib;
++    At<uint8_t*>(solid, kSolidPlat) = plat;
++    At<int>(plat, kPlatNumEntries) = 1;
++    At<uint8_t*>(plat, kPlatEntries) = entry;
++    At<uint16_t*>(plat, kPlatIndices) = indices;
++    At<IDirect3DIndexBuffer9*>(plat, kPlatIndexBuffer) = &ib;
++    At<int>(plat, kPlatNumIndices) = 3;
++    At<int>(format, 8) = 12;
++    At<uint8_t*>(entry, kEntryFormat) = format;
++    At<int>(entry, kEntryTris) = 1;
++    At<float*>(entry, kEntryVertices) = verts;
++    At<int>(entry, kEntryVertexBytes) = sizeof(verts);
++    s_solids[solid].hidden[TriId(0, 1, 2)] = {0, 1, 2};
++    std::vector<V3> triangles;
++    SolidTriangles(solid, triangles, [](const V3*) { return true; });
++    Check(triangles.size() == 3 && triangles[2].y == 1 && indices[2] == 1,
++          "mirror detection sees hidden original without restoring its draw");
++    s_solids.erase(solid);
++    triangles.clear();
++    SolidTriangles(solid, triangles, [](const V3*) { return true; });
++    Check(triangles.empty(), "unrecognized degenerate triangle is ignored");
++}
++
+ // A seated driver with a body, an arm and a head: triangles reordered body, arm, head, and the
+ // entry drawn as the ranges the settings leave in.
+ static void TestArms() {
+@@ -397,6 +449,31 @@ static void TestMirrorGlass() {
+         MirrorGlass pr = mirror::FindGlass(punto, false, mirror::GlassKind::RearView);
+         Check(pr.ok && fabsf(2 * pr.halfU - 0.2f) < 0.01f && fabsf(pr.centre.z - 1.05f) < 0.01f,
+               "rear view mirror found without a far piece in its plane");
++        // An asymmetric corner must be clipped equally on both sides without losing the mirror.
++        MirrorGlass asym = pr;
++        V3 c = asym.centre;
++        auto point = [c, &asym](float x, float y) {
++            return V3{c.x + asym.u.x*x + asym.v.x*y, c.y + asym.u.y*x + asym.v.y*y,
++                      c.z + asym.u.z*x + asym.v.z*y};
++        };
++        V3 poly[] = {point(-0.1f,-0.034f), point(0.1f,-0.034f), point(0.1f,0.034f),
++                     point(-0.05f,0.034f), point(-0.1f,0.01f)};
++        asym.tris.clear();
++        for (int i = 1; i < 4; i++) { asym.tris.push_back(poly[0]); asym.tris.push_back(poly[i]); asym.tris.push_back(poly[i+1]); }
++        std::vector<float> sym;
++        GlassVertices(asym, Identity(), sym, 0.0f, 1.0f, true);
++        Check(sym.size() >= 15, "symmetric Punto mirror remains drawable");
++        for (size_t i = 0; i < sym.size(); i += 5) {
++            V3 p = {sym[i], sym[i+1], sym[i+2]};
++            float x = mirror::Dot(mirror::Sub(p, c), asym.u), y = mirror::Dot(mirror::Sub(p, c), asym.v);
++            bool matched = false;
++            for (size_t j = 0; j < sym.size(); j += 5) {
++                V3 q = {sym[j], sym[j+1], sym[j+2]};
++                if (fabsf(mirror::Dot(mirror::Sub(q, c), asym.u) + x) < 0.0001f &&
++                    fabsf(mirror::Dot(mirror::Sub(q, c), asym.v) - y) < 0.0001f) matched = true;
++            }
++            Check(matched, "Punto outline has mirrored vertices");
++        }
+         const float head[3] = {-0.2f, 0.37f, 0.97f};
+         V3 at[3] = {{0.25f, 0.05f, 1.0f}, {0.3f, -0.05f, 1.0f}, {0.25f, 0.0f, 1.05f}};
+         V3 ahead[3] = {{1.2f, 0.0f, 1.0f}, {1.3f, 0.0f, 1.0f}, {1.2f, 0.0f, 1.05f}};
+@@ -522,6 +599,18 @@ static void TestDash() {
+     Near(t[2], w.dashUp.z, "pitched plane faces up");
+     Near(r[1], w.dashRight.y, "pitch keeps right");
+     g_cfg.dashPitch = 0;
++    g_cfg.dashRoll = 90;
++    DashBasis(w, m, o, r, u, t);
++    Near(r[2], -w.dashUp.z, "clockwise roll turns right down");
++    Near(u[1], w.dashRight.y, "clockwise roll turns up right");
++    Near(t[0], w.dashN.x, "roll keeps the panel normal");
++    g_cfg.dashRoll = -90;
++    DashBasis(w, m, o, r, u, t);
++    Near(r[2], w.dashUp.z, "counterclockwise roll turns right up");
++    g_cfg.dashRoll = 0.1f;
++    DashBasis(w, m, o, r, u, t);
++    Near(r[2], -w.dashUp.z * sinf(0.1f * 0.017453293f), "roll supports tenth-degree steps");
++    g_cfg.dashRoll = 0;
+ }
+ 
+ // The HUD and dashboard panel placement stay per car, while the dashboard element layout is shared.
+@@ -557,6 +646,9 @@ static void TestPerCarDefaults() {
+ 
+ // Triangle ids ignore order and winding; the edits file's text round-trips.
+ static void TestEditsText() {
++    Check(SelectionText("CAR_MIRROR", {TriId(9, 2, 5), TriId(3, 1, 2), TriId(5, 9, 2)}) ==
++          "Solid: CAR_MIRROR\r\nTriangles (sorted vertex indices):\r\n1.2.3\r\n2.5.9\r\n",
++          "clipboard selection includes solid and unique sorted triangle IDs");
+     Check(TriId(5, 2, 9) == TriId(9, 5, 2) && TriId(2, 9, 5) == TriId(2, 5, 9), "triangle id ignores order");
+     Check(TriId(1, 2, 3) != TriId(1, 2, 4), "triangle ids differ");
+     auto t = ParseTris("1.2.3, 40.50.60,7.8.9");
+@@ -566,6 +658,18 @@ static void TestEditsText() {
+ }
+ 
+ int main() {
++    TestHiddenMirrorGeometry();
++    Check(CarreraSide("CARRERAGT_KIT00_LEFT_SIDE_MIRROR_A") == 0 && CarreraSide("CARRERAGT_KIT00_RIGHT_SIDE_MIRROR_A") == 1, "Carrera solid sides");
++    Check(CarreraSide("CARRERAGT_KIT01_LEFT_SIDE_MIRROR_A") == -1 && CarreraSide("CAMARO_KIT00_BODY_A") == -1, "override scoped to stock Carrera solids");
++    const uint16_t left[] = {271, 254, 252}, right[] = {255, 254, 252}, housing[] = {251, 252, 253};
++    Check(CarreraTriangle(0, left) && !CarreraTriangle(1, left), "left selection ignores winding and remains side-specific");
++    Check(CarreraTriangle(1, right) && !CarreraTriangle(0, right), "right selection remains side-specific");
++    Check(!CarreraTriangle(0, housing) && !CarreraTriangle(1, housing), "housing not selected");
++    const uint16_t camaro[] = {7017, 7005, 7003}, camaroBody[] = {7003, 7004, 7018};
++    const uint16_t camaroLeft[] = {9178, 9166, 9164};
++    Check(CamaroTriangle(1, camaro) && !CamaroTriangle(0, camaro), "Camaro right selection ignores winding and side-specific");
++    Check(CamaroTriangle(0, camaroLeft) && !CamaroTriangle(1, camaroLeft), "Camaro left selection ignores winding and side-specific");
++    Check(!CamaroTriangle(1, camaroBody) && !CamaroTriangle(0, camaroBody), "Camaro body triangle excluded");
+     TestWheelOctants();
+     TestDash();
+     TestEditsText();

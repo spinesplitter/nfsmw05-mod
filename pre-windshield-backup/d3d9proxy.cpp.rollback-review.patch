@@ -1,0 +1,130 @@
+diff --git "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/d3d9proxy.cpp" "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/d3d9proxy.cpp"
+index bf314a1..b965972 100644
+--- "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/src/d3d9proxy.cpp"	
++++ "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/src/d3d9proxy.cpp"	
+@@ -1156,9 +1156,29 @@ static std::vector<ColorTris> s_colorTris;
+ static std::unordered_map<void*, std::vector<size_t>> s_colorTrisByIb;
+ static bool s_colorEye;
+ 
++struct WindshieldDraw { void* ib; std::vector<float> xyz; };
++static std::vector<WindshieldDraw> s_windshields;
++static IDirect3DBaseTexture9* s_windshieldCube;
++static LazyShader s_windshieldShader = {"interior windshield",
++    "samplerCUBE env : register(s0); float4 k : register(c0);"
++    "float4 main(float3 r : TEXCOORD0, float f : TEXCOORD1) : COLOR {"
++    " float a = saturate(k.y * k.z * (0.15 + 0.85 * f));"
++    " float opacity = 1 - k.x; float total = opacity + a * (1 - opacity);"
++    " float3 c = k.z * texCUBE(env, r).rgb;"
++    " return float4((float3(0.12,0.17,0.18) * opacity + c * a * (1-opacity)) / max(total,0.00001), total); }"};
++
++void D3D_AddWindshield(void* ib, const float* xyz, int triangles) {
++    if (!s_colorEye || !ib || triangles <= 0) return;
++    for (const auto& w : s_windshields) if (w.ib == ib) return;
++    s_windshields.push_back({ib, std::vector<float>(xyz, xyz + triangles * 9)});
++}
++
+ static IDirect3DTexture9* s_glassTex;          // the glass sheen (white, its alpha the sheen)
+ 
+ static void ReleaseDash() {
++    if (s_windshieldCube) s_windshieldCube->Release();
++    s_windshieldCube = nullptr;
++    s_windshields.clear();
+     if (s_glassTex) s_glassTex->Release();
+     s_glassTex = nullptr;
+     if (s_dashSurf) s_dashSurf->Release();
+@@ -1203,6 +1223,9 @@ void D3D_BeginDashEye(bool on, const float* view, const float* proj) {
+     memcpy(&s_dashEye.proj, proj, sizeof(s_dashEye.proj));
+     s_colorTris.clear();
+     s_colorTrisByIb.clear();
++    s_windshields.clear();
++    if (s_windshieldCube) s_windshieldCube->Release();
++    s_windshieldCube = nullptr;
+     s_colorEye = true;
+ }
+ 
+@@ -1609,6 +1632,18 @@ static void DrawColorTris(ColorTris& c) {
+ // After the first draw from the interior's index buffer in the player view, once per eye (its
+ // picture is blended: drawn again it would grow more opaque); the same for coloured triangles.
+ static void AfterModelDrawDash() {
++    if (!s_windshields.empty() && DrawingPlayerView()) {
++        for (const auto& w : s_windshields) if (w.ib == s_curIndices) {
++            if (!s_dashEye.ds) s_dev->GetDepthStencilSurface(&s_dashEye.ds);
++            if (!s_windshieldCube) for (DWORD stage = 0; stage < 8; stage++) {
++                IDirect3DBaseTexture9* tex = nullptr;
++                s_dev->GetTexture(stage, &tex);
++                if (tex && tex->GetType() == D3DRTYPE_CUBETEXTURE) { s_windshieldCube = tex; break; }
++                if (tex) tex->Release();
++            }
++            break;
++        }
++    }
+     if ((!s_colorEye || s_colorTris.empty()) && (!s_dashEye.on || !s_dashEye.added || s_dashEye.drawn)) return;
+     auto colorJobs = s_colorTrisByIb.find(s_curIndices);
+     if (s_colorEye && colorJobs != s_colorTrisByIb.end()) {
+@@ -1657,7 +1692,47 @@ void D3D_EndDashEye() {
+     s_dev->GetDepthStencilSurface(&curDs);
+     s_dev->SetRenderTarget(0, bb);
+     s_dev->SetDepthStencilSurface(ds);
+-    DrawDash();
++    if (s_dashEye.on && s_dashEye.drawn) DrawDash();
++    IDirect3DPixelShader9* glass = !s_windshields.empty() ? Shader(s_windshieldShader) : nullptr;
++    IDirect3DStateBlock9* saved = glass ? SavedStateBlock() : nullptr;
++    if (saved) {
++        saved->Capture();
++        SetPanelState(s_dashEye.view, s_dashEye.proj);
++        s_dev->SetPixelShader(glass);
++        s_dev->SetTexture(0, s_windshieldCube);
++        s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
++        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
++        float bias = -0.00001f;
++        s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
++        s_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX2 | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEXCOORDSIZE1(1));
++        float k[4] = {g_cfg.windshieldTransparency, g_cfg.windshieldReflections, s_windshieldCube ? 1.0f : 0.0f, 0};
++        s_dev->SetPixelShaderConstantF(0, k, 1);
++        float eye[3]; EyePos(s_dashEye.view, eye);
++        struct Vertex { float p[3], r[3], fresnel; };
++        for (const auto& w : s_windshields) {
++            std::vector<Vertex> vertices;
++            for (size_t t = 0; t + 8 < w.xyz.size(); t += 9) {
++                const float* p = w.xyz.data() + t;
++                float a[3], b[3], n[3];
++                for (int j = 0; j < 3; j++) { a[j] = p[3+j]-p[j]; b[j] = p[6+j]-p[j]; }
++                n[0]=a[1]*b[2]-a[2]*b[1]; n[1]=a[2]*b[0]-a[0]*b[2]; n[2]=a[0]*b[1]-a[1]*b[0];
++                float len = sqrtf(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
++                if (len < 1e-8f) continue;
++                for (float& v : n) v /= len;
++                for (int v = 0; v < 3; v++) {
++                    Vertex out = {}; float d[3], length = 0, dot = 0;
++                    for (int j = 0; j < 3; j++) { out.p[j]=p[v*3+j]; d[j]=out.p[j]-eye[j]; length+=d[j]*d[j]; }
++                    length=sqrtf(length);
++                    for (int j = 0; j < 3; j++) { d[j]/=std::max(length,0.00001f); dot+=d[j]*n[j]; }
++                    for (int j = 0; j < 3; j++) out.r[j]=d[j]-2*dot*n[j];
++                    out.fresnel=powf(1-std::min(1.0f,fabsf(dot)),5);
++                    vertices.push_back(out);
++                }
++            }
++            if (!vertices.empty()) s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)vertices.size()/3, vertices.data(), sizeof(Vertex));
++        }
++        saved->Apply();
++    }
+     s_dev->SetRenderTarget(0, rt);
+     s_dev->SetDepthStencilSurface(curDs);
+     if (rt) rt->Release();
+@@ -2554,7 +2629,7 @@ public:
+         CountEyeDrawCall();
+         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
+         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
+-        bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
++        bool dashJobs = (s_colorEye && (!s_colorTris.empty() || !s_windshields.empty())) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
+         if (!mirrorJobs && !wheelJobs && !dashJobs) return real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+         HRESULT hr;
+         if (!DrawMirrorGlassNative(real, type, base, minIndex, verts, start, count, &hr) &&
+@@ -2793,6 +2868,8 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
+     if (!strcmp(name, "DashGlass")) return &g_cfg.dashGlass;
+     if (!strcmp(name, "DashGlassDepth")) return &g_cfg.dashGlassDepth;
+     if (!strcmp(name, "DashReflect")) return &g_cfg.dashReflect;
++    if (!strcmp(name, "WindshieldTransparency")) return &g_cfg.windshieldTransparency;
++    if (!strcmp(name, "WindshieldReflections")) return &g_cfg.windshieldReflections;
+     if (!strcmp(name, "WheelPivotRight")) return &g_cfg.wheelPivot[0];
+     if (!strcmp(name, "WheelPivotUp")) return &g_cfg.wheelPivot[1];
+     if (!strcmp(name, "DashScreenH")) return &g_cfg.dashScreenH;

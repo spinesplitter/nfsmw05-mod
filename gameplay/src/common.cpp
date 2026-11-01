@@ -230,12 +230,12 @@ void LoadConfig() {
     c.damageStrength = Clamp(ReadFloat("Damage", "Strength", c.damageStrength), 0.0f, 10.0f);
     c.damageSmoke = ReadInt("Damage", "Smoke", 1) != 0;
     c.noHeavySupport = ReadInt("Traffic", "NoHeavySupport", 1) != 0;   // replaces NoSuvCops (which also removed SUV patrols)
+    c.raceTrafficFloor = Clamp(ReadFloat("Traffic", "RaceDensityFloor", 75.0f), -1.0f, 100.0f);
+    c.careerTrafficMultiplier = Clamp(ReadFloat("Traffic", "CareerMultiplier", 3.0f), 1.0f, 3.0f);
+    c.opponentSpeed = Clamp(ReadFloat("Races", "OpponentSpeed", 1.0f), 0.25f, 2.0f);
     c.normalDragRaces = ReadInt("Races", "NormalDragRaces", 1) != 0;
-    c.trafficMultiplier = Clamp(ReadFloat("Traffic", "Multiplier", c.trafficMultiplier), 0.0f, 10.0f);
     c.normalDragHud = ReadInt("Races", "NormalDragHud", 1) != 0;
-    c.disableRubberband = ReadInt("Races", "DisableRubberband", 0) != 0;
     c.tollboothTimeBonus = Clamp(ReadFloat("Races", "TollboothTimeBonus", c.tollboothTimeBonus), 0.0f, 300.0f);
-    c.opponentSpeed = Clamp(ReadFloat("Races", "OpponentSpeed", c.opponentSpeed), 0.25f, 2.0f);
     c.gameTuning = ReadInt("Physics", "GameTuning", 1) != 0;
     c.heatSmokeFrom = Clamp(ReadFloat("Engine", "SmokeFrom", c.heatSmokeFrom), 0.1f, 1.0f);
     c.smokeTrail = Clamp(ReadFloat("Damage", "SmokeTrail", c.smokeTrail), 0.0f, 5.0f);

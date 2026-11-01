@@ -1,0 +1,58 @@
+diff --git "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\gameplay/src/ui.cpp" "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\gameplay/src/ui.cpp"
+index e86a6d3..a8fcb31 100644
+--- "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\gameplay/src/ui.cpp"	
++++ "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\gameplay/src/ui.cpp"	
+@@ -157,6 +157,7 @@ constexpr struct {
+     {MOD_FFB, "SurfaceRumble", 0.0f},
+     {MOD_FFB, "MinForce", 0.0f},
+     {MOD_FFB, "RearSlide", 0.0f},
++    {MOD_VR, "WindshieldTransparency", 0.97f}, {MOD_VR, "WindshieldReflections", 0.08f},
+ };
+ enum {
+     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
+@@ -187,12 +188,15 @@ enum {
+     FFB_SURFACE,
+     FFB_MINFORCE,
+     FFB_REARSLIDE,
++    VR_WINDSHIELDTRANSPARENCY, VR_WINDSHIELDREFLECTIONS,
+     EXT_COUNT
+ };
+ static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
+ // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
+ // made every dashboard setting move another element).
+ constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
++static_assert(KeyIs(kExt[VR_WINDSHIELDTRANSPARENCY].key, "WindshieldTransparency"), "windshield transparency key order");
++static_assert(KeyIs(kExt[VR_WINDSHIELDREFLECTIONS].key, "WindshieldReflections"), "windshield reflection key order");
+ static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
+ static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
+ static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
+@@ -687,6 +691,10 @@ const Item kItems[] = {
+     {NUMBER, "Near clip plane", "VR", "NearZ", &s_ext[VR_NEARZ], 0.001f, 0.25f, 0.001f, 100, "%.1f cm", 0},
+     RESET_,
+ 
++    HEADER_("INTERIOR WINDSHIELD"),
++    {NUMBER, "Windshield transparency", "VR", "WindshieldTransparency", &s_ext[VR_WINDSHIELDTRANSPARENCY], 0.0f, 1.0f, 0.001f, 100, "%.1f%%", 0},
++    {NUMBER, "Windshield reflections", "VR", "WindshieldReflections", &s_ext[VR_WINDSHIELDREFLECTIONS], 0.0f, 1.0f, 0.001f, 100, "%.1f%%", 0},
++
+     PAGE_("ADJUST DASHBOARD"),
+     LINK_("< Back", "VR"),
+     {NUMBER, "Whole dashboard size (this car)", "VR", "DashZoom", &s_ext[VR_DASHZOOM], 0.3f, 3.0f, 0.05f, 100, "%.0f%%", 0},
+@@ -751,6 +759,8 @@ const Item kItems[] = {
+     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Take off the steering wheel", nullptr, "EdNoWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
++    {ACTION, "Add to windshield", nullptr, "EdWindshield", nullptr, 0, 0, 0, 0, nullptr, 0},
++    {ACTION, "Remove from windshield", nullptr, "EdNoWindshield", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
+     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
+ 
+@@ -1595,7 +1605,8 @@ void Change(int index, int dir) {
+                 {"EdHide", 1, "Hidden"}, {"EdBlack", 2, "Drawn black"}, {"EdWheel", 3, "On the steering wheel"},
+                 {"EdNoWheel", 4, "Off the steering wheel"}, {"EdRestore", 5, "Restored"}, {"EdUndo", 6, "Undone"},
+                 {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"},
+-                {"EdCopy", 12, "Copy requested (check clipboard)"}};
++                {"EdCopy", 12, "Copy requested (check clipboard)"},
++                {"EdWindshield", 13, "Added to windshield"}, {"EdNoWindshield", 14, "Removed from windshield"}};
+             if (strcmp(it.key, "EdPick") == 0) {
+                 StartPicking();
+                 return;

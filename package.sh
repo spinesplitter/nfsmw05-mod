@@ -31,6 +31,9 @@ OUT="dist/mw2005-immersion-pack-$VERSION"
 ZIP="$OUT.zip"
 rm -rf "$OUT" "$ZIP"
 mkdir -p "$OUT/scripts"
+PS=pwsh; command -v pwsh >/dev/null || PS=powershell
+$PS -NoProfile -ExecutionPolicy Bypass -File ./prepare-extra-options.ps1 -Destination "$OUT/extras/ExtraOptions"
+cp release/Install-ExtraOptions.ps1 release/EXTRA-OPTIONS.md "$OUT/"
 cp "$LOADER" "$OUT/dinput8.dll"
 cp vr/bin/d3d9.dll "$OUT/scripts/nfsmw_vr.asi"
 cp ffb/build/dinput8.dll "$OUT/scripts/nfsmw_ffb.asi"
@@ -56,5 +59,5 @@ fi
 cp release/README.txt release/FIXES.md gameplay/TUNING.md release/LICENSE-asi-loader.txt release/LICENSE-widescreen-fix.txt LICENSE "$OUT/"
 cp gameplay/third_party/imgui/LICENSE.txt "$OUT/LICENSE-imgui.txt"
 PS=pwsh; command -v pwsh >/dev/null || PS=powershell
-$PS -NoProfile -Command "Compress-Archive -Path '$OUT/*' -DestinationPath '$ZIP'"
+$PS -NoProfile -Command "\$ErrorActionPreference = 'Stop'; Compress-Archive -Path '$OUT/*' -DestinationPath '$ZIP'"
 echo "packaged $ZIP"

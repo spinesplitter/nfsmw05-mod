@@ -9,6 +9,7 @@
 #include "../src/telemetry_inputs.h"
 #include "../src/telemetry.h"
 #include "../src/shift_direction.h"
+#include "../src/extra_options.h"
 #include <assert.h>
 Config g_cfg;
 volatile unsigned char gameAddressPadding[0x600000];
@@ -20,39 +21,108 @@ float Physics_EngineSmokeBack() { return 0.0f; }
 const char* const kButtonKeys[6] = {"Handbrake", "Nitrous", "Speedbreaker", "ResetCar", "Camera", "LookBack"};
 
 static bool player;
-static float observedRacerTarget;
-static uint8_t testRaceVehicle[0xA0];
-static void* __fastcall TestRaceVehicle(void*, void*) { return testRaceVehicle; }
-static void __fastcall ObserveRacerTarget(void* ai, void*, float dt) {
-    assert(fabsf(dt - 0.02f) < 0.000001f);
-    observedRacerTarget = *(float*)((uint8_t*)ai + 0x84);
+static void TestCareerRoster() {
+    for (int mode : {-1, 0, 1, 2, 3})
+        for (int type = -1; type <= 11; ++type)
+            for (int count : {-1, 0, 1, 3, 11, 15, 16})
+                for (int racers : {0, 1, 2, 12, 16})
+                    for (bool current : {false, true})
+                      for (bool boss : {false, true})
+                       for (uint32_t eventId : {0u, 0x42938CE2u, 0x9F60A40Eu, 0xF7E4440Au,
+                               0xD348F2CDu, 0x6DDD8383u, 0x027D2A00u}) {
+                        bool intro = eventId != 0 && eventId != 0x027D2A00;
+                        bool expected = current && !boss && !intro && mode == 2 &&
+                            (type == 0 || type == 1 || type == 5) &&
+                            count > 0 && count <= 15 && racers == 1;
+                        assert(CareerIntroEvent(eventId) == intro);
+                        assert(CareerRosterEligible(mode, type, count, racers, current, boss, eventId) == expected);
+                    }
+    for (int count = 1; count <= 15; ++count) {
+        for (int index = 0; index < 11; ++index) {
+            int mapped = CareerRosterIndex(index, count);
+            assert(mapped >= 0 && mapped < count);
+            assert(mapped == index % count);
+            if (index < count) assert(mapped == index);
+        }
+    }
+    assert(CareerRosterIndex(-1, 3) == -1);
+    assert(CareerRosterIndex(11, 3) == -1);
+    assert(CareerRosterIndex(0, 0) == -1);
+    // The executable allocates [0x18,0x1958) to 0x194-byte racer records.
+    static_assert((0x1958 - 0x18) / 0x194 == 16, "verified racer capacity");
+    static_assert(kCareerOpponents + 1 <= 16, "player plus opponents must fit");
+}
+static float observedTarget;
+static void __fastcall ObserveRacerTarget(void* ai, void*, float) {
+    observedTarget = *(float*)((uint8_t*)ai + 0x84);
+}
+static void TestCareerOpponentSpeed() {
+    uint8_t ai[0x100] = {};
+    auto originalController = s_racerGasBrake;
+    s_racerGasBrake = &ObserveRacerTarget;
+    assert(Config{}.opponentSpeed == 1.0f);
+    for (float scale : {-1.0f, 0.25f, 0.9f, 1.0f, 2.0f, 3.0f}) {
+        g_cfg.opponentSpeed = scale;
+        for (int mode : {0, 1, 2, 3}) for (bool isPlayer : {false, true}) {
+            for (float target : {-10.0f, 0.0f, 40.0f}) {
+                *(float*)(ai + 0x84) = target;
+                for (int repeat = 0; repeat < 3; repeat++) {
+                    RacerGasBrakeTarget(ai, nullptr, 0.016f, isPlayer, mode);
+                    float expected = mode == 2 && !isPlayer && target > 0 ? target * Clamp(scale, 0.25f, 2.0f) : target;
+                    assert(fabsf(observedTarget - expected) < 0.0001f);
+                    assert(*(float*)(ai + 0x84) == target); // never compounds
+                }
+            }
+        }
+    }
+    s_racerGasBrake = originalController;
+    g_cfg = Config{};
 }
 static void __fastcall ResetRaceTimer(void* race, void*) {
     *(float*)((uint8_t*)race + 0x1980) = 0.0f;
 }
 static int __fastcall TollboothType(void*, void*) { return 4; }
-static float stockDensity;
-static float __cdecl StockDensity() { return stockDensity; }
 static void TestRaceControls() {
-    for (float density : {0.0f, 0.1f, 0.3f, 0.5f, 1.0f}) {
-        assert(ScaleTrafficDensity(density, 1) == density);
-        assert(ScaleTrafficDensity(density, 0) == 0);
-        assert(ScaleTrafficDensity(density, 2) == (density * 2 > 1 ? 1 : density * 2));
+    assert(Config{}.careerTrafficMultiplier == 3.0f);
+    g_cfg.careerTrafficMultiplier = 3;
+    g_cfg.raceTrafficFloor = 75;
+    for (int play : {0, 1}) {
+        assert(CareerTrafficLimit(4, 2, play) == 12);
+        assert(CareerTrafficLimit(20, 2, play) == 60);
+        assert(CareerTrafficLimit(0, 2, play) == 0); // retain unlimited sentinel
+        assert(CareerTrafficLimit(UINT32_MAX, 2, play) == UINT32_MAX);
+        for (int context : {0, 1, 3})
+            assert(CareerTrafficLimit(4, context, play) == 4);
     }
-    assert(ScaleTrafficDensity(0.1f, 10) == 1);
-    assert(fabsf(ScaleTrafficDensity(0.3f, 0.5f) - 0.15f) < 0.000001f);
-    assert(ScaleTrafficDensity(-10, 2) == 0);
-    assert(ScaleTrafficDensity(0.5f, NAN) == 0.5f);
-    assert(ScaleTrafficDensity(50, -1) == 0);
-    auto densityGetter = s_density;
-    s_density = &StockDensity;
-    stockDensity = 0.3f;
-    for (float multiplier : {2.0f, 2.0f, 0.5f, 0.0f, 1.0f}) {
-        g_cfg.trafficMultiplier = multiplier;
-        assert(fabsf(TrafficDensity() - ScaleTrafficDensity(0.3f, multiplier)) < 0.000001f);
-        assert(fabsf(stockDensity - 0.3f) < 0.000001f); // live edits never compound or overwrite parameters
+    assert(CareerTrafficLimit(4, 2, 7) == 4);
+    assert(CareerTrafficValue(0.75f, 2, 1) == 0.75f);
+    assert(CareerTrafficValue(0.5f, 2, 0) == 0.75f);
+    for (int play : {0, 1}) {
+        assert(CareerSpawnRateValue(2.0f, 2, play) == 6.0f);
+        assert(CareerSpawnRateValue(0.0f, 2, play) == 0.0f);
+        for (int context : {0, 1, 3})
+            assert(CareerSpawnRateValue(2.0f, context, play) == 2.0f);
     }
-    s_density = densityGetter;
+    assert(CareerSpawnRateValue(2.0f, 2, 7) == 2.0f);
+    for (int context : {0, 1, 3})
+        for (int play : {0, 1}) assert(CareerTrafficValue(0.5f, context, play) == 0.5f);
+    assert(CareerTrafficValue(0.5f, 2, 7) == 0.5f);
+    assert(CareerTrafficValue(0, 2, 1) == 0);
+    for (int repeat = 0; repeat < 20; ++repeat)
+        assert(CareerTrafficValue(0.75f, 2, 1) == 0.75f);
+    g_cfg.careerTrafficMultiplier = 1;
+    assert(CareerTrafficLimit(4, 2, 0) == 4);
+    assert(CareerTrafficLimit(20, 2, 1) == 20);
+    assert(CareerSpawnRateValue(2.0f, 2, 1) == 2.0f);
+    assert(CareerTrafficValue(0.5f, 2, 0) == 0.5f);
+    g_cfg.careerTrafficMultiplier = 3;
+    g_cfg.raceTrafficFloor = 75;
+    assert(RaceTrafficValue(10, 2) == 75);
+    assert(RaceTrafficValue(0, 2) == 75);
+    assert(RaceTrafficValue(100, 2) == 100);
+    assert(RaceTrafficValue(10, 1) == 10);
+    g_cfg.raceTrafficFloor = -1;
+    assert(RaceTrafficValue(10, 2) == 10);
     uint8_t race[0x19A0] = {};
     *(void**)(race + 0x1968) = race; // fake parameters, read by the stub only
     auto start = s_startRace;
@@ -72,32 +142,6 @@ static void TestRaceControls() {
     assert(*(float*)(race + 0x1980) == 0.0f);
     s_startRace = start;
     s_raceType = type;
-    uint8_t ai[0x90] = {};
-    uintptr_t aiVtable[3] = {0, 0, (uintptr_t)&TestRaceVehicle};
-    *(uintptr_t**)(ai + 0x4C) = aiVtable;
-    *(float*)(ai + 0x84) = 40.0f;
-    auto gas = s_racerGasBrake;
-    s_racerGasBrake = &ObserveRacerTarget;
-    for (float factor : {0.25f, 0.5f, 1.0f, 2.0f}) {
-        g_cfg.opponentSpeed = factor;
-        for (int i = 0; i < 3; i++) {
-            RacerGasBrakeTarget(ai, nullptr, 0.02f, false);
-            assert(observedRacerTarget == 40.0f * factor);
-            assert(*(float*)(ai + 0x84) == 40.0f);
-        }
-        RacerGasBrakeTarget(ai, nullptr, 0.02f, true);
-        assert(observedRacerTarget == 40.0f); // player unaffected
-        *(int*)(testRaceVehicle + kIV_DriverClass) = 0;
-        RacerGasBrake(ai, nullptr, 0.02f);
-        assert(observedRacerTarget == 40.0f);
-        *(int*)(testRaceVehicle + kIV_DriverClass) = 1;
-        RacerGasBrake(ai, nullptr, 0.02f);
-        assert(observedRacerTarget == 40.0f * factor);
-    }
-    *(float*)(ai + 0x84) = -5.0f;
-    RacerGasBrakeTarget(ai, nullptr, 0.02f, false);
-    assert(observedRacerTarget == -5.0f); // reverse/stuck recovery unchanged
-    s_racerGasBrake = gas;
     g_cfg = Config{};
 }
 static bool __attribute__((thiscall)) IsPlayer(void*) { return player; }
@@ -305,7 +349,29 @@ static void TestTelemetryInputs() {
     assert(!out.steering && !out.bound[3] && out.pedal[3] == 0.0f);
 }
 
+static void TestExtraOptions() {
+    char dir[MAX_PATH], path[MAX_PATH];
+    assert(GetTempPathA(MAX_PATH, dir));
+    assert(GetTempFileNameA(dir, "exo", 0, path));
+    for (int i = 0; i < extra_options::count; i++)
+        assert(extra_options::Read(path, i) == extra_options::settings[i].def);
+    assert(WritePrivateProfileStringA("TrafficControllers", "High", "82 // upstream comment", path));
+    assert(extra_options::Read(path, 5) == 82);
+    assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", "99", path));
+    assert(extra_options::Read(path, 0) == 15);
+    assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", "-1", path));
+    assert(extra_options::Read(path, 0) == 0);
+    for (const char* bad : {"", "invalid", "nan", "inf"}) {
+        assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", bad, path));
+        assert(extra_options::Read(path, 0) == 15);
+    }
+    assert(DeleteFileA(path));
+}
+
 int main() {
+    TestCareerRoster();
+    TestCareerOpponentSpeed();
+    TestExtraOptions();
     for (bool wall : {false, true}) {
         assert(ImpactDamage(7.9f, 8.0f, 1.0f, wall) == 0.0f);
         assert(ImpactDamage(8.0f, 8.0f, 1.0f, wall) == 0.0f);
@@ -336,9 +402,6 @@ int main() {
     assert(!FirstGearRollbackAllowed(2, -12.01f / 3.6f));
     assert(!FirstGearRollbackAllowed(0, 1.0f));
     assert(!FirstGearRollbackAllowed(3, 1.0f));
-    g_cfg.disableRubberband = true;
-    assert(RacerCatchup(nullptr, nullptr) == 0.0f); // must not dereference the racer when disabled
-    g_cfg.disableRubberband = false;
     TestRaceControls();
     puts("gameplay regression tests passed");
 }

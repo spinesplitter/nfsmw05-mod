@@ -1,0 +1,43 @@
+diff --git "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/tests/cockpit_tests.cpp" "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/tests/cockpit_tests.cpp"
+index b838de0..3eba171 100644
+--- "a/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\pre-windshield-backup\\vr/tests/cockpit_tests.cpp"	
++++ "b/T:\\Games\\ModWanted\\cookie Need For Speed Most Wanted Black Edition\\vr-source\\vr/tests/cockpit_tests.cpp"	
+@@ -16,6 +16,7 @@ void D3D_RegisterWheelDraw(void*, int) {}
+ void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
+ void D3D_AddColorTris(void*, const float*, int, uint32_t) {}
+ void D3D_DrawOverlay(const float*, int, uint32_t) {}
++void D3D_AddWindshield(void*, const float*, int) {}
+ 
+ static uint8_t connData[0x500], anchorData[0xD0], moverData[16];
+ static void* moverVtbl[8];
+@@ -32,6 +33,30 @@ static void Check(bool ok, const char* message) {
+ }
+ static void Near(float a, float b, const char* message) { Check(fabsf(a - b) < 0.0002f, message); }
+ static void TestWheelOctants() {
++    TriRef glass = {};
++    glass.p[0] = {0.5f, -0.7f, 1.0f};
++    glass.p[1] = {0.5f, 0.7f, 1.0f};
++    glass.p[2] = {0.9f, 0.7f, 1.5f};
++    Check(WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "front sloped glass detected");
++    std::swap(glass.p[0], glass.p[1]);
++    Check(WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "windshield detection accepts either winding");
++    for (V3& p : glass.p) p.x -= 2;
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "rear windows excluded");
++    for (V3& p : glass.p) { p.x += 2; p.z = 1.5f; }
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "roof excluded");
++    glass.p[0] = {0.5f, 0.8f, 1.0f};
++    glass.p[1] = {1.0f, 0.8f, 1.0f};
++    glass.p[2] = {0.5f, 0.8f, 1.5f};
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "side window excluded");
++    glass.p[2] = glass.p[0];
++    Check(!WindshieldCandidate(glass, {0, 0.35f, 1.2f}), "degenerate triangle excluded");
++    EditSet original;
++    original.windshield.insert(TriId(7, 8, 9));
++    EditSet edited = original;
++    edited.windshield.erase(TriId(7, 8, 9));
++    edited.noWindshield.insert(TriId(7, 8, 9));
++    edited = original;
++    Check(edited.windshield.count(TriId(7, 8, 9)) && edited.noWindshield.empty(), "undo snapshot retains windshield overrides");
+     for (int x = -20; x <= 20; x++) {
+         for (int y = -20; y <= 20; y++) {
+             float du = x * 0.13f, dw = y * 0.17f;

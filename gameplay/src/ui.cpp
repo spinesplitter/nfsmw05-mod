@@ -15,6 +15,7 @@
 #include "physics.h"
 #include "cars.h"
 #include "inisave.h"
+#include "extra_options.h"
 #include "draw2d.h"
 #include "telemetry.h"
 #include <d3d9.h>
@@ -82,6 +83,42 @@ void DrawGauge(const EngineStatus& st, int W, int H, float k) {
 // CAR switches the current car between its own physics values and the [Physics] ones; the
 // per-car sliders (Physics_IsPerCar) are saved to the car's section while it has its own.
 enum Kind { HEADER, TOGGLE, NUMBER, BIND, LINK, CAR, ACTION, SOUND, PAGE, RESET };
+
+float s_extra[extra_options::count];
+float s_extraSaved[extra_options::count];
+std::string s_extraPath;
+bool s_extraLoaded = false;
+
+int ExtraIndex(const void* value) {
+    for (int i = 0; i < extra_options::count; i++)
+        if (value == &s_extra[i]) return i;
+    return -1;
+}
+
+void LoadExtraOptions() {
+    // Resolve the INI beside the actual loaded plugin, not our own config directory.
+    // Do not create settings or install/load code from the render thread.
+    HMODULE mod = GetModuleHandleA("NFSMWExtraOptions.asi");
+    char path[MAX_PATH] = {};
+    if (!mod || !GetModuleFileNameA(mod, path, MAX_PATH)) return;
+    std::string file(path);
+    size_t slash = file.find_last_of("\\/");
+    if (slash == std::string::npos) return;
+    file.resize(slash + 1);
+    file += "NFSMWExtraOptionsSettings.ini";
+    if (GetFileAttributesA(file.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    if (s_extraLoaded) return; // Keep pending asynchronous saves when reopening F4.
+    s_extraPath = file;
+    for (int i = 0; i < extra_options::count; i++)
+        s_extra[i] = s_extraSaved[i] = extra_options::Read(file, i);
+    s_extraLoaded = true;
+}
+
+const char* ExtraStatus() {
+    if (s_extraLoaded) return "Loaded - INI edits require a game restart";
+    if (GetModuleHandleA("NFSMWExtraOptions.asi")) return "Loaded, but INI missing - controls unavailable";
+    return "Not loaded - run Install-ExtraOptions.ps1, then restart";
+}
 enum { BF_REQUIRED = 1, BF_CLUTCH = 2, BF_STEER = 8, BF_PEDAL = 16, BF_GAME = 32, BF_ONOFF = 64 };
 
 // Settings of the other mods, changed live through their exports and saved to their .ini: the
@@ -157,6 +194,7 @@ constexpr struct {
     {MOD_FFB, "SurfaceRumble", 0.0f},
     {MOD_FFB, "MinForce", 0.0f},
     {MOD_FFB, "RearSlide", 0.0f},
+    {MOD_VR, "WheelPositionRight", 0.0f}, {MOD_VR, "WheelPositionUp", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -187,7 +225,8 @@ enum {
     FFB_SURFACE,
     FFB_MINFORCE,
     FFB_REARSLIDE,
-    EXT_COUNT
+    VR_WHEELPOSITION,
+    EXT_COUNT = VR_WHEELPOSITION + 2
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
@@ -205,6 +244,8 @@ static_assert(KeyIs(kExt[FFB_KERBS].key, "Kerbs"), "kExt out of order at FFB_KER
 static_assert(KeyIs(kExt[FFB_SURFACE].key, "SurfaceRumble"), "kExt out of order at FFB_SURFACE");
 static_assert(KeyIs(kExt[FFB_MINFORCE].key, "MinForce"), "kExt out of order at FFB_MINFORCE");
 static_assert(KeyIs(kExt[FFB_REARSLIDE].key, "RearSlide"), "kExt out of order at FFB_REARSLIDE");
+static_assert(KeyIs(kExt[VR_WHEELPOSITION].key, "WheelPositionRight"), "kExt out of order at VR_WHEELPOSITION");
+static_assert(KeyIs(kExt[VR_WHEELPOSITION + 1].key, "WheelPositionUp"), "kExt out of order at VR_WHEELPOSITION + 1");
 static_assert(KeyIs(kExt[VR_ANISOTROPIC].key, "Anisotropic"), "kExt out of order at VR_ANISOTROPIC");
 static_assert(KeyIs(kExt[VR_SHADOWRES].key, "ShadowRes"), "kExt out of order at VR_SHADOWRES");
 static_assert(KeyIs(kExt[VR_SHAREDSHADOWS].key, "SharedShadows"), "kExt out of order at VR_SHAREDSHADOWS");
@@ -433,9 +474,25 @@ const Item kItems[] = {
     LINK_("Damage and tires", "DAMAGE AND TIRES"),
     LINK_("Physics", "PHYSICS"),
     LINK_("Traffic and HUD", "TRAFFIC AND HUD"),
+    LINK_("Extra Options", "EXTRA OPTIONS"),
     LINK_("Telemetry", "TELEMETRY"),
     LINK_("VR", "VR"),
     LINK_("Menu and testing", "MENU AND TESTING"),
+
+    PAGE_("EXTRA OPTIONS"),
+    BACK_,
+    {ACTION, "Plugin status", nullptr, "ExtraStatus", nullptr, 0, 0, 0, 0, nullptr, 0},
+    HEADER_("EXOPTS TEAM - GPLv3 - SEE EXTRA-OPTIONS.md"),
+    HEADER_("SAVED ON F4 CLOSE - RESTART GAME TO APPLY"),
+    HEADER_("QUICK RACE LIMITS (CHOOSE RACE VALUES IN GAME)"),
+    {NUMBER, "Maximum opponents", "OpponentControllers", "Maximum", &s_extra[0], 0, 15, 1, 1, "%.0f", 0},
+    {NUMBER, "Random Race maximum opponents", "OpponentControllers", "RandomRace", &s_extra[1], 0, 15, 1, 1, "%.0f", 0},
+    {NUMBER, "Maximum laps", "LapControllers", "Maximum", &s_extra[2], 0, 127, 1, 1, "%.0f", 0},
+    HEADER_("TRAFFIC PRESETS - NOT FREE-ROAM CAR LIMITS"),
+    {NUMBER, "Minimum traffic preset", "TrafficControllers", "Low", &s_extra[3], 0, 100, 1, 1, "%.0f", 0},
+    {NUMBER, "Moderate traffic preset", "TrafficControllers", "Medium", &s_extra[4], 0, 100, 1, 1, "%.0f", 0},
+    {NUMBER, "Maximum traffic preset", "TrafficControllers", "High", &s_extra[5], 0, 100, 1, 1, "%.0f", 0},
+    HEADER_("15-OPPONENT STABILITY UNVERIFIED - BACK UP SAVES"),
 
     PAGE_("CONTROLS"),
     BACK_,
@@ -628,13 +685,16 @@ const Item kItems[] = {
     PAGE_("TRAFFIC AND HUD"),
     BACK_,
     HEADER_("TRAFFIC"),
-    {NUMBER, "Traffic multiplier", "Traffic", "Multiplier", &g_cfg.trafficMultiplier, 0.0f, 10.0f, 0.1f, 1, "%.1fx", 0},
+    {NUMBER, "Offline race traffic floor", "Traffic", "RaceDensityFloor", &g_cfg.raceTrafficFloor, -1, 100, 5, 1, "%.0f / 100", 0},
+    {NUMBER, "Career traffic multiplier", "Traffic", "CareerMultiplier", &g_cfg.careerTrafficMultiplier, 1, 3, 0.5f, 1, "%.1fx", 0},
+    {NUMBER, "Career opponent speed", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
+    HEADER_("OPPONENT SPEED: LIVE IN CAREER; 100% IS STOCK"),
+    HEADER_("CAREER MULTIPLIER: LIVE, RACES AND FREE ROAM"),
+    HEADER_("FREE ROAM USES RACE FLOOR; SPAWN LIMITS STILL APPLY"),
     {TOGGLE, "No head-on ramming SUVs", "Traffic", "NoHeavySupport", &g_cfg.noHeavySupport, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Drive drag races normally", "Races", "NormalDragRaces", &g_cfg.normalDragRaces, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Normal HUD in drag races", "Races", "NormalDragHud", &g_cfg.normalDragHud, 0, 0, 0, 0, nullptr, 0},
-    {TOGGLE, "Disable racer rubberband", "Races", "DisableRubberband", &g_cfg.disableRubberband, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Tollbooth starting time bonus", "Races", "TollboothTimeBonus", &g_cfg.tollboothTimeBonus, 0, 300, 5, 1, "+%.0f s", 0},
-    {NUMBER, "Opponent speed", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     HEADER_("HUD"),
     {TOGGLE, "Damage / heat meter", "HUD", "Meter", &g_cfg.hudMeter, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Speedbreaker", "HUD", "Speedbreaker", &g_cfg.speedbreaker, 0, 0, 0, 0, nullptr, 0},
@@ -769,6 +829,8 @@ const Item kItems[] = {
     {ACTION, "Drop from air", nullptr, "DropCar", nullptr, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Rear view mirror forward / back", "VR", "MirrorOffset", &s_ext[VR_MIRROROFFSET], -0.05f, 0.05f, 0.001f, 100, "%+.1f cm", 0},
     {ACTION, "Center steering wheel animation", nullptr, "EdWheelPivot", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {NUMBER, "Steering wheel location left / right", "VR", "WheelPositionRight", &s_ext[VR_WHEELPOSITION], -0.5f, 0.5f, 0.001f, 100, "%+.1f cm", 0},
+    {NUMBER, "Steering wheel location up / down", "VR", "WheelPositionUp", &s_ext[VR_WHEELPOSITION + 1], -0.5f, 0.5f, 0.001f, 100, "%+.1f cm", 0},
     {NUMBER, "Steering wheel centre left / right", "VR", "WheelPivotRight", &s_ext[VR_WHEELPIVOT], -0.08f, 0.08f, 0.001f, 100, "%+.1f cm", 0},
     {NUMBER, "Steering wheel centre up / down", "VR", "WheelPivotUp", &s_ext[VR_WHEELPIVOT + 1], -0.08f, 0.08f, 0.001f, 100, "%+.1f cm", 0},
     {ACTION, "Steering wheel centre: reset", nullptr, "EdWheelPivotReset", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1025,6 +1087,9 @@ std::string SourceText() {
 
 std::string ValueText(const Item& it, int index) {
     char buf[64];
+    if (it.value == &g_cfg.raceTrafficFloor && g_cfg.raceTrafficFloor < 0) return "Event default";
+    if (it.kind == ACTION && strcmp(it.key, "ExtraStatus") == 0) return ExtraStatus();
+    if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) return "ExOpts / INI unavailable";
     if (it.value == &g_cfg.sequential) return g_cfg.sequential ? "Sequential" : "H-pattern";
     if (it.kind == TOGGLE) return *(bool*)it.value ? "On" : "Off";
     if (it.kind == CAR) return *Physics_Car() ? (Physics_OwnSettings() ? "On" : "Off") : "No car";
@@ -1256,8 +1321,8 @@ const struct {
     {&g_cfg.physics, 0}, {&s_tcMode, 1}, {&g_cfg.stability, 1}, {&g_cfg.driftAssist, 1},
     {&g_cfg.grip, 1}, {&g_cfg.character, 0}, {&g_cfg.realWeight, 0}, {&g_cfg.gripBalance, 0}, {&g_cfg.suspFirmness, 1}, {&g_cfg.rollBalance, 0}, {&g_cfg.abs, 0}, {&g_cfg.offroadGrip, 1},
     {&g_cfg.tyreSlideGrip, 1}, {&g_cfg.rainGrip, 1}, {&g_cfg.downforce, 1}, {&g_cfg.downforceSquared, 0}, {&g_cfg.wallBounce, 1}, {&g_cfg.frictionCircle, 0}, {&g_cfg.slideWheelspin, 0}, {&g_cfg.gravity, 1}, {&g_cfg.gravityAll, 0},
-    {&g_cfg.trafficMultiplier, 1}, {&g_cfg.noHeavySupport, 0}, {&g_cfg.normalDragRaces, 0}, {&g_cfg.normalDragHud, 0},
-    {&g_cfg.disableRubberband, 0}, {&g_cfg.tollboothTimeBonus, 0}, {&g_cfg.opponentSpeed, 1},
+    {&g_cfg.noHeavySupport, 0}, {&g_cfg.normalDragRaces, 0}, {&g_cfg.normalDragHud, 0},
+    {&g_cfg.tollboothTimeBonus, 0},
     {&g_cfg.hudMeter, 0}, {&g_cfg.speedbreaker, 1},
 };
 
@@ -1571,6 +1636,8 @@ bool IsPickKey(const char* key) {
 
 void Change(int index, int dir) {
     const Item& it = kItems[index];
+    if (it.kind == ACTION && strcmp(it.key, "ExtraStatus") == 0) { Note(ExtraStatus()); return; }
+    if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) return;
     if (it.kind == ACTION && IsGroupKey(it.key) && (dir > 0 || IsPickKey(it.key))) {
         ChangeGroup(index, it.key, dir);
         return;
@@ -1688,6 +1755,16 @@ void Save() {
     std::vector<IniWrite> writes;
     for (const Item& it : kItems) {
         if (it.kind == HEADER || it.kind == LINK || it.kind == CAR || it.kind == ACTION || it.kind == PAGE || it.kind == RESET) continue;
+        int extra = ExtraIndex(it.value);
+        if (extra >= 0) {
+            // Only explicitly changed keys: never replace existing hotkeys or other ExOpts options.
+            if (s_extraLoaded && s_extra[extra] != s_extraSaved[extra]) {
+                const auto& setting = extra_options::settings[extra];
+                writes.push_back({s_extraPath, setting.section, setting.key, std::to_string((int)s_extra[extra])});
+                s_extraSaved[extra] = s_extra[extra];
+            }
+            continue;
+        }
         char buf[32];
         std::string text;
         if (it.kind == TOGGLE) snprintf(buf, sizeof(buf), "%d", *(bool*)it.value ? 1 : 0), text = buf;
@@ -1746,6 +1823,8 @@ void UpdateVrPages() {
     if (editor) *editor = strcmp(page, "TRIANGLE EDITOR") == 0 || s_picking ? 1.0f : 0.0f;
     for (int k = 0; k < 2 && s_menu.open; k++)
         if (float* v = ExtSetting(VR_WHEELPIVOT + k)) s_ext[VR_WHEELPIVOT + k] = *v;
+    for (int k = 0; k < 2 && s_menu.open; k++)
+        if (float* v = ExtSetting(VR_WHEELPOSITION + k)) s_ext[VR_WHEELPOSITION + k] = *v;
     if (highlight) {
         *highlight = -1;
         const void* v = s_menu.open && s_menu.sel >= 0 && s_menu.sel < kNumItems ? kItems[s_menu.sel].value : nullptr;
@@ -1762,6 +1841,7 @@ void SetOpen(bool open) {
     if (open == s_menu.open) return;
     s_menu.open = open;
     if (open) {
+        LoadExtraOptions();
         for (int i = 0; i < EXT_COUNT; i++)
             if (ExtSetting(i)) s_ext[i] = *ExtSetting(i);
         FfbRefreshDevices();
@@ -2125,10 +2205,8 @@ const struct {
     {&g_cfg.gravity, "Gravity in g. Grip scales with it."},
     {&g_cfg.gravityAll, "Gravity applies to AI and traffic too."},
     {&g_cfg.noHeavySupport, "No heavy support: the SUVs a pursuit sends to ram you head-on out of oncoming traffic don't come. SUV patrols and SUVs in roadblocks still do."},
-    {&g_cfg.trafficMultiplier, "Civilian traffic density request: 1x = stock, 0x = off. Scales the race/free-roam density getter without changing its stored value. Live when the game next reads density; existing cars are not removed immediately. Density is capped at 100 (stock Quick Race Maximum is 50, so 2x reaches that cap). Does not expand active-car pools or force traffic in events with zero density."},
     {&g_cfg.normalDragHud, "Drag races show the normal race HUD (tachometer, speedometer, minimap, damage meter) instead of the drag HUD. Applies from the next race."},
     {&g_cfg.tollboothTimeBonus, "Extra seconds at the start of a tollbooth race. Applies once per start/restart, never at checkpoints. Change before starting or restarting the race."},
-    {&g_cfg.opponentSpeed, "AI racer target speed: 100% is stock, lower is slower. Live and independent of Disable racer rubberband. Does not change your car, police, traffic or world time; actual speed still depends on corners and vehicle performance."},
     {&g_cfg.normalDragRaces, "Drag races without the drag mechanics for your car: you steer (no automatic lane changes), the normal engine, shifting and damage, so the wheel, shifter, engine wear and damage mods work. Opponents and the race itself are unchanged. Applies from the next race."},
     {&g_cfg.hudMeter, "The speedbreaker meter shows car damage, with engine heat in red."},
     {&g_cfg.speedbreaker, "Keep the game's speedbreaker."},
@@ -2497,6 +2575,10 @@ void ValueWidget(int i, float w, float k) {
             break;
         }
         case NUMBER: {
+            if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) {
+                ImGui::TextDisabled("ExOpts / INI unavailable");
+                break;
+            }
             int ext = ExtIndex(it.value);
             if (ext >= 0 && !ExtSetting(ext)) {
                 ImGui::AlignTextToFramePadding();
@@ -2605,7 +2687,7 @@ void ValueWidget(int i, float w, float k) {
                 ImGui::TextUnformatted(v.c_str());
                 break;
             }
-            if (strcmp(it.key, "CarInfo") == 0 || strcmp(it.key, "GroupMembers") == 0) {
+            if (strcmp(it.key, "CarInfo") == 0 || strcmp(it.key, "GroupMembers") == 0 || strcmp(it.key, "ExtraStatus") == 0) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
                 ImGui::TextUnformatted(v.c_str());
