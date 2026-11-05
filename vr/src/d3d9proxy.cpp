@@ -1590,7 +1590,7 @@ static void DrawDash() {
 
 // Triangles over the finished eye (no depth test: seen through what is in front), in one colour:
 // the triangle editor's reticle and selection.
-void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb) {
+static void DrawOverlayTris(const float* xyz, int triangles, uint32_t argb) {
     if (!s_dev || !s_colorEye || triangles <= 0) return;
     IDirect3DSurface9* bb = nullptr;
     if (FAILED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb) return;

@@ -1,4 +1,9 @@
-# Experimental MW animated driver and cockpit controls
+# Retired experiment: separate animated driver overlay
+
+This approach is abandoned as the intended implementation. Use the native
+marked-arm implementation described in `DRIVER-ANIMATION.md` instead. The notes
+below are historical only; do not install the old overlay assets for the current
+driver branch. Legacy code is retained for history, not as the supported path.
 
 This checkpoint contains the Most Wanted runtime and F4 menu changes, not the
 separate STEERINGMOD preview project. No proprietary model, texture, animation,
