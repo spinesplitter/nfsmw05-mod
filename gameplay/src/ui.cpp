@@ -196,7 +196,7 @@ constexpr struct {
     {MOD_FFB, "RearSlide", 0.0f},
     {MOD_VR, "WheelPositionRight", 0.0f}, {MOD_VR, "WheelPositionUp", 0.0f},
     {MOD_VR, "CockpitHandbrake", 0.0f}, {MOD_VR, "CockpitShiftUp", 0.0f}, {MOD_VR, "CockpitShiftDown", 0.0f},
-    {MOD_VR, "ShowCustomDriverModel", 1.0f},
+    {MOD_VR, "ShowCustomDriverModel", 0.0f},
     {MOD_VR, "AnimatedDriverSpread", 1.0f},
     {MOD_VR, "AnimatedDriverSave", 0.0f},
 };
