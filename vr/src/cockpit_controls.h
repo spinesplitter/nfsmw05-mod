@@ -8,26 +8,31 @@ struct CockpitControlMotion {
     double last = -1, shiftAt = -1;
     int direction = 0;
     bool initialized = false;
+    bool pending = false;
 
-    void Update(double now, float ups, float downs, bool active) {
+    void Update(double now, float ups, float downs, bool active, bool handReady = true) {
         if (!active || !initialized || now < last) {
             up = ups;
             down = downs;
             shiftAt = -1;
             direction = 0;
+            pending = false;
             initialized = active;
         } else if (ups != up || downs != down) {
             // Opposing presses in one frame cancel. Counters wrap without losing an edge.
             direction = ups != up ? (downs != down ? 0 : -1) : 1;
             up = ups;
             down = downs;
-            shiftAt = now;
+            shiftAt = -1;
+            pending = direction != 0;
         }
+        // Input counters remain immediate; only the visual prop waits for contact.
+        if (pending && handReady) { shiftAt = now; pending = false; }
         last = now;
     }
 
     float Shift(double now) const {
-        double t = (now - shiftAt) / 0.28;
+        double t = (now - shiftAt) / (0.112 / 1.5);
         if (shiftAt < 0 || t <= 0 || t >= 1) return 0;
         // Zero velocity at neutral and at full travel, no looping or held-key drift.
         float s = (float)sin(t * 3.141592653589793);

@@ -98,6 +98,10 @@ void D3D_AddCustomDriver(void* indexBuffer, const float* world, const CustomDriv
 void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32_t argb);
 // Triangles (world) drawn over the finished eye right away, without depth test, in one colour.
 void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb);
+// Camera-facing thick lines (6 floats per line: start xyz, end xyz) and dots (3 floats each), drawn
+// over the finished eye without depth test, in one colour. Width and size are in metres.
+void D3D_DrawOverlayLines(const float* xyz, int lines, float width, uint32_t argb);
+void D3D_DrawOverlayPoints(const float* xyz, int points, float size, uint32_t argb);
 
 // Called after the last eye's scene render: captures eye 1 and redirects whatever
 // the game draws next (HUD/frontend) into a transparent HUD target.

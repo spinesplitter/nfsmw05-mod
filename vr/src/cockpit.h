@@ -34,6 +34,11 @@ void Cockpit_BeginEye();
 bool Cockpit_IsPlayerCarMatrix(const void* matrix);
 // How many such matrices this eye (0: the car was not drawn in the player view).
 int Cockpit_PlayerCarMatrices();
+// Deform a private copy of stream 0 for a registered player-driver draw. Never writes game assets.
+bool Cockpit_PoseMarkedArms(void* indexBuffer, unsigned first, unsigned triangles, int base,
+                           unsigned stride, unsigned positionOffset, int normalOffset,
+                           unsigned char* vertices, size_t bytes);
+bool Cockpit_HasMarkedArmDraw(void* indexBuffer);
 // The headset's gaze in the world (centre of the eyes, forward), for the triangle editor's picking
 // in the next frame.
 void Cockpit_SetGaze(const float pos[3], const float dir[3]);

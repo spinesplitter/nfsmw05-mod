@@ -1615,6 +1615,79 @@ void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb) {
     bb->Release();
 }
 
+void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb) {
+    DrawOverlayTris(xyz, triangles, argb);
+}
+
+// A line segment as a camera-facing quad (the eye from the view matrix), so it keeps its thickness
+// from any direction. `width` is in metres.
+void D3D_DrawOverlayLines(const float* xyz, int lines, float width, uint32_t argb) {
+    if (!s_dev || !s_colorEye || !xyz || lines <= 0) return;
+    float eye[3];
+    EyePos(s_dashEye.view, eye);
+    std::vector<float> tris;
+    tris.reserve((size_t)lines * 18);
+    for (int i = 0; i < lines; i++) {
+        const float* a = xyz + i * 6;
+        const float* b = a + 3;
+        float dir[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        float mid[3] = {(a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f};
+        float toEye[3] = {eye[0] - mid[0], eye[1] - mid[1], eye[2] - mid[2]};
+        float side[3] = {dir[1] * toEye[2] - dir[2] * toEye[1],
+                         dir[2] * toEye[0] - dir[0] * toEye[2],
+                         dir[0] * toEye[1] - dir[1] * toEye[0]};
+        float len = sqrtf(side[0] * side[0] + side[1] * side[1] + side[2] * side[2]);
+        if (len < 1e-9f) continue;
+        float half = width * 0.5f / len;
+        for (int j = 0; j < 3; j++) side[j] *= half;
+        const float p0[3] = {a[0] - side[0], a[1] - side[1], a[2] - side[2]};
+        const float p1[3] = {b[0] - side[0], b[1] - side[1], b[2] - side[2]};
+        const float p2[3] = {b[0] + side[0], b[1] + side[1], b[2] + side[2]};
+        const float p3[3] = {a[0] + side[0], a[1] + side[1], a[2] + side[2]};
+        for (const float* p : {p0, p1, p2, p0, p2, p3}) {
+            tris.push_back(p[0]);
+            tris.push_back(p[1]);
+            tris.push_back(p[2]);
+        }
+    }
+    DrawOverlayTris(tris.data(), (int)tris.size() / 9, argb);
+}
+
+// A dot as a small camera-facing square. `size` is in metres.
+void D3D_DrawOverlayPoints(const float* xyz, int points, float size, uint32_t argb) {
+    if (!s_dev || !s_colorEye || !xyz || points <= 0) return;
+    float eye[3];
+    EyePos(s_dashEye.view, eye);
+    std::vector<float> tris;
+    tris.reserve((size_t)points * 18);
+    for (int i = 0; i < points; i++) {
+        const float* c = xyz + i * 3;
+        float view[3] = {eye[0] - c[0], eye[1] - c[1], eye[2] - c[2]};
+        float len = sqrtf(view[0] * view[0] + view[1] * view[1] + view[2] * view[2]);
+        if (len < 1e-9f) continue;
+        for (int j = 0; j < 3; j++) view[j] /= len;
+        float right[3] = {view[1], -view[0], 0.0f};
+        float rlen = sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+        if (rlen < 1e-6f) { right[0] = 1.0f; right[1] = 0.0f; right[2] = 0.0f; rlen = 1.0f; }
+        for (int j = 0; j < 3; j++) right[j] /= rlen;
+        float up[3] = {view[1] * right[2] - view[2] * right[1],
+                       view[2] * right[0] - view[0] * right[2],
+                       view[0] * right[1] - view[1] * right[0]};
+        float half = size * 0.5f;
+        for (int j = 0; j < 3; j++) { right[j] *= half; up[j] *= half; }
+        const float p0[3] = {c[0] - right[0] - up[0], c[1] - right[1] - up[1], c[2] - right[2] - up[2]};
+        const float p1[3] = {c[0] + right[0] - up[0], c[1] + right[1] - up[1], c[2] + right[2] - up[2]};
+        const float p2[3] = {c[0] + right[0] + up[0], c[1] + right[1] + up[1], c[2] + right[2] + up[2]};
+        const float p3[3] = {c[0] - right[0] + up[0], c[1] - right[1] + up[1], c[2] - right[2] + up[2]};
+        for (const float* p : {p0, p1, p2, p0, p2, p3}) {
+            tris.push_back(p[0]);
+            tris.push_back(p[1]);
+            tris.push_back(p[2]);
+        }
+    }
+    DrawOverlayTris(tris.data(), (int)tris.size() / 9, argb);
+}
+
 #include "custom_driver_render.h"
 static void ResetCustomDriverEye() {
     s_customDriverIb = nullptr;
@@ -2615,6 +2688,58 @@ public:
         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
         bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
+        // Private stream copy: keep the game's textured/shaded draw, and never mutate its VB.
+        if (type == D3DPT_TRIANGLELIST && Cockpit_HasMarkedArmDraw(s_curIndices) && DrawingPlayerView()) {
+            IDirect3DVertexBuffer9* vb = nullptr;
+            UINT offset = 0, stride = 0;
+            if (SUCCEEDED(real->GetStreamSource(0,&vb,&offset,&stride)) && vb) {
+                D3DVERTEXBUFFER_DESC desc{};
+                IDirect3DVertexDeclaration9* decl = nullptr;
+                D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH+1]; UINT n = MAXD3DDECLLENGTH+1;
+                int position = -1, normal = -1;
+                if (SUCCEEDED(real->GetVertexDeclaration(&decl)) && decl) {
+                    if (SUCCEEDED(decl->GetDeclaration(elements,&n))) for (UINT i=0;i<n;++i) {
+                        const auto& e=elements[i];
+                        if(e.Stream==0 && e.Type==D3DDECLTYPE_FLOAT3) {
+                            if(e.Usage==D3DDECLUSAGE_POSITION && e.UsageIndex==0) position=e.Offset;
+                            if(e.Usage==D3DDECLUSAGE_NORMAL && e.UsageIndex==0) normal=e.Offset;
+                        }
+                    }
+                    decl->Release();
+                }
+                void* locked = nullptr;
+                if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size &&
+                   SUCCEEDED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) {
+                    std::vector<unsigned char> copy((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
+                    vb->Unlock();
+                    if(Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size())) {
+                        IDirect3DIndexBuffer9* indices=nullptr;
+                        real->GetIndices(&indices);
+                        void* idx=nullptr;
+                        if(indices && SUCCEEDED(indices->Lock(start*2,count*6,&idx,D3DLOCK_READONLY))) {
+                            std::vector<uint16_t> remapped(count*3);
+                            bool valid=true;
+                            for(size_t i=0;i<remapped.size();++i) {
+                                int index=((uint16_t*)idx)[i]+base;
+                                if(index<0 || index>65535 || (size_t)(index+1)*stride>copy.size()) valid=false;
+                                remapped[i]=(uint16_t)index;
+                            }
+                            indices->Unlock();
+                            if(valid) {
+                                HRESULT result=real->DrawIndexedPrimitiveUP(type,0,(UINT)(copy.size()/stride),count,remapped.data(),D3DFMT_INDEX16,copy.data(),stride);
+                                real->SetStreamSource(0,vb,offset,stride);
+                                real->SetIndices(indices);
+                                indices->Release(); vb->Release();
+                                AfterModelDraw(); AfterModelDrawDash();
+                                return result;
+                            }
+                        }
+                        if(indices) indices->Release();
+                    }
+                }
+                vb->Release();
+            }
+        }
         if (!mirrorJobs && !wheelJobs && !dashJobs) return real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
         HRESULT hr;
         if (!DrawMirrorGlassNative(real, type, base, minIndex, verts, start, count, &hr) &&
@@ -2837,6 +2962,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "CockpitShiftDown")) return &g_cockpitShiftDown;
     if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
     if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;
+    if (!strcmp(name, "ShowDriverIK")) return &g_cfg.showDriverIK;
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;
     if (!strcmp(name, "AnimatedDriverSave")) return &g_cfg.animatedDriverSave;
     if (!strcmp(name, "WheelOverHud")) return &g_cfg.wheelOverHud;

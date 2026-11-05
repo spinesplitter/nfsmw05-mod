@@ -196,7 +196,8 @@ constexpr struct {
     {MOD_FFB, "RearSlide", 0.0f},
     {MOD_VR, "WheelPositionRight", 0.0f}, {MOD_VR, "WheelPositionUp", 0.0f},
     {MOD_VR, "CockpitHandbrake", 0.0f}, {MOD_VR, "CockpitShiftUp", 0.0f}, {MOD_VR, "CockpitShiftDown", 0.0f},
-    {MOD_VR, "ShowCustomDriverModel", 1.0f},
+    {MOD_VR, "ShowCustomDriverModel", 0.0f},
+    {MOD_VR, "ShowDriverIK", 0.0f},
     {MOD_VR, "AnimatedDriverSpread", 1.0f},
     {MOD_VR, "AnimatedDriverSave", 0.0f},
 };
@@ -232,6 +233,7 @@ enum {
     VR_WHEELPOSITION,
     VR_COCKPITHANDBRAKE = VR_WHEELPOSITION + 2, VR_COCKPITSHIFTUP, VR_COCKPITSHIFTDOWN,
     VR_SHOWCUSTOMDRIVER,
+    VR_SHOWDRIVERIK,
     VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
     EXT_COUNT
 };
@@ -829,12 +831,15 @@ const Item kItems[] = {
     {ACTION, "Mark as handbrake", nullptr, "EdHandbrake", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Mark as shifter", nullptr, "EdShifter", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Clear handbrake / shifter marks", nullptr, "EdClearControl", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Mark as arms", nullptr, "EdArms", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Clear arm marks", nullptr, "EdClearArms", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
 
     PAGE_("ANIMATED DRIVER"),
     BACK_,
     {NUMBER, "Animated driver", "VR", "ShowCustomDriverModel", &s_ext[VR_SHOWCUSTOMDRIVER], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
+    {NUMBER, "Show IK", "VR", "ShowDriverIK", &s_ext[VR_SHOWDRIVERIK], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     HEADER_("FIT TO THIS CAR'S WHEEL"),
     {NUMBER, "Hand spread (- / +)", "VR", "AnimatedDriverSpread", &s_ext[VR_ANIMATEDDRIVERSPREAD], 0.5f, 1.5f, 0.01f, 100, "%.0f%%", 0},
     {ACTION, "Save for this car", nullptr, "SaveAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1712,7 +1717,8 @@ void Change(int index, int dir) {
                 {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"},
                 {"EdCopy", 12, "Copy requested (check clipboard)"},
                 {"EdHandbrake", 13, "Marked as handbrake"}, {"EdShifter", 14, "Marked as shifter"},
-                {"EdClearControl", 15, "Control marks cleared"}};
+                {"EdClearControl", 15, "Control marks cleared"},
+                {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
@@ -3377,8 +3383,9 @@ void Ui_Frame() {
     // The cockpit's steering wheel turns with the bound wheel (VR mod, also on a flat screen).
     if (float* angle = ExtSetting(VR_WHEELANGLE)) *angle = in.steerBound ? in.wheelDeg : 0.0f;
     if (float* v = ExtSetting(VR_COCKPITHANDBRAKE)) *v = st.driving ? in.handbrake : 0.0f;
-    if (float* v = ExtSetting(VR_COCKPITSHIFTUP)) *v = (float)(in.shiftUp & 0xFFFF);
-    if (float* v = ExtSetting(VR_COCKPITSHIFTDOWN)) *v = (float)(in.shiftDown & 0xFFFF);
+    // Raw attempts, before clutch/misshift validation. Do not feed H events into gearbox counters.
+    if (float* v = ExtSetting(VR_COCKPITSHIFTUP)) *v = (float)((in.shiftUp + in.cockpitGateForward) & 0xFFFF);
+    if (float* v = ExtSetting(VR_COCKPITSHIFTDOWN)) *v = (float)((in.shiftDown + in.cockpitGateBackward) & 0xFFFF);
     // VR seat bindings, held: the VR mod moves the seat while they are.
     auto held = [&](int seat) { return (in.seatDown >> seat & 1) ? 1.0f : 0.0f; };
     if (float* v = ExtSetting(VR_SEATRIGHT)) *v = held(SEAT_RIGHT) - held(SEAT_LEFT);

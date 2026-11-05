@@ -17,6 +17,9 @@ void D3D_AddDash(void*, const float*, const float*, const float*, const float*) 
 void D3D_AddColorTris(void*, const float*, int, uint32_t) {}
 void D3D_AddCustomDriver(void*, const float*, const CustomDriver::Controls&) {}
 void D3D_DrawOverlay(const float*, int, uint32_t) {}
+void D3D_DrawOverlayLines(const float*, int, float, uint32_t) {}
+void D3D_DrawOverlayPoints(const float*, int, float, uint32_t) {}
+const char* GameDir() { return "missing-game\\"; }
 
 static uint8_t connData[0x500], anchorData[0xD0], moverData[16];
 static void* moverVtbl[8];
@@ -823,4 +826,5 @@ int main() {
     TestSteeringWheel();
     TestPerCarDefaults();
     puts("PASS: cockpit motion, offsets, current POV, unload, anchor switch, LOD, frame lifecycle, reloaded drivers, steering wheel and per-model HUD defaults");
+    return 0;
 }

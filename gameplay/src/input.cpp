@@ -411,6 +411,7 @@ static DWORD WINAPI InputThread(LPVOID) {
         // Shifter.
         bool shifterBound = false;
         int stick = -1, count = 0;
+        unsigned gateForward = 0, gateBackward = 0;
         for (int g = 0; g <= kMaxGears; g++) {
             if (AnyUsable(s_gear[g])) shifterBound = true;
             bool down = AnyDown(s_gear[g], focus);
@@ -418,12 +419,16 @@ static DWORD WINAPI InputThread(LPVOID) {
                 stick = g;
                 count++;
             }
-            if (down && !prevGearDown[g]) latched = g;
+            if (down && !prevGearDown[g]) {
+                latched = g;
+                // Odd forward gears push forward; even/reverse pull backward.
+                if (g & 1) ++gateForward; else ++gateBackward;
+            }
             prevGearDown[g] = down;
         }
         if (count > 1) stick = -1;      // two gates at once: treat as between gears
         bool neutralDown = AnyDown(s_neutral, focus);
-        if (neutralDown && !prevNeutral) latched = -1;
+        if (neutralDown && !prevNeutral) { latched = -1; ++gateBackward; }
         prevNeutral = neutralDown;
         if (g_cfg.latching) stick = latched;
 
@@ -473,6 +478,8 @@ static DWORD WINAPI InputThread(LPVOID) {
         s_snap.clutchPedal = pedal;
         s_snap.shifterBound = shifterBound;
         s_snap.stickGear = stick;
+        s_snap.cockpitGateForward += gateForward;
+        s_snap.cockpitGateBackward += gateBackward;
         if (toggleDown && !prevToggle) s_snap.toggles++;
         if (upDown && !prevUp) s_snap.shiftUp++;
         if (downDown && !prevDown) s_snap.shiftDown++;

@@ -10,6 +10,7 @@ struct InputSnapshot {
     uint32_t toggles = 0;       // incremented on every press of the toggle binding
     uint32_t shiftUp = 0;       // ... of [Shifter] ShiftUp (sequential mode)
     uint32_t shiftDown = 0;     // ... of [Shifter] ShiftDown
+    uint32_t cockpitGateForward = 0, cockpitGateBackward = 0; // raw H-gate presses, animation only
     uint32_t blows = 0;         // ... of [Engine] DebugBlow
     uint32_t repairs = 0;       // ... of [Engine] DebugRepair
     uint32_t hits = 0;          // ... of [Damage] DebugDamage
