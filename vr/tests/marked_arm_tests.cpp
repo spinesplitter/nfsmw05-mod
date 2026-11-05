@@ -68,7 +68,7 @@ int main() {
     s_armHover.Update(0.1f,true,rest,hover);
     std::vector<V3> heads,tails;
     DriverArmPose(Identity(),heads,tails);
-    Check(heads[5].x< s_driverIK.bones[5].head[0],"shoulder retracts");
+    Check(fabsf(heads[4].x-s_driverIK.bones[4].head[0])<1e-6f,"shoulder stays anchored during control reach");
     Check(fabsf((tails[6]-heads[6]).x-0.4f)<1e-5f,"forearm stays rigid without wrist rotation");
     Check(fabsf((tails[7]-heads[7]).x-0.4f)<1e-5f,"hand stays rigid without articulation");
     s_head.valid=true; s_driverIKWorldValid=true; s_driverIKWorld=Identity();
@@ -99,8 +99,12 @@ int main() {
     DriverArmPose(Identity(),heads,tails);
     Check(fabsf(heads[6].z-(shiftElbow.z-0.10f))<1e-5f,"brake elbow lowered 10 cm");
     Check(fabsf(heads[7].z-heads[6].z)<1e-5f,"hand lowers together with elbow");
-    Check(fabsf(heads[5].y-(s_driverIK.bones[5].head[1]-0.08f))<1e-5f &&
-        fabsf(heads[5].z-(s_driverIK.bones[5].head[2]-0.10f))<1e-5f,"actual elbow moves right and down independently of hand");
+    for(int b:{4,5,6,7}) {
+        auto& restBone=s_driverIK.bones[b];
+        Check(fabsf(CustomDriver::Length({tails[b].x-heads[b].x,tails[b].y-heads[b].y,tails[b].z-heads[b].z})-
+            CustomDriver::Length({restBone.tail[0]-restBone.head[0],restBone.tail[1]-restBone.head[1],restBone.tail[2]-restBone.head[2]}))<1e-5f,
+            "control-only brake solve preserves every arm bone length");
+    }
     Check(CustomDriver::Length({tails[4].x-heads[5].x,tails[4].y-heads[5].y,tails[4].z-heads[5].z})<1e-5f,"actual elbow joint stays connected");
     g_cockpitHandbrake=0;
     for(int i=0;i<100;++i) UpdateDriverHover(0.02f);

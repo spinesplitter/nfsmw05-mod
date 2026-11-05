@@ -826,6 +826,7 @@ const Item kItems[] = {
     {ACTION, "Copy triangle IDs to clipboard", nullptr, "EdCopy", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Hide", nullptr, "EdHide", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Draw as skin", nullptr, "EdSkin", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Take off the steering wheel", nullptr, "EdNoWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Mark as handbrake", nullptr, "EdHandbrake", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1718,7 +1719,8 @@ void Change(int index, int dir) {
                 {"EdCopy", 12, "Copy requested (check clipboard)"},
                 {"EdHandbrake", 13, "Marked as handbrake"}, {"EdShifter", 14, "Marked as shifter"},
                 {"EdClearControl", 15, "Control marks cleared"},
-                {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"}};
+                {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"},
+                {"EdSkin", 18, "Drawn as skin"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
