@@ -63,6 +63,9 @@ struct Config {
     int   spectatorWidth = 1600;     // window client width in smooth/sbs modes (px)
     bool  seat = true;               // bumper / hood camera: eyes at the driver model's head
     bool  hideHead = true;           // leave out the driver model's head when it is at the eyes
+    float showCustomDriverModel = 1.0f; // separate animated headless overlay (live F4 toggle)
+    float animatedDriverSpread = 1.0f; // radial hand-path scale, explicitly saved per car
+    float animatedDriverSave = 0.0f;   // F4 save request, consumed by cockpit update
     float hideArms = 1.0f;           // 1 = leave out the seated driver's arms and hands (a 0/1 float: live from F4)
     float hudPerCar = 0.0f;          // 1 = each car remembers its HUD size, distance and height ([Hud] per car; live from F4)
     float wheelOverHud = 0.0f;       // 1 = the car's steering wheel in front of the HUD panel while driving (live from F4)

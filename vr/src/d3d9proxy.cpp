@@ -131,6 +131,8 @@ static IDirect3DSurface9* s_mirrorRawSurf;
 static UINT s_mirrorW, s_mirrorH;
 
 static void ReleaseDash();
+static void ReleaseCustomDriver();
+static void ResetCustomDriverEye();
 
 // One reusable D3DSBT_ALL state block. Every place that changes device state for our own drawing
 // used to create a fresh one, which allocates the whole block and reads the device state back - and
@@ -171,6 +173,7 @@ static void ReleaseEyeTargets() {
     s_mirrorW = s_mirrorH = 0;
     ReleaseDash();
     ReleaseSavedState();
+    ReleaseCustomDriver();
     s_eyeW = s_eyeH = 0;
     s_eyeOk = false;
 }
@@ -1215,6 +1218,7 @@ static bool EnsureDash() {
 }
 
 void D3D_BeginDashEye(bool on, const float* view, const float* proj) {
+    ResetCustomDriverEye();
     bool menuOk = s_uiMenuOpen < 0.5f || g_cfg.dashAdjust > 0.5f;
     s_dashEye.on = on && menuOk;
     s_dashEye.added = s_dashEye.drawn = false;
@@ -1611,6 +1615,12 @@ void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb) {
     bb->Release();
 }
 
+#include "custom_driver_render.h"
+static void ResetCustomDriverEye() {
+    s_customDriverIb = nullptr;
+    s_customDriverDrawn = false;
+}
+
 static void DrawColorTris(ColorTris& c) {
     IDirect3DStateBlock9* saved = SavedStateBlock();
     if (!saved) return;
@@ -1630,6 +1640,7 @@ static void DrawColorTris(ColorTris& c) {
 // After the first draw from the interior's index buffer in the player view, once per eye (its
 // picture is blended: drawn again it would grow more opaque); the same for coloured triangles.
 static void AfterModelDrawDash() {
+    DrawCustomDriver();
     if ((!s_colorEye || s_colorTris.empty()) && (!s_dashEye.on || !s_dashEye.added || s_dashEye.drawn)) return;
     auto colorJobs = s_colorTrisByIb.find(s_curIndices);
     if (s_colorEye && colorJobs != s_colorTrisByIb.end()) {
@@ -2821,7 +2832,13 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "ScreenDistance")) return &g_cfg.screenDistance;
     if (!strcmp(name, "NearZ")) return &g_cfg.nearZ;
     if (!strcmp(name, "SteeringWheelAngle")) return &g_steeringWheelAngle;
+    if (!strcmp(name, "CockpitHandbrake")) return &g_cockpitHandbrake;
+    if (!strcmp(name, "CockpitShiftUp")) return &g_cockpitShiftUp;
+    if (!strcmp(name, "CockpitShiftDown")) return &g_cockpitShiftDown;
     if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
+    if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;
+    if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;
+    if (!strcmp(name, "AnimatedDriverSave")) return &g_cfg.animatedDriverSave;
     if (!strcmp(name, "WheelOverHud")) return &g_cfg.wheelOverHud;
     if (!strcmp(name, "HudPerCar")) return &g_cfg.hudPerCar;
     if (!strcmp(name, "Dash")) return &g_cfg.dash;

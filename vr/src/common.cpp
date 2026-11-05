@@ -154,6 +154,7 @@ void LoadConfig() {
     c.spectatorWidth = ReadInt(ini, "SpectatorWidth", c.spectatorWidth);
     c.seat = ReadInt(ini, "Seat", c.seat) != 0;
     c.hideHead = ReadInt(ini, "HideHead", c.hideHead) != 0;
+    c.showCustomDriverModel = ReadInt(ini, "ShowCustomDriverModel", 1) != 0 ? 1.0f : 0.0f;
     c.hideArms = ReadInt(ini, "HideArms", 1) != 0 ? 1.0f : 0.0f;
     c.wheelOverHud = ReadInt(ini, "WheelOverHud", 0) != 0 ? 1.0f : 0.0f;
     c.hudPerCar = ReadInt(ini, "HudPerCar", 0) != 0 ? 1.0f : 0.0f;

@@ -32,9 +32,12 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <deque>
+#include "cockpit_controls.h"
 
 float g_steeringWheelAngle = 0.0f;
 float g_seatInput[4] = {};
+float g_cockpitHandbrake = 0, g_cockpitShiftUp = 0, g_cockpitShiftDown = 0;
 
 namespace {
 
@@ -157,10 +160,10 @@ struct TriRef {
 // are not read.)
 struct EditSet {
     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
-    std::set<uint64_t> black, wheel, noWheel, show;
+    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter;
     bool loaded = false;
 };
-const char* const kEditKeys[4] = {"Black", "Wheel", "NoWheel", "Show"};
+const char* const kEditKeys[6] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter"};
 int s_editsGen = 0;                                 // counts edits, for caches built from them
 std::unordered_map<std::string, EditSet> s_edits;
 
@@ -216,8 +219,8 @@ EditSet& EditsFor(const std::string& solidName) {
         return ParseTris(buf.data());
     };
     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
-    std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
-    for (int k = 0; k < 4; k++)
+    std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter};
+    for (int k = 0; k < 6; k++)
         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
     size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size();
     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
@@ -228,9 +231,9 @@ void SaveEdits(const std::string& solidName) {
     const EditSet& e = EditsFor(solidName);
     std::vector<std::array<uint16_t, 3>> hide;
     for (auto& h : e.hide) hide.push_back(h.second);
-    const std::set<uint64_t>* sets[4] = {&e.black, &e.wheel, &e.noWheel, &e.show};
+    const std::set<uint64_t>* sets[6] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter};
     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < 6; k++) {
         std::vector<std::array<uint16_t, 3>> v;
         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
@@ -329,7 +332,8 @@ CarIniFile s_carInis[] = {{"Seat", "nfsmw_vr_seat.ini"},
                           {"DashLayout", "nfsmw_vr_dash.ini"},
                           {"MirrorOffset", "nfsmw_vr_mirror.ini"},
                           {"WheelPivot", "nfsmw_vr_wheel.ini"},
-                          {"WheelPosition", "nfsmw_vr_wheel.ini"}};
+                          {"WheelPosition", "nfsmw_vr_wheel.ini"},
+                          {"AnimatedDriver", "nfsmw_vr_driver.ini"}};
 
 // Sections still in nfsmw_vr.ini (where they were before) are moved to their files, once; a line
 // moved over replaces the file's (the file may be a release's defaults, the old line your own).
@@ -437,6 +441,8 @@ PerCar s_pivotCar = {"WheelPivot", "steering wheel turning centre", 2, {&g_cfg.w
 PerCar s_wheelPositionCar = {"WheelPosition", "steering wheel location", 2,
                             {&g_cfg.wheelPosition[0], &g_cfg.wheelPosition[1]},
                             {-0.5f, -0.5f}, {0.5f, 0.5f}, 2, false, true};
+PerCar s_animatedDriverCar = {"AnimatedDriver", "animated driver hand spread", 1,
+                            {&g_cfg.animatedDriverSpread}, {0.5f}, {1.5f}, 1, false, true};
 
 void SavePerCar(PerCar& p) {
     char buf[512];
@@ -502,7 +508,22 @@ void UpdatePerCar(PerCar& p, const std::string& car) {
     }
 }
 
+void UpdateAnimatedDriverCar(const std::string& car) {
+    // Explicit-save fitting: do not auto-save previews or carry an unsaved fit
+    // into another model. Reuse the validated per-car loader and file format.
+    if (car != s_animatedDriverCar.car) {
+        s_animatedDriverCar.dirty = false;
+        UpdatePerCar(s_animatedDriverCar, car);
+        g_cfg.animatedDriverSave = 0;
+    }
+    if (g_cfg.animatedDriverSave > 0.5f) {
+        if (!car.empty()) SavePerCar(s_animatedDriverCar);
+        g_cfg.animatedDriverSave = 0;
+    }
+}
+
 void UpdateHudCar(const std::string& car) {
+    UpdateAnimatedDriverCar(car);
     UpdatePerCar(s_hudCar, car);
     UpdatePerCar(s_dashCar, car);
     UpdatePerCar(s_dashLayoutCar, "Default");
@@ -2260,6 +2281,8 @@ void RunEditCommand(int cmd) {
                 e.hide.erase(id);
                 break;
             case 3:
+                e.handbrake.erase(id);
+                e.shifter.erase(id);
                 e.wheel.insert(id);
                 e.noWheel.erase(id);
                 wheel = true;
@@ -2270,15 +2293,31 @@ void RunEditCommand(int cmd) {
                 wheel = true;
                 break;
             case 5:
+                e.handbrake.erase(id);
+                e.shifter.erase(id);
                 wheel |= e.wheel.erase(id) + e.noWheel.erase(id) > 0;
                 e.hide.erase(id);
                 e.black.erase(id);
                 if (info.driver) e.show.insert(id);   // drawn even inside the seated driver's hidden arms / head
                 break;
+            case 13:
+            case 14:
+                wheel |= e.wheel.erase(id) > 0;
+                e.noWheel.insert(id);  // keep wheel auto-detection from claiming a marked prop
+                e.handbrake.erase(id);
+                e.shifter.erase(id);
+                (cmd == 13 ? e.handbrake : e.shifter).insert(id);
+                break;
+            case 15:
+                e.handbrake.erase(id);
+                e.shifter.erase(id);
+                break;
         }
     }
     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
-    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), kWhat[cmd]);
+    const char* what = cmd == 13 ? "marked as handbrake" : cmd == 14 ? "marked as shifter" :
+                       cmd == 15 ? "control marks cleared" : kWhat[cmd];
+    Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), what);
     s_editsGen++;
     SaveEdits(s_pick.name);
     ApplyEditsTo(s_pick.name, wheel);
@@ -2385,6 +2424,66 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
         dropped ? " (some left out: too many separate pieces in one draw entry)" : "");
 }
 
+float DriverShiftAmount();
+float DriverShiftTravel();
+CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const float* matrix, const M4& world) {
+    CustomDriver::Controls out;
+    if (!info.wheel || !info.wheel->ok) return out;
+    const Wheel& w = *info.wheel;
+    // Exact same steering matrix as the visible wheel (including user pivot/location offsets).
+    float turned[16];
+    TurnedMatrix(w, 0, matrix, turned);
+    auto local = [&](V3 p, const float* m) -> CustomDriver::Point {
+        float rel[3];
+        for (int a=0; a<3; a++) rel[a]=p.x*m[a]+p.y*m[4+a]+p.z*m[8+a]+m[12+a]-world.m[3][a];
+        CustomDriver::Point result;
+        float* dst=&result.x;
+        for(int r=0;r<3;r++) {
+            float len2=0; dst[r]=0;
+            for(int a=0;a<3;a++) { dst[r]+=rel[a]*world.m[r][a]; len2+=world.m[r][a]*world.m[r][a]; }
+            dst[r]/=std::max(len2,1e-8f);
+        }
+        return result;
+    };
+    V3 centre={w.centre[0],w.centre[1],w.centre[2]};
+    out.centre=local(centre,turned);
+    out.axis=CustomDriver::Unit(local(centre+V3{w.axis[0],w.axis[1],w.axis[2]},turned)-out.centre);
+    out.radius=w.radius; out.degrees=g_steeringWheelAngle; out.wheel=true;
+    out.handSpread=g_cfg.animatedDriverSpread;
+    struct Picked { int generation=-1; V3 shifter{}, brake{}, pivot{}; bool shift=false, handbrake=false; };
+    static std::unordered_map<uint8_t*,Picked> cache;
+    Picked& picked=cache[solid];
+    if(picked.generation!=s_editsGen) {
+        picked=Picked{}; picked.generation=s_editsGen;
+        SolidMesh mesh;
+        if(ReadMesh(solid,mesh)) {
+            const EditSet& edits=EditsFor(SolidName(info));
+            float highestShift=-1e9f,highestBrake=-1e9f,lowest=1e9f;
+            for(int i=0;i+2<mesh.numIndices;i+=3) {
+                uint64_t id=TriId(mesh.indices[i],mesh.indices[i+1],mesh.indices[i+2]);
+                bool shift=edits.shifter.count(id)!=0, brake=edits.handbrake.count(id)!=0;
+                if(!shift && !brake) continue;
+                for(int j=0;j<3;j++) {
+                    if(mesh.indices[i+j]>=mesh.numVerts) continue;
+                    V3 p=mesh.at(mesh.indices[i+j]);
+                    if(shift && p.z>highestShift) { highestShift=p.z; picked.shifter=p; picked.shift=true; }
+                    if(brake && p.z>highestBrake) { highestBrake=p.z; picked.brake=p; picked.handbrake=true; }
+                    if(brake && p.z<lowest) { lowest=p.z; picked.pivot=p; }
+                }
+            }
+        }
+    }
+    out.hasShifter=picked.shift; out.hasHandbrake=picked.handbrake;
+    out.shift=DriverShiftAmount(); out.brake=std::max(0.0f,std::min(1.0f,g_cockpitHandbrake));
+    if(picked.shift) out.shifter=local(picked.shifter+V3{DriverShiftTravel(),0,0},matrix);
+    if(picked.handbrake) {
+        V3 p=picked.brake-picked.pivot;
+        float a=CockpitHandbrakeAngle(g_cockpitHandbrake), c=cosf(a), s=sinf(a);
+        out.handbrake=local(picked.pivot+V3{c*p.x-s*p.z,p.y,s*p.x+c*p.z},matrix);
+    }
+    return out;
+}
+
 // Returns the entry to submit (the first of the seated driver's ranges), or null for none.
 uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     uint8_t* solid = model ? At<uint8_t*>(model, kModelSolid) : nullptr;
@@ -2397,6 +2496,12 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
         D3D_AddDash(At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer), origin, right, up, toEye);
     }
     if (player) NoteEditor(solid, *info, m);
+    if (player && m && info->wheel && info->wheel->ok && s_seatedConn && s_head.valid && g_cfg.showCustomDriverModel > 0.5f) {
+        M4 world = s_seatedBody;
+        for (int a = 0; a < 3; a++)
+            world.m[3][a] += s_head.body[0]*world.m[0][a] + s_head.body[1]*world.m[1][a] + s_head.body[2]*world.m[2][a];
+        D3D_AddCustomDriver(At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer), &world.m[0][0], DriverControls(solid, *info, m, world));
+    }
     Driver* d = info ? info->driver : nullptr;
     if (!d || !d->ok || !m) return entry;
     const float* h = d->head;
@@ -2486,10 +2591,87 @@ void MarkPlayerCarMatrix(const float* matrix) {
 float s_turned[256][16];
 unsigned s_turnedNext;
 
+struct ControlDraw {
+    uint8_t entry[kEntrySize];
+    float matrix[16];
+};
+// Queue pointers must survive until both eyes have consumed the game's draw queue.
+std::deque<ControlDraw> s_controlDraws;
+CockpitControlMotion s_controlMotion;
+double ControlTime() { return GetTickCount64() * 0.001; }
+float DriverShiftTravel() { return s_controlMotion.Shift(ControlTime()); }
+float DriverShiftAmount() {
+    double t=(ControlTime()-s_controlMotion.shiftAt)/0.55;
+    if(s_controlMotion.shiftAt<0 || t<=0 || t>=1) return 0;
+    float s=sinf(float(t)*3.14159265f);
+    return s*s;
+}
+
+bool SubmitControls(uint8_t* entry, uint8_t* solid, const float* matrix,
+                    uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5,
+                    uint32_t a7, uint32_t a8, uint32_t a9) {
+    if (!solid || !matrix || !DrawingPlayerCar()) return false;
+    auto found = s_solids.find(solid);
+    if (found == s_solids.end()) return false;
+    const EditSet& edits = EditsFor(SolidName(found->second));
+    if (edits.handbrake.empty() && edits.shifter.empty()) return false;
+    SolidMesh mesh;
+    if (!ReadMesh(solid, mesh)) return false;
+    int first = At<int>(entry, kEntryFirstIndex), count = At<int>(entry, kEntryTris);
+    if (first < 0 || count <= 0 || first > mesh.numIndices || count > (mesh.numIndices - first) / 3) return false;
+    auto kind = [&](int index) {
+        uint64_t id = TriId(mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]);
+        return edits.handbrake.count(id) ? 1 : edits.shifter.count(id) ? 2 : 0;
+    };
+    bool marked = false;
+    for (int t = 0; t < count; t++) marked |= kind(first + t * 3) != 0;
+    if (!marked) return false;
+    // Lowest rearward marked point approximates the lever hinge, not the car origin.
+    V3 pivot = {0, 0, 0};
+    float lowest = 1e9f;
+    for (int k = 0; k + 2 < mesh.numIndices; k += 3) {
+        if (kind(k) != 1) continue;
+        for (int j = 0; j < 3; j++) {
+            int v = mesh.indices[k + j];
+            if (v >= mesh.numVerts) continue;
+            V3 p = mesh.at(v);
+            if (p.z < lowest) { lowest = p.z; pivot = p; }
+        }
+    }
+    float angle = CockpitHandbrakeAngle(g_cockpitHandbrake);
+    float c = cosf(angle), s = sinf(angle), shift = s_controlMotion.Shift(ControlTime());
+    for (int begin = 0; begin < count;) {
+        int part = kind(first + begin * 3), end = begin + 1;
+        while (end < count && kind(first + end * 3) == part) end++;
+        s_controlDraws.emplace_back();
+        ControlDraw& draw = s_controlDraws.back();
+        memcpy(draw.entry, entry, kEntrySize);
+        memcpy(draw.matrix, matrix, sizeof(draw.matrix));
+        At<int>(draw.entry, kEntryFirstIndex) = first + begin * 3;
+        At<int>(draw.entry, kEntryTris) = end - begin;
+        At<int>(draw.entry, kEntryNumIndices) = (end - begin) * 3;
+        for (int col = 0; col < 3; col++) {
+            if (part == 1) {
+                // Rotate about local Y; positive X (the lever grip) rises toward the roof.
+                draw.matrix[col] = c * matrix[col] + s * matrix[8 + col];
+                draw.matrix[8 + col] = -s * matrix[col] + c * matrix[8 + col];
+                draw.matrix[12 + col] += pivot.x * matrix[col] + pivot.z * matrix[8 + col] -
+                    pivot.x * draw.matrix[col] - pivot.z * draw.matrix[8 + col];
+            } else if (part == 2) draw.matrix[12 + col] += shift * matrix[col];
+        }
+        MarkPlayerCarMatrix(draw.matrix);
+        ((SubmitEntry_t)kSubmitEntry)(draw.entry, a2, a3, a4, a5, draw.matrix, a7, a8, a9);
+        begin = end;
+    }
+    return true;
+}
+
 void __cdecl SubmitEntry(uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                          uint32_t a7, uint32_t a8, uint32_t a9) {
     auto submit = [](uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                      uint32_t a7, uint32_t a8, uint32_t a9) {
+        uint8_t* solid = s_submitModel ? At<uint8_t*>(s_submitModel, kModelSolid) : nullptr;
+        if (SubmitControls(entry, solid, matrix, a2, a3, a4, a5, a7, a8, a9)) return;
         MarkPlayerCarMatrix(matrix);
         ((SubmitEntry_t)kSubmitEntry)(entry, a2, a3, a4, a5, matrix, a7, a8, a9);
     };
@@ -2593,7 +2775,7 @@ bool Held(int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000)
 // before the config is read. Called once from DllMain before LoadConfig (the F4 menu writes the
 // current car's values to [VR]) and before any car is seen or any layout auto-places.
 void Cockpit_PerCarDefaults() {
-    for (PerCar* p : {&s_hudCar, &s_dashCar, &s_dashLayoutCar, &s_mirrorCar, &s_pivotCar, &s_wheelPositionCar})
+    for (PerCar* p : {&s_hudCar, &s_dashCar, &s_dashLayoutCar, &s_mirrorCar, &s_pivotCar, &s_wheelPositionCar, &s_animatedDriverCar})
         for (int i = 0; i < p->n; i++) p->base[i] = *p->v[i];
     Log("cockpit: per-car defaults captured");
 }
@@ -2675,10 +2857,12 @@ void Cockpit_EndFrame() {
     s_frameDone.clear();
     s_eyeIndex = -1;
     s_hashSerial++;
+    s_controlDraws.clear();
+    s_controlMotion.Update(ControlTime(), g_cockpitShiftUp, g_cockpitShiftDown, s_head.valid);
     int cmd = (int)lrintf(g_cfg.editCommand);
     if (cmd) {
         g_cfg.editCommand = 0;
-        if (cmd >= 1 && cmd <= 6) RunEditCommand(cmd);
+        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 15)) RunEditCommand(cmd);
         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
         if (cmd == 12) CopySelection();

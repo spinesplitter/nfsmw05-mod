@@ -195,6 +195,10 @@ constexpr struct {
     {MOD_FFB, "MinForce", 0.0f},
     {MOD_FFB, "RearSlide", 0.0f},
     {MOD_VR, "WheelPositionRight", 0.0f}, {MOD_VR, "WheelPositionUp", 0.0f},
+    {MOD_VR, "CockpitHandbrake", 0.0f}, {MOD_VR, "CockpitShiftUp", 0.0f}, {MOD_VR, "CockpitShiftDown", 0.0f},
+    {MOD_VR, "ShowCustomDriverModel", 1.0f},
+    {MOD_VR, "AnimatedDriverSpread", 1.0f},
+    {MOD_VR, "AnimatedDriverSave", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -226,9 +230,13 @@ enum {
     FFB_MINFORCE,
     FFB_REARSLIDE,
     VR_WHEELPOSITION,
-    EXT_COUNT = VR_WHEELPOSITION + 2
+    VR_COCKPITHANDBRAKE = VR_WHEELPOSITION + 2, VR_COCKPITSHIFTUP, VR_COCKPITSHIFTDOWN,
+    VR_SHOWCUSTOMDRIVER,
+    VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
+    EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
+static_assert(VR_ANIMATEDDRIVERSAVE == EXT_COUNT - 1, "animated driver setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
@@ -477,6 +485,7 @@ const Item kItems[] = {
     LINK_("Extra Options", "EXTRA OPTIONS"),
     LINK_("Telemetry", "TELEMETRY"),
     LINK_("VR", "VR"),
+    LINK_("Animated Driver", "ANIMATED DRIVER"),
     LINK_("Menu and testing", "MENU AND TESTING"),
 
     PAGE_("EXTRA OPTIONS"),
@@ -817,11 +826,22 @@ const Item kItems[] = {
     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Take off the steering wheel", nullptr, "EdNoWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Mark as handbrake", nullptr, "EdHandbrake", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Mark as shifter", nullptr, "EdShifter", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Clear handbrake / shifter marks", nullptr, "EdClearControl", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
 
+    PAGE_("ANIMATED DRIVER"),
+    BACK_,
+    {NUMBER, "Animated driver", "VR", "ShowCustomDriverModel", &s_ext[VR_SHOWCUSTOMDRIVER], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
+    HEADER_("FIT TO THIS CAR'S WHEEL"),
+    {NUMBER, "Hand spread (- / +)", "VR", "AnimatedDriverSpread", &s_ext[VR_ANIMATEDDRIVERSPREAD], 0.5f, 1.5f, 0.01f, 100, "%.0f%%", 0},
+    {ACTION, "Save for this car", nullptr, "SaveAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
+
     PAGE_("MENU AND TESTING"),
     BACK_,
+    {ACTION, "Hide Animated Driver Model", nullptr, "HideAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
     HEADER_("TESTING"),
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1668,12 +1688,31 @@ void Change(int index, int dir) {
             GoBack();
             return;
         }
+        if (strcmp(it.key, "SaveAnimatedDriver") == 0) {
+            float* request = ExtSetting(VR_ANIMATEDDRIVERSAVE);
+            if (!request) { Note("No updated VR mod"); return; }
+            if (!*Physics_Car()) { Note("Enter a car before saving its fit"); return; }
+            *request = 1.0f;
+            Note("Hand spread save requested for the current cockpit car");
+            return;
+        }
+        if (strcmp(it.key, "HideAnimatedDriver") == 0) {
+            float* setting = ExtSetting(VR_SHOWCUSTOMDRIVER);
+            if (!setting) { Note("No VR mod"); return; }
+            *setting = 0.0f;
+            s_ext[VR_SHOWCUSTOMDRIVER] = 0.0f;
+            s_menu.dirty = true;
+            Note("Animated driver hidden (Animated Driver page restores it)");
+            return;
+        }
         if (strncmp(it.key, "Ed", 2) == 0) {
             static const struct { const char* key; int cmd; const char* note; } kEd[] = {
                 {"EdHide", 1, "Hidden"}, {"EdBlack", 2, "Drawn black"}, {"EdWheel", 3, "On the steering wheel"},
                 {"EdNoWheel", 4, "Off the steering wheel"}, {"EdRestore", 5, "Restored"}, {"EdUndo", 6, "Undone"},
                 {"EdWheelPivot", 10, "Steering wheel animation centred"}, {"EdWheelPivotReset", 11, "Steering wheel centre reset"},
-                {"EdCopy", 12, "Copy requested (check clipboard)"}};
+                {"EdCopy", 12, "Copy requested (check clipboard)"},
+                {"EdHandbrake", 13, "Marked as handbrake"}, {"EdShifter", 14, "Marked as shifter"},
+                {"EdClearControl", 15, "Control marks cleared"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
@@ -1773,6 +1812,7 @@ void Save() {
         else text = *(std::string*)it.value;
         int ext = ExtIndex(it.value);
         if (ext >= 0) {
+            if (ext == VR_ANIMATEDDRIVERSPREAD) continue; // explicit per-car Save, never global
             if (ExtSetting(ext)) writes.push_back({ExtIniPath(ext), it.section, it.key, text});
             continue;
         }
@@ -3336,6 +3376,9 @@ void Ui_Frame() {
     InputSnapshot in = Input_Get();
     // The cockpit's steering wheel turns with the bound wheel (VR mod, also on a flat screen).
     if (float* angle = ExtSetting(VR_WHEELANGLE)) *angle = in.steerBound ? in.wheelDeg : 0.0f;
+    if (float* v = ExtSetting(VR_COCKPITHANDBRAKE)) *v = st.driving ? in.handbrake : 0.0f;
+    if (float* v = ExtSetting(VR_COCKPITSHIFTUP)) *v = (float)(in.shiftUp & 0xFFFF);
+    if (float* v = ExtSetting(VR_COCKPITSHIFTDOWN)) *v = (float)(in.shiftDown & 0xFFFF);
     // VR seat bindings, held: the VR mod moves the seat while they are.
     auto held = [&](int seat) { return (in.seatDown >> seat & 1) ? 1.0f : 0.0f; };
     if (float* v = ExtSetting(VR_SEATRIGHT)) *v = held(SEAT_RIGHT) - held(SEAT_LEFT);

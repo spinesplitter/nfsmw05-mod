@@ -15,6 +15,7 @@ void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_RegisterWheelDraw(void*, int) {}
 void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
 void D3D_AddColorTris(void*, const float*, int, uint32_t) {}
+void D3D_AddCustomDriver(void*, const float*, const CustomDriver::Controls&) {}
 void D3D_DrawOverlay(const float*, int, uint32_t) {}
 
 static uint8_t connData[0x500], anchorData[0xD0], moverData[16];
@@ -32,6 +33,36 @@ static void Check(bool ok, const char* message) {
 }
 static void Near(float a, float b, const char* message) { Check(fabsf(a - b) < 0.0002f, message); }
 static void TestWheelPositionSave() {
+    // Driver fitting uses a separate file and an explicit save request, not
+    // the dashboard's one-second auto-save policy.
+    char driverDir[MAX_PATH], driverPath[MAX_PATH];
+    Check(GetTempPathA(MAX_PATH, driverDir) != 0, "driver temporary directory");
+    Check(GetTempFileNameA(driverDir, "drv", 0, driverPath) != 0, "driver temporary ini");
+    CarIni("AnimatedDriver");
+    CarIniFile* driverFile = nullptr;
+    for (auto& entry : s_carInis) if (!strcmp(entry.section, "AnimatedDriver")) driverFile = &entry;
+    Check(driverFile != nullptr, "driver has its own ini mapping");
+    char oldDriverPath[MAX_PATH]; strcpy(oldDriverPath, driverFile->path);
+    strcpy(driverFile->path, driverPath);
+    auto oldDriver = s_animatedDriverCar;
+    s_animatedDriverCar.car.clear(); s_animatedDriverCar.base[0]=1;
+    UpdateAnimatedDriverCar("DRIVER_A");
+    g_cfg.animatedDriverSpread=1.23f;
+    UpdateAnimatedDriverCar("DRIVER_A");
+    UpdateAnimatedDriverCar("DRIVER_B");
+    Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit never leaks to another car");
+    UpdateAnimatedDriverCar("DRIVER_A");
+    Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit is not persisted");
+    g_cfg.animatedDriverSpread=1.23f; g_cfg.animatedDriverSave=1;
+    UpdateAnimatedDriverCar("DRIVER_A");
+    Near(g_cfg.animatedDriverSave,0,"driver save consumed once");
+    UpdateAnimatedDriverCar("DRIVER_B");
+    Near(g_cfg.animatedDriverSpread,1,"saved fit does not leak");
+    UpdateAnimatedDriverCar("DRIVER_A");
+    Near(g_cfg.animatedDriverSpread,1.23f,"saved driver fit reloads for its car");
+    s_animatedDriverCar=oldDriver; g_cfg.animatedDriverSpread=1;
+    strcpy(driverFile->path,oldDriverPath);
+    Check(DeleteFileA(driverPath)!=0,"driver temporary ini removed");
     char directory[MAX_PATH], temporary[MAX_PATH];
     Check(GetTempPathA(MAX_PATH, directory) != 0, "temporary directory available");
     Check(GetTempFileNameA(directory, "whl", 0, temporary) != 0, "temporary wheel ini created");
