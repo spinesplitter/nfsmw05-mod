@@ -21,6 +21,8 @@ SpectatorMode Spectator_Mode();
 void Spectator_CycleMode();
 // Client-area aspect ratio the game window should have in the current mode.
 float Spectator_WindowAspect(int bbWidth, int bbHeight);
+// Sets the monitor aspect used for the desktop projection, without changing the HUD canvas aspect.
+void Spectator_SetDesktopAspect(float aspect);
 // True once after the desired window aspect changed (e.g. the headset FOV became known).
 bool Spectator_ConsumeResize();
 // Replaces the back buffer contents with the spectator view.

@@ -152,6 +152,7 @@ void Spectator_CycleMode() {
 
 // Aspect of one spectator view: configured, or the headset's own (tanX/tanY).
 static float s_viewAspect = 1.0f;
+static float s_desktopAspect;
 static bool s_resize;
 
 static float ViewAspect(float hmdTanX, float hmdTanY) {
@@ -165,6 +166,10 @@ float Spectator_WindowAspect(int bbWidth, int bbHeight) {
     case SpectatorMode::SideBySide: return 2 * s_viewAspect;
     default: return bbHeight ? (float)bbWidth / bbHeight : 1.0f;
     }
+}
+
+void Spectator_SetDesktopAspect(float aspect) {
+    s_desktopAspect = aspect > 0.0f ? aspect : 0.0f;
 }
 
 bool Spectator_ConsumeResize() {
@@ -217,11 +222,14 @@ void Spectator_Draw(IDirect3DDevice9* dev, const SpectatorFrame& f) {
 
     // Field of view: configured, or slightly inside the headset's so smoothing lag
     // rarely reaches past the rendered image.
-    float aspect = ViewAspect(f.hmdTanX, f.hmdTanY);
-    if (fabsf(aspect - s_viewAspect) > 0.01f * s_viewAspect) {
-        s_viewAspect = aspect;
+    float viewAspect = ViewAspect(f.hmdTanX, f.hmdTanY);
+    if (fabsf(viewAspect - s_viewAspect) > 0.01f * s_viewAspect) {
+        s_viewAspect = viewAspect;
         s_resize = true;
     }
+    float aspect = viewAspect;
+    if (g_cfg.spectatorNativeFullscreen && s_desktopAspect > 0.0f)
+        aspect = s_mode == SpectatorMode::SideBySide ? s_desktopAspect / 2.0f : s_desktopAspect;
     float tanX = g_cfg.spectatorFov > 0 ? tanf(g_cfg.spectatorFov * 0.5f * 3.14159265f / 180.0f) : f.hmdTanX * 0.95f;
     if (tanX <= 0) tanX = 1.0f;
     float tanY = tanX / aspect;

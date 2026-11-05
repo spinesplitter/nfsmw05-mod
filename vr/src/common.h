@@ -61,6 +61,7 @@ struct Config {
     float spectatorSmoothing = 0.2f; // head-motion smoothing time constant (s); 0 = raw head
     bool  spectatorFollowHead = true; // false = locked straight ahead (classic hood-cam footage)
     int   spectatorWidth = 1600;     // window client width in smooth/sbs modes (px)
+    bool  spectatorNativeFullscreen = false; // monitor-sized desktop with legacy HUD resize dimensions
     bool  seat = true;               // bumper / hood camera: eyes at the driver model's head
     bool  hideHead = true;           // leave out the driver model's head when it is at the eyes
     float showCustomDriverModel = 0.0f; // opt-in separate animated headless overlay (live F4 toggle)
