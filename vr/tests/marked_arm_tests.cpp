@@ -44,6 +44,26 @@ int main() {
     edits.arms.clear(); memcpy(output,vertices,sizeof(output));
     Check(!Cockpit_PoseMarkedArms(&ib,0,2,0,12,0,-1,(unsigned char*)output,sizeof(output)),"no marks no deformation");
     Check(memcmp(output,vertices,sizeof(output))==0,"unmarked geometry unchanged");
+    uint8_t automaticEntries[2*kEntrySize]{};
+    memcpy(automaticEntries,entry,kEntrySize);
+    memcpy(automaticEntries+kEntrySize,entry,kEntrySize);
+    At<int>(automaticEntries+kEntrySize,kEntryFirstIndex)=0;
+    At<int>(automaticEntries+kEntrySize,kEntryTris)=2;
+    Driver automaticDriver;
+    automaticDriver.body={0,0}; automaticDriver.arms={0,2}; automaticDriver.heads={0,0};
+    info.driver=&automaticDriver;
+    At<uint8_t*>(plat,kPlatEntries)=automaticEntries;
+    At<int>(plat,kPlatNumEntries)=2;
+    Check(Cockpit_PoseMarkedArms(&ib,0,2,0,12,0,-1,(unsigned char*)output,sizeof(output)),
+        "separate fingers animate without manual arm marks");
+    Check(memcmp(output,vertices,9*sizeof(float))!=0,"automatic right fingers follow control reach");
+    Check(memcmp(output+9,vertices+9,9*sizeof(float))==0,"automatic left fingers stay neutral during right reach");
+    UpdateShownRuns(solid,info,&automaticDriver,true,true);
+    Check(automaticDriver.shownRuns.size()==2 && automaticDriver.shownRuns[1].size()==1 &&
+        automaticDriver.shownRuns[1][0].second==2,"automatic fingers visible with native arms hidden and no show marks");
+    info.driver=nullptr;
+    At<uint8_t*>(plat,kPlatEntries)=entry;
+    At<int>(plat,kPlatNumEntries)=1;
     s_armHover.Reset();
     Check(!Cockpit_HasMarkedArmDraw(&ib),"release restores original native draw");
     s_armHover.Update(0.1f,true,{0.8f,-0.3f,0},{0.5f,-0.2f,-0.22f});

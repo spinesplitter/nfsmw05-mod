@@ -39,6 +39,15 @@ bool Cockpit_PoseMarkedArms(void* indexBuffer, unsigned first, unsigned triangle
                            unsigned stride, unsigned positionOffset, int normalOffset,
                            unsigned char* vertices, size_t bytes);
 bool Cockpit_HasMarkedArmDraw(void* indexBuffer);
+// Reject unaffected ranges before touching GPU buffers; copy indices from the live CPU mesh.
+bool Cockpit_DriverDrawWork(void* indexBuffer, unsigned first, unsigned triangles, int base,
+                            std::vector<uint16_t>& indices);
+// Decode negative atlas V on skin-selected driver vertices in a private stream copy.
+bool Cockpit_RepairSkinUV(void* indexBuffer, unsigned first, unsigned triangles, int base,
+                          unsigned stride, unsigned uvOffset, unsigned char* vertices, size_t bytes);
+// Diagnostic identification only; independent of whether arm motion is active.
+bool Cockpit_DriverDrawInfo(void* indexBuffer, unsigned first, unsigned triangles,
+                           char* name, size_t capacity, int* entry);
 // The headset's gaze in the world (centre of the eyes, forward), for the triangle editor's picking
 // in the next frame.
 void Cockpit_SetGaze(const float pos[3], const float dir[3]);

@@ -51,19 +51,33 @@ static void TestWheelPositionSave() {
     s_animatedDriverCar.car.clear(); s_animatedDriverCar.base[0]=1;
     UpdateAnimatedDriverCar("DRIVER_A");
     g_cfg.animatedDriverSpread=1.23f;
+    g_cfg.animatedDriverHandFix=-25;
     UpdateAnimatedDriverCar("DRIVER_A");
     UpdateAnimatedDriverCar("DRIVER_B");
     Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit never leaks to another car");
+    Near(g_cfg.animatedDriverHandFix,0,"unsaved hand fix never leaks to another car");
     UpdateAnimatedDriverCar("DRIVER_A");
     Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit is not persisted");
     g_cfg.animatedDriverSpread=1.23f; g_cfg.animatedDriverSave=1;
+    g_cfg.animatedDriverHandFix=-25;
     UpdateAnimatedDriverCar("DRIVER_A");
     Near(g_cfg.animatedDriverSave,0,"driver save consumed once");
     UpdateAnimatedDriverCar("DRIVER_B");
     Near(g_cfg.animatedDriverSpread,1,"saved fit does not leak");
+    Near(g_cfg.animatedDriverHandFix,0,"saved hand fix does not leak");
     UpdateAnimatedDriverCar("DRIVER_A");
     Near(g_cfg.animatedDriverSpread,1.23f,"saved driver fit reloads for its car");
-    s_animatedDriverCar=oldDriver; g_cfg.animatedDriverSpread=1;
+    Near(g_cfg.animatedDriverHandFix,-25,"saved hand fix reloads for its car");
+    Check(WritePrivateProfileStringA("AnimatedDriver","DRIVER_LEGACY","1.15",driverPath)!=0,
+        "legacy one-value driver fit written");
+    UpdateAnimatedDriverCar("DRIVER_LEGACY");
+    Near(g_cfg.animatedDriverSpread,1.15f,"legacy driver spread still loads");
+    Near(g_cfg.animatedDriverHandFix,0,"legacy driver fit defaults hand fix to zero");
+    Check(WritePrivateProfileStringA("AnimatedDriver","DRIVER_INVALID","1.1,1000",driverPath)!=0,
+        "invalid driver fit written");
+    UpdateAnimatedDriverCar("DRIVER_INVALID");
+    Near(g_cfg.animatedDriverHandFix,0,"invalid hand fix rejected");
+    s_animatedDriverCar=oldDriver; g_cfg.animatedDriverSpread=1; g_cfg.animatedDriverHandFix=0;
     strcpy(driverFile->path,oldDriverPath);
     Check(DeleteFileA(driverPath)!=0,"driver temporary ini removed");
     char directory[MAX_PATH], temporary[MAX_PATH];

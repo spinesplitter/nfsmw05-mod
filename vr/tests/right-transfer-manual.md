@@ -1,5 +1,22 @@
 # Right-arm steering transfer
 
+## Per-car neutral hand fix
+
+F4 > Animated Driver > Hand fix (down / up) previews the neutral grip position
+along the wheel rim, from -60 to +60 degrees in 1-degree steps. Negative moves
+both hands down; positive moves both up. Zero preserves the original fitted
+grips. Radius and wheel-plane depth are unchanged; grips stop short of crossing
+the top/bottom into the opposite side. IK may limit reach without stretching.
+Use **Save for this car** to persist both Hand spread and Hand fix in
+`nfsmw_vr_driver.ini`, section `[AnimatedDriver]`, as `car=spread,handFix`.
+Old spread-only entries load with zero hand fix. Unsaved previews are discarded
+when changing cars, and a car without a saved fit starts with zero hand fix.
+
+The setting changes neutral wheel grips, not steering input or phase timing.
+Both bottom-right waits and regrip contacts remain unchanged. Verify neutral,
+slow full sweeps, reversals, shifts and held brake in both eyes after fitting;
+extreme adjustments may reduce clearance or exceed the arm's reach.
+
 ## Positive steering: detached bottom-right wait (current)
 
 - 0 to +90: original wheel tracking.

@@ -200,6 +200,7 @@ constexpr struct {
     {MOD_VR, "ShowDriverIK", 0.0f},
     {MOD_VR, "AnimatedDriverSpread", 1.0f},
     {MOD_VR, "AnimatedDriverSave", 0.0f},
+    {MOD_VR, "AnimatedDriverHandFix", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -235,10 +236,11 @@ enum {
     VR_SHOWCUSTOMDRIVER,
     VR_SHOWDRIVERIK,
     VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
+    VR_ANIMATEDDRIVERHANDFIX,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
-static_assert(VR_ANIMATEDDRIVERSAVE == EXT_COUNT - 1, "animated driver setting must match its bridge entry");
+static_assert(VR_ANIMATEDDRIVERHANDFIX == EXT_COUNT - 1, "animated driver setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
@@ -827,6 +829,7 @@ const Item kItems[] = {
     {ACTION, "Hide", nullptr, "EdHide", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Draw black", nullptr, "EdBlack", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Draw as skin", nullptr, "EdSkin", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Merge fingers", nullptr, "EdMergeFingers", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Add to the steering wheel", nullptr, "EdWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Take off the steering wheel", nullptr, "EdNoWheel", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Mark as handbrake", nullptr, "EdHandbrake", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -843,6 +846,7 @@ const Item kItems[] = {
     {NUMBER, "Show IK", "VR", "ShowDriverIK", &s_ext[VR_SHOWDRIVERIK], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     HEADER_("FIT TO THIS CAR'S WHEEL"),
     {NUMBER, "Hand spread (- / +)", "VR", "AnimatedDriverSpread", &s_ext[VR_ANIMATEDDRIVERSPREAD], 0.5f, 1.5f, 0.01f, 100, "%.0f%%", 0},
+    {NUMBER, "Hand fix (down / up)", "VR", "AnimatedDriverHandFix", &s_ext[VR_ANIMATEDDRIVERHANDFIX], -60.0f, 60.0f, 1.0f, 1, "%+.0f deg", 0},
     {ACTION, "Save for this car", nullptr, "SaveAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
 
     PAGE_("MENU AND TESTING"),
@@ -1720,7 +1724,7 @@ void Change(int index, int dir) {
                 {"EdHandbrake", 13, "Marked as handbrake"}, {"EdShifter", 14, "Marked as shifter"},
                 {"EdClearControl", 15, "Control marks cleared"},
                 {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"},
-                {"EdSkin", 18, "Drawn as skin"}};
+                {"EdSkin", 18, "Drawn as skin"}, {"EdMergeFingers", 19, "Merge fingers requested"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
@@ -1820,7 +1824,7 @@ void Save() {
         else text = *(std::string*)it.value;
         int ext = ExtIndex(it.value);
         if (ext >= 0) {
-            if (ext == VR_ANIMATEDDRIVERSPREAD) continue; // explicit per-car Save, never global
+            if (ext == VR_ANIMATEDDRIVERSPREAD || ext == VR_ANIMATEDDRIVERHANDFIX) continue; // explicit per-car Save, never global
             if (ExtSetting(ext)) writes.push_back({ExtIniPath(ext), it.section, it.key, text});
             continue;
         }

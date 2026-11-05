@@ -67,6 +67,7 @@ struct Config {
     float showDriverIK = 0.0f;       // 1 = draw the driver rig (DRIVERMOD/driver-ik.bin) over the cockpit (live from F4)
     float animatedDriverSpread = 1.0f; // radial hand-path scale, explicitly saved per car
     float animatedDriverSave = 0.0f;   // F4 save request, consumed by cockpit update
+    float animatedDriverHandFix = 0.0f; // neutral grip arc degrees: positive up, saved per car
     float hideArms = 0.0f;           // 1 = leave out the seated driver's arms and hands (a 0/1 float: live from F4)
     float hudPerCar = 0.0f;          // 1 = each car remembers its HUD size, distance and height ([Hud] per car; live from F4)
     float wheelOverHud = 0.0f;       // 1 = the car's steering wheel in front of the HUD panel while driving (live from F4)

@@ -2062,7 +2062,16 @@ static unsigned s_eyeDrawCalls[2];
 
 static unsigned s_eyeDrawsAtBegin[2];
 
+// One readback per stream per eye, not one GPU synchronization per split skin run.
+struct DriverStreamSnapshot {
+    IDirect3DVertexBuffer9* buffer;
+    UINT offset, stride;
+    std::vector<unsigned char> bytes;
+};
+static std::vector<DriverStreamSnapshot> s_driverStreams;
+
 void D3D_EyePassBegin(int eye) {
+    s_driverStreams.clear();
     s_tallyEye = eye;
     if (eye >= 0 && eye < 2) {
         s_eyeDrawsAtBegin[eye] = s_eyeDrawCalls[eye];
@@ -2453,6 +2462,7 @@ static void DrawOverlayOnBackBuffer() {
 }
 
 static void OnPresent() {
+    s_driverStreams.clear();
     RaiseRenderPriority();
     if (KeyPressed(g_cfg.keySpectator)) {
         Spectator_CycleMode();
@@ -2689,17 +2699,21 @@ public:
         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
         bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
         // Private stream copy: keep the game's textured/shaded draw, and never mutate its VB.
-        if (type == D3DPT_TRIANGLELIST && Cockpit_HasMarkedArmDraw(s_curIndices) && DrawingPlayerView()) {
+        std::vector<uint16_t> remapped;
+        if (type == D3DPT_TRIANGLELIST && DrawingPlayerView() &&
+            Cockpit_DriverDrawWork(s_curIndices,start,count,base,remapped)) {
             IDirect3DVertexBuffer9* vb = nullptr;
             UINT offset = 0, stride = 0;
             if (SUCCEEDED(real->GetStreamSource(0,&vb,&offset,&stride)) && vb) {
                 D3DVERTEXBUFFER_DESC desc{};
                 IDirect3DVertexDeclaration9* decl = nullptr;
                 D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH+1]; UINT n = MAXD3DDECLLENGTH+1;
-                int position = -1, normal = -1;
+                int position = -1, normal = -1, uv = -1;
                 if (SUCCEEDED(real->GetVertexDeclaration(&decl)) && decl) {
                     if (SUCCEEDED(decl->GetDeclaration(elements,&n))) for (UINT i=0;i<n;++i) {
                         const auto& e=elements[i];
+                        if(e.Stream==0 && e.Type==D3DDECLTYPE_FLOAT2 &&
+                           e.Usage==D3DDECLUSAGE_TEXCOORD && e.UsageIndex==0) uv=e.Offset;
                         if(e.Stream==0 && e.Type==D3DDECLTYPE_FLOAT3) {
                             if(e.Usage==D3DDECLUSAGE_POSITION && e.UsageIndex==0) position=e.Offset;
                             if(e.Usage==D3DDECLUSAGE_NORMAL && e.UsageIndex==0) normal=e.Offset;
@@ -2707,34 +2721,38 @@ public:
                     }
                     decl->Release();
                 }
-                void* locked = nullptr;
-                if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size &&
-                   SUCCEEDED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) {
-                    std::vector<unsigned char> copy((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
-                    vb->Unlock();
-                    if(Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size())) {
-                        IDirect3DIndexBuffer9* indices=nullptr;
-                        real->GetIndices(&indices);
-                        void* idx=nullptr;
-                        if(indices && SUCCEEDED(indices->Lock(start*2,count*6,&idx,D3DLOCK_READONLY))) {
-                            std::vector<uint16_t> remapped(count*3);
+                if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size) {
+                    const std::vector<unsigned char>* source=nullptr;
+                    for (const auto& cached:s_driverStreams)
+                        if(cached.buffer==vb && cached.offset==offset && cached.stride==stride) { source=&cached.bytes; break; }
+                    if(!source) {
+                        void* locked=nullptr;
+                        if(SUCCEEDED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) {
+                            DriverStreamSnapshot snapshot{vb,offset,stride,{}};
+                            snapshot.bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
+                            vb->Unlock();
+                            s_driverStreams.push_back(std::move(snapshot));
+                            source=&s_driverStreams.back().bytes;
+                        }
+                    }
+                    if(source) {
+                        std::vector<unsigned char> copy=*source;
+                        bool repaired=uv>=0 && Cockpit_RepairSkinUV(s_curIndices,start,count,base,stride,uv,copy.data(),copy.size());
+                        bool posed=Cockpit_HasMarkedArmDraw(s_curIndices) &&
+                            Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size());
+                        if(repaired || posed) {
                             bool valid=true;
-                            for(size_t i=0;i<remapped.size();++i) {
-                                int index=((uint16_t*)idx)[i]+base;
-                                if(index<0 || index>65535 || (size_t)(index+1)*stride>copy.size()) valid=false;
-                                remapped[i]=(uint16_t)index;
-                            }
-                            indices->Unlock();
+                            for(uint16_t index:remapped)
+                                if((size_t)(index+1)*stride>copy.size()) valid=false;
                             if(valid) {
                                 HRESULT result=real->DrawIndexedPrimitiveUP(type,0,(UINT)(copy.size()/stride),count,remapped.data(),D3DFMT_INDEX16,copy.data(),stride);
                                 real->SetStreamSource(0,vb,offset,stride);
-                                real->SetIndices(indices);
-                                indices->Release(); vb->Release();
+                                real->SetIndices(static_cast<IDirect3DIndexBuffer9*>(s_curIndices));
+                                vb->Release();
                                 AfterModelDraw(); AfterModelDrawDash();
                                 return result;
                             }
                         }
-                        if(indices) indices->Release();
                     }
                 }
                 vb->Release();
@@ -2965,6 +2983,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "ShowDriverIK")) return &g_cfg.showDriverIK;
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;
     if (!strcmp(name, "AnimatedDriverSave")) return &g_cfg.animatedDriverSave;
+    if (!strcmp(name, "AnimatedDriverHandFix")) return &g_cfg.animatedDriverHandFix;
     if (!strcmp(name, "WheelOverHud")) return &g_cfg.wheelOverHud;
     if (!strcmp(name, "HudPerCar")) return &g_cfg.hudPerCar;
     if (!strcmp(name, "Dash")) return &g_cfg.dash;

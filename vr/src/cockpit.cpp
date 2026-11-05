@@ -97,6 +97,10 @@ template <typename T> T& At(void* base, int offset) { return *(T*)((char*)base +
 constexpr int kDriverPartSlots = 34;
 
 struct Driver {
+    // Resolved submission arguments, not the raw entry's material header.
+    uint32_t skinShader = 0, skinAux = 0;
+    std::array<uint32_t, 5> skinTextures{};
+    bool skinBindingValid = false;
     bool ok = false;
     std::string car;
     float head[3] = {};                             // head centre, model space
@@ -444,8 +448,9 @@ PerCar s_pivotCar = {"WheelPivot", "steering wheel turning centre", 2, {&g_cfg.w
 PerCar s_wheelPositionCar = {"WheelPosition", "steering wheel location", 2,
                             {&g_cfg.wheelPosition[0], &g_cfg.wheelPosition[1]},
                             {-0.5f, -0.5f}, {0.5f, 0.5f}, 2, false, true};
-PerCar s_animatedDriverCar = {"AnimatedDriver", "animated driver hand spread", 1,
-                            {&g_cfg.animatedDriverSpread}, {0.5f}, {1.5f}, 1, false, true};
+PerCar s_animatedDriverCar = {"AnimatedDriver", "animated driver hand fit", 2,
+                            {&g_cfg.animatedDriverSpread, &g_cfg.animatedDriverHandFix},
+                            {0.5f, -60}, {1.5f, 60}, 1, false, true};
 
 void SavePerCar(PerCar& p) {
     char buf[512];
@@ -1895,7 +1900,8 @@ DriverSteering::Grip NativeGrip(const DriverIK::Rig& rig, int side, const M4& wo
     const auto& bone = rig.bones[rig.arms[side*3+2]];
     return DriverSteering::Evaluate({bone.head[0],bone.head[1],bone.head[2]},
         {bone.tail[0]-bone.head[0],bone.tail[1]-bone.head[1],bone.tail[2]-bone.head[2]},
-        {pivot.x,pivot.y,pivot.z}, {end.x-pivot.x,end.y-pivot.y,end.z-pivot.z}, g_steeringWheelAngle, side);
+        {pivot.x,pivot.y,pivot.z}, {end.x-pivot.x,end.y-pivot.y,end.z-pivot.z},
+        g_steeringWheelAngle, side, g_cfg.animatedDriverHandFix);
 }
 struct ArmDraw { uint8_t* solid; M4 world; };
 std::unordered_map<void*, ArmDraw> s_armDraws;
@@ -2476,6 +2482,15 @@ void RunEditCommand(int cmd) {
         return;
     }
     SolidInfo& info = it->second;
+    if (cmd==19) {
+        if (!info.driver || !info.driver->ok) {
+            Log("editor: Merge fingers requires a driver finger submesh");
+            return;
+        }
+        if (info.trisDirty) BuildTris(s_pick.solid,info);
+        // Use exactly the highlighted selection, as Mark as arms does. A driver
+        // hand can be in another draw entry; entry 1 is not a reliable identity.
+    }
     EditSet& e = EditsFor(s_pick.name);
     s_undo.push_back({s_pick.name, e});
     if (s_undo.size() > 100) s_undo.erase(s_undo.begin());
@@ -2540,12 +2555,20 @@ void RunEditCommand(int cmd) {
                 e.hide.erase(id);
                 if (info.driver) e.show.insert(id);
                 break;
+            case 19:
+                e.arms.insert(id);
+                e.skin.insert(id);
+                e.show.insert(id);
+                e.black.erase(id);
+                e.hide.erase(id);
+                break;
         }
     }
     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
     const char* what = cmd == 13 ? "marked as handbrake" : cmd == 14 ? "marked as shifter" :
                        cmd == 15 ? "control marks cleared" : cmd == 16 ? "marked as arms" :
-                       cmd == 17 ? "arm marks cleared" : cmd == 18 ? "drawn as skin" : kWhat[cmd];
+                       cmd == 17 ? "arm marks cleared" : cmd == 18 ? "drawn as skin" :
+                       cmd == 19 ? "merged as fingers (Arms/Skin/Show)" : kWhat[cmd];
     Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), what);
     s_editsGen++;
     SaveEdits(s_pick.name);
@@ -2615,6 +2638,23 @@ void DrawEditorOverlay() {
 uint8_t* s_driverEntry;
 int s_driverParts;
 
+// Secondary mostly-arm materials are the separate native finger pieces. Share
+// this test between visibility, skin material selection and IK membership.
+bool AutomaticDriverFinger(const Driver& driver, int i) {
+    if (i<=0 || i>=(int)driver.arms.size() || i>=(int)driver.body.size() ||
+        i>=(int)driver.heads.size()) return false;
+    int arms=driver.arms[i], total=driver.body[i]+arms+driver.heads[i];
+    return arms>0 && arms*4>=total*3;
+}
+bool AutomaticDriverFingerIndex(const Driver& driver, uint8_t* entries, int n, int index) {
+    for (int i=1; i<n; ++i) {
+        if (!AutomaticDriverFinger(driver,i)) continue;
+        int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
+        if (index>=begin && index-begin<driver.arms[i]*3) return true;
+    }
+    return false;
+}
+
 // The triangles of the driver's hidden arms and head that the editor shows (EditSet::show), as runs
 // of consecutive triangles per draw entry. Rebuilt when the edits or the hide switches change.
 void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, bool hideHead) {
@@ -2623,7 +2663,6 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
     d->runsKey = key;
     d->shownRuns.assign(d->body.size(), {});
     const EditSet& e = EditsFor(SolidName(info));
-    if (e.show.empty()) return;
     uint8_t* plat = At<uint8_t*>(solid, kSolidPlat);
     uint8_t* entries = plat ? At<uint8_t*>(plat, kPlatEntries) : nullptr;
     const uint16_t* indices = plat ? At<uint16_t*>(plat, kPlatIndices) : nullptr;
@@ -2642,7 +2681,9 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
                 int p = first + t * 3;
                 if (p < 0 || p + 3 > numIndices) break;
                 const uint16_t* v = indices + p;
-                if (!e.show.count(TriId(v[0], v[1], v[2]))) continue;
+                bool finger=AutomaticDriverFinger(*d,(int)i) &&
+                    t>=d->body[i] && t<d->body[i]+d->arms[i];
+                if (!finger && !e.show.count(TriId(v[0], v[1], v[2]))) continue;
                 shown++;
                 if (!runs.empty() && runs.back().first + runs.back().second * 3 == p) runs.back().second++;
                 else if ((int)runs.size() < kDriverPartSlots - 2) runs.push_back({p, 1});
@@ -2750,7 +2791,10 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
         s_nativeDriverBody = s_curBody;
         memcpy(&s_driverIKWorld, m, sizeof(M4));
         s_driverIKWorldValid = true;
-        if (!EditsFor(SolidName(*info)).arms.empty()) {
+        bool autoFingers=false;
+        for (int i=1; i<(int)info->driver->arms.size(); ++i)
+            autoFingers |= AutomaticDriverFinger(*info->driver,i);
+        if (autoFingers || !EditsFor(SolidName(*info)).arms.empty()) {
             void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
             s_armDraws[ib] = {solid, s_driverIKWorld};
         }
@@ -2925,21 +2969,30 @@ bool SubmitControls(uint8_t* entry, uint8_t* solid, const float* matrix,
     return true;
 }
 
-// The native driver's first entry supplies its skin atlas/shader. Only copy the material
-// header (shader and five texture-info pointers); keep the selected entry's UVs, geometry,
-// buffers and flags. Queue copies, never edit the streamed asset or a hook-local entry.
-bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, kEntrySize>>& parts) {
+// 6DAD0E passes a stack array of five resolved texture-info pointers as a5;
+// a4 is the resolved shader and a8 the auxiliary binding. Raw entry bytes alone
+// do not change those arguments. Keep geometry/UVs and route bindings separately.
+bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, kEntrySize>>& parts,
+               std::vector<bool>* skinRuns = nullptr) {
     auto found = s_solids.find(solid);
     if (found == s_solids.end() || !found->second.driver) return false;
-    const auto& skin = EditsFor(SolidName(found->second)).skin;
-    if (skin.empty()) return false;
+    const auto& edits = EditsFor(SolidName(found->second));
+    const auto& skin = edits.skin;
     SolidMesh mesh;
     if (!ReadMesh(solid, mesh) || mesh.n < 1) return false;
     int first = At<int>(entry, kEntryFirstIndex), count = At<int>(entry, kEntryTris);
     if (first < 0 || count <= 0 || first > mesh.numIndices || count > (mesh.numIndices-first)/3) return false;
+    // Some cars give the fingers their own DRIVER_PLAYER material, which can
+    // resolve black despite the main driver's atlas being valid. Prepare has
+    // already classified these secondary, mostly-arm entries. Use this solid's
+    // main material, not a cached material from another car or LOD. Match index
+    // ranges because entry can be a copied hidden-head/animated draw range.
+    const Driver& driver = *found->second.driver;
     auto marked = [&](int t) {
         const uint16_t* v = mesh.indices + first + t*3;
-        return skin.count(TriId(v[0],v[1],v[2])) != 0;
+        uint64_t id=TriId(v[0],v[1],v[2]);
+        return skin.count(id)!=0 || (!edits.black.count(id) &&
+            AutomaticDriverFingerIndex(driver,mesh.entries,mesh.n,first+t*3));
     };
     bool any = false;
     for (int t=0; t<count; ++t) any |= marked(t);
@@ -2949,6 +3002,7 @@ bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, k
         int end = begin+1;
         while (end<count && marked(end)==useSkin) ++end;
         parts.emplace_back();
+        if (skinRuns) skinRuns->push_back(useSkin);
         uint8_t* part = parts.back().data();
         memcpy(part, entry, kEntrySize);
         if (useSkin) memcpy(part, mesh.entries, 0x18);
@@ -2960,19 +3014,37 @@ bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, k
     return true;
 }
 
+void CaptureDriverSkin(uint8_t* solid, uint8_t* entry, uint32_t shader, uint32_t textures, uint32_t aux) {
+    auto it = s_solids.find(solid);
+    SolidMesh mesh;
+    if (it == s_solids.end() || !it->second.driver || !ReadMesh(solid, mesh) || entry != mesh.entries) return;
+    Driver& driver = *it->second.driver;
+    driver.skinBindingValid = shader && textures;
+    if (!driver.skinBindingValid) return;
+    driver.skinShader = shader;
+    driver.skinAux = aux;
+    memcpy(driver.skinTextures.data(), reinterpret_cast<const void*>(textures), sizeof(driver.skinTextures));
+
+}
+
 void __cdecl SubmitEntry(uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                          uint32_t a7, uint32_t a8, uint32_t a9) {
     auto submit = [](uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                      uint32_t a7, uint32_t a8, uint32_t a9) {
         uint8_t* solid = s_submitModel ? At<uint8_t*>(s_submitModel, kModelSolid) : nullptr;
         std::vector<std::array<uint8_t,kEntrySize>> skinParts;
-        if (DrawingPlayerCar() && SkinParts(entry,solid,skinParts)) {
+        std::vector<bool> skinRuns;
+        if (DrawingPlayerCar() && SkinParts(entry,solid,skinParts,&skinRuns)) {
             MarkPlayerCarMatrix(matrix);
-            for (const auto& part : skinParts) {
+            Driver& driver = *s_solids.find(solid)->second.driver;
+            for (size_t i = 0; i < skinParts.size(); ++i) {
                 s_controlDraws.emplace_back();
                 ControlDraw& draw = s_controlDraws.back();
-                memcpy(draw.entry,part.data(),kEntrySize);
-                ((SubmitEntry_t)kSubmitEntry)(draw.entry,a2,a3,a4,a5,matrix,a7,a8,a9);
+                memcpy(draw.entry,skinParts[i].data(),kEntrySize);
+                bool skin = skinRuns[i] && driver.skinBindingValid;
+                ((SubmitEntry_t)kSubmitEntry)(draw.entry,a2,a3,skin ? driver.skinShader : a4,
+                    skin ? reinterpret_cast<uint32_t>(driver.skinTextures.data()) : a5,
+                    matrix,a7,skin ? driver.skinAux : a8,a9);
             }
             return;
         }
@@ -2983,6 +3055,9 @@ void __cdecl SubmitEntry(uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, 
     uint8_t* model = s_submitModel;
     s_driverEntry = nullptr;
     uint8_t* e = OnSubmit(model, matrix, entry);
+    // Capture even when the main entry was entirely hidden by the seated view.
+    if (DrawingPlayerCar() && model)
+        CaptureDriverSkin(At<uint8_t*>(model,kModelSolid),entry,a4,a5,a8);
     if (!e) return;
     if (e == s_driverEntry) {
         for (int k = 0; k < s_driverParts; k++) submit(e + k * kEntrySize, a2, a3, a4, a5, matrix, a7, a8, a9);
@@ -3080,6 +3155,88 @@ bool Cockpit_HasMarkedArmDraw(void* ib) {
     return (NativeSteeringActive() || s_armHover.progress > 0.0001f) && s_armDraws.count(ib) != 0;
 }
 
+bool Cockpit_DriverDrawWork(void* ib, unsigned first, unsigned triangles, int base,
+                            std::vector<uint16_t>& indices) {
+    indices.clear();
+    auto draw=s_armDraws.find(ib);
+    if (draw==s_armDraws.end() || !triangles) return false;
+    auto info=s_solids.find(draw->second.solid);
+    SolidMesh mesh;
+    if (info==s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
+        first>(unsigned)mesh.numIndices || triangles>((unsigned)mesh.numIndices-first)/3) return false;
+    const auto& edits=EditsFor(SolidName(info->second));
+    bool pose=Cockpit_HasMarkedArmDraw(ib), needed=false;
+    for (unsigned t=0;t<triangles;++t) {
+        const uint16_t* v=mesh.indices+first+t*3;
+        uint64_t id=TriId(v[0],v[1],v[2]);
+        bool automatic=AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3);
+        if (edits.skin.count(id) || (automatic && !edits.black.count(id)) ||
+            (pose && (automatic || edits.arms.count(id)))) { needed=true; break; }
+    }
+    if (!needed) return false;
+    indices.reserve((size_t)triangles*3);
+    for (unsigned i=0;i<triangles*3;++i) {
+        long long index=(long long)mesh.indices[first+i]+base;
+        if (index<0 || index>65535) { indices.clear(); return false; }
+        indices.push_back((uint16_t)index);
+    }
+    return true;
+}
+
+bool Cockpit_RepairSkinUV(void* ib, unsigned first, unsigned triangles, int base,
+                          unsigned stride, unsigned uvOffset, unsigned char* vertices, size_t bytes) {
+    auto draw=s_armDraws.find(ib);
+    if (draw==s_armDraws.end() || !vertices || stride<8 || uvOffset>stride-8) return false;
+    auto info=s_solids.find(draw->second.solid);
+    SolidMesh mesh;
+    if (info==s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
+        first>(unsigned)mesh.numIndices || triangles>((unsigned)mesh.numIndices-first)/3) return false;
+    const auto& edits=EditsFor(SolidName(info->second));
+    std::set<unsigned> selected;
+    for (unsigned t=0;t<triangles;++t) {
+        const uint16_t* v=mesh.indices+first+t*3;
+        uint64_t id=TriId(v[0],v[1],v[2]);
+        if (!edits.skin.count(id) && (edits.black.count(id) ||
+            !AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3))) continue;
+        for (int j=0;j<3;++j) {
+            long long index=(long long)v[j]+base;
+            if (index>=0 && (unsigned long long)index<bytes/stride) selected.insert((unsigned)index);
+        }
+    }
+    bool changed=false;
+    for (unsigned index:selected) {
+        unsigned char* dst=vertices+(size_t)index*stride+uvOffset+4;
+        float v; memcpy(&v,dst,sizeof(v));
+        // Captured native hand islands encode V in [-1,0); the diffuse sampler
+        // clamps, so decode the island rather than changing global addressing.
+        if (v>=-1.0f && v<0.0f) {
+            v+=1.0f; memcpy(dst,&v,sizeof(v)); changed=true;
+        }
+    }
+    return changed;
+}
+
+bool Cockpit_DriverDrawInfo(void* ib, unsigned first, unsigned triangles,
+                           char* name, size_t capacity, int* entry) {
+    auto draw = s_armDraws.find(ib);
+    if (draw == s_armDraws.end() || !name || !capacity || !entry || !triangles) return false;
+    auto info = s_solids.find(draw->second.solid);
+    SolidMesh mesh;
+    if (info == s_solids.end() || !ReadMesh(draw->second.solid, mesh) ||
+        first > (unsigned)mesh.numIndices || triangles > ((unsigned)mesh.numIndices-first)/3) return false;
+    for (int i=0; i<mesh.n; ++i) {
+        uint8_t* e=mesh.entries+i*kEntrySize;
+        int begin=At<int>(e,kEntryFirstIndex), count=At<int>(e,kEntryTris);
+        if (begin<0 || count<=0 || first<(unsigned)begin) continue;
+        unsigned offset=first-(unsigned)begin;
+        if (offset/3 >= (unsigned)count || offset%3 || triangles>(unsigned)count-offset/3) continue;
+        snprintf(name,capacity,"%s",SolidName(info->second).c_str());
+        *entry=i;
+        return true;
+    }
+    return false;
+}
+
 bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int base,
                            unsigned stride, unsigned positionOffset, int normalOffset,
                            unsigned char* vertices, size_t bytes) {
@@ -3097,7 +3254,8 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     std::set<unsigned> selected;
     for (unsigned t = 0; t < triangles; ++t) {
         const uint16_t* v = mesh.indices + first + t * 3;
-        if (marks.count(TriId(v[0], v[1], v[2])))
+        if (marks.count(TriId(v[0], v[1], v[2])) || (info->second.driver &&
+            AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3)))
             for (int j = 0; j < 3; ++j) if ((int)v[j] + base >= 0) selected.insert(v[j] + base);
     }
     std::vector<V3> head, tail;
@@ -3248,7 +3406,7 @@ void Cockpit_EndFrame() {
     int cmd = (int)lrintf(g_cfg.editCommand);
     if (cmd) {
         g_cfg.editCommand = 0;
-        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 18)) RunEditCommand(cmd);
+        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 19)) RunEditCommand(cmd);
         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
         if (cmd == 12) CopySelection();

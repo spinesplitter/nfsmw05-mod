@@ -17,7 +17,26 @@ inline float TransferSettle(float degrees) {
     return degrees<0 ? Phase(-degrees,270,310) : Phase(degrees,270,325);
 }
 inline Grip Evaluate(Point wrist, Point direction, Point pivot, Point axis,
-                      float degrees, int side) {
+                      float degrees, int side, float handFix = 0) {
+    if (std::isfinite(handFix) && handFix != 0) {
+        Point normal = Unit(axis);
+        Point up = Unit(Point{0,0,1}-normal*Dot({0,0,1},normal), {0,1,0});
+        Point radial = wrist-pivot;
+        Point planar = radial-normal*Dot(radial,normal);
+        Point lateral = planar-up*Dot(planar,up);
+        float radius = Length(planar);
+        if (radius>1e-6f && Length(lateral)>1e-6f) {
+            float elevation = std::atan2(Dot(planar,up),Length(lateral));
+            float requested = elevation+std::max(-60.0f,std::min(60.0f,handFix))*0.01745329252f;
+            // Never move a grip across the top/bottom into the other hand's side.
+            float delta = std::max(-1.483529864f,std::min(1.483529864f,requested))-elevation;
+            float turn = Dot(Cross(normal,planar),up)>=0 ? delta : -delta;
+            auto grip = Evaluate(pivot+Twist(radial,axis,turn),Twist(direction,axis,turn),
+                pivot,axis,degrees,side);
+            grip.roll += turn; // deformation rolls relative to the original fitted hand
+            return grip;
+        }
+    }
     if (!std::isfinite(degrees)) degrees = 0;
     degrees = std::max(-450.0f, std::min(450.0f, degrees));
     float roll = degrees * 0.01745329252f;

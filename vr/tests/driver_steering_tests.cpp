@@ -6,6 +6,38 @@ int main(int argc, char** argv) {
     CockpitSteeringRegressionMain();
     using namespace CustomDriver;
     Point axis{1,0,0}, pivot{}, right{0,-0.2f,0}, left{0,0.2f,0}, direction{1,0,0};
+    for(Point wheelAxis:{axis,axis*-1,Point{0.9701f,0,-0.2425f},Point{-0.9701f,0,0.2425f}}) {
+        Point normal=Unit(wheelAxis);
+        Point up=Unit(Point{0,0,1}-normal*Dot({0,0,1},normal));
+        for(int side=0;side<2;++side) for(float fix:{-60.f,-25.f,0.f,25.f,60.f}) {
+            Point rest=side ? right : left;
+            auto neutral=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,0,side,fix);
+            Near(Length(neutral.wrist-normal*Dot(neutral.wrist,normal)),Length(rest),
+                "hand fix preserves wheel rim radius");
+            Near(Dot(neutral.wrist,normal),Dot(rest,normal),"hand fix preserves rim plane");
+            Check(Dot(neutral.wrist,rest)>0,"hand fix keeps each grip on its own side");
+            if(fix!=0) Check(Dot(neutral.wrist,up)*fix>0,"hand fix positive up negative down for either axis sign");
+            for(int a=-450;a<=450;++a) {
+                auto g=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,float(a),side,fix);
+                auto next=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,a+0.001f,side,fix);
+                auto baseline=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,float(a),side);
+                Near(g.release,baseline.release,"hand fix never changes transfer timing");
+                Check(Length(g.wrist-next.wrist)<0.0001f,"hand fix transfer remains continuous");
+                if(side==0 || (a>=-100 && a<=90))
+                    Check(Length(g.wrist-Twist(neutral.wrist,wheelAxis,a*0.01745329252f))<1e-6f,
+                        "hand fix tracks adjusted neutral grip without changing steering angle");
+                if(side==1 && ((a>=165 && a<=270) || (a>=-270 && a<=-180))) {
+                    auto waiting=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,a>0 ? 180.f : -180.f,side,fix);
+                    Check(Length(g.wrist-waiting.wrist)<1e-6f,"hand fix preserves stationary waiting");
+                    Check(Dot(g.wrist,up)<0,"hand fix keeps transfer wait bottom-right");
+                }
+                if(side==1 && (a==325 || a==-310)) {
+                    Check(Length(g.wrist-baseline.wrist)<1e-6f,"hand fix preserves regrip contact position");
+                    Check(Length(g.direction-baseline.direction)<1e-6f,"hand fix preserves contact orientation");
+                }
+            }
+        }
+    }
     for (int degrees=-450;degrees<=450;++degrees) {
         for (int side=0;side<2;++side) {
             Point rest=side ? right : left;
@@ -191,6 +223,37 @@ int main(int argc, char** argv) {
         s_nativeDriverBody=moved; s_driverIKWorld=moved;
         g_steeringWheelAngle=0; s_armControlBlend=0; s_armHover.Reset();
         // Check actual solved wrist, not just the synthetic requested target.
+        for(float fix:{-60.f,-25.f,25.f,60.f}) {
+            g_cfg.animatedDriverHandFix=fix;
+            std::vector<V3> previous;
+            for(int a=-450;a<=450;++a) {
+                g_steeringWheelAngle=float(a);
+                DriverArmPose(moved,heads,tails);
+                for(int side=0;side<2;++side) {
+                    for(int j=0;j<2;++j) {
+                        int b=s_driverIK.arms[side*3+j];
+                        auto& rest=s_driverIK.bones[b];
+                        Near(Length({tails[b].x-heads[b].x,tails[b].y-heads[b].y,tails[b].z-heads[b].z}),
+                            Length({rest.tail[0]-rest.head[0],rest.tail[1]-rest.head[1],rest.tail[2]-rest.head[2]}),
+                            "installed rig hand fix preserves arm bone lengths");
+                        if(!previous.empty()) Check(Length({heads[b].x-previous[b].x,
+                            heads[b].y-previous[b].y,heads[b].z-previous[b].z})<0.03f,
+                            "installed rig hand fix elbow remains continuous");
+                    }
+                    auto grip=NativeGrip(s_driverIK,side,moved);
+                    auto unadjusted=grip;
+                    float setting=g_cfg.animatedDriverHandFix;
+                    g_cfg.animatedDriverHandFix=0;
+                    unadjusted=NativeGrip(s_driverIK,side,moved);
+                    g_cfg.animatedDriverHandFix=setting;
+                    Near(grip.release,unadjusted.release,"installed hand fix keeps transfer schedule");
+                    if(a==0) Check(Length(grip.wrist-unadjusted.wrist)>0.001f,
+                        "live per-car setting adjusts installed neutral grips");
+                }
+                previous=heads;
+            }
+        }
+        g_cfg.animatedDriverHandFix=0;
         for(float axisSign:{1.f,-1.f}) {
             s_nativeWheelAxis={0.9701f*axisSign,0,-0.2425f*axisSign};
             auto normal=Unit(Point{s_nativeWheelAxis.x,s_nativeWheelAxis.y,s_nativeWheelAxis.z});
