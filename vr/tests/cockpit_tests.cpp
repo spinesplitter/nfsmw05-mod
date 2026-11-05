@@ -807,4 +807,5 @@ int main() {
     TestWheelPosition();
     TestPerCarDefaults();
     puts("PASS: cockpit motion, offsets, current POV, unload, anchor switch, LOD, frame lifecycle, reloaded drivers, steering wheel and per-model HUD defaults");
+    return 0;
 }

@@ -241,7 +241,14 @@ void SaveEdits(const std::string& solidName) {
 // at the same address. Each cache entry remembers what the solid looked like when it was seen, and
 // is prepared again when that changed. Drawing a freed model's buffers through a stale entry made
 // garbage polygons in the cockpit and corrupted d3d9 until it crashed releasing a buffer.
-struct SolidInfo {
+struct SolidIdentity {
+    char name[64] = {};
+    uint8_t* plat = nullptr;
+    uint8_t* entries = nullptr;
+    void* ib = nullptr;
+    uint16_t* indices = nullptr;
+};
+struct SolidInfo : SolidIdentity {
     Driver* driver = nullptr;                       // nullptr = not a driver
     Wheel* wheel = nullptr;                         // interiors, once the car's driver head is known
     GlassSplit* split = nullptr;                    // bodies whose mirror glass shares draw entries
@@ -250,11 +257,6 @@ struct SolidInfo {
     MirrorGlass glass[3];                           // left, right, rear view (model space)
     void* glassIb[2] = {};                          // the side glass's registered draw entries (first indices)
     std::vector<int> glassFirsts[2];
-    char name[64] = {};
-    uint8_t* plat = nullptr;
-    uint8_t* entries = nullptr;
-    void* ib = nullptr;
-    uint16_t* indices = nullptr;
     uint32_t indexHash = 0;                         // of the game's index copy, after reordering
     int hashSeen = -1;                              // eye the index hash above was last checked on
     // Triangle editor: the solid's triangles (built when needed, again after its indices changed),
@@ -1047,15 +1049,23 @@ uint32_t IndexHash(const uint16_t* indices, int count) {
 }
 
 // The solid's current plat info, entries, index buffer and index copy (null where missing).
-void ReadSolid(uint8_t* solid, SolidInfo& s) {
-    memcpy(s.name, solid + kSolidName, sizeof(s.name));
+void ReadSolid(uint8_t* solid, SolidIdentity& s) {
+    // The name is a C string, not a fixed-width identity blob. Bytes after its
+    // terminator may change independently of the model (including adjacent data).
+    // Canonicalize the unused tail, retaining all 64 bytes for a full-width name.
+    memset(s.name, 0, sizeof(s.name));
+    for (size_t i = 0; i < sizeof(s.name); ++i) {
+        char c = (char)solid[kSolidName + i];
+        if (!c) break;
+        s.name[i] = c;
+    }
     s.plat = At<uint8_t*>(solid, kSolidPlat);
     s.entries = s.plat ? At<uint8_t*>(s.plat, kPlatEntries) : nullptr;
     s.ib = s.plat ? At<void*>(s.plat, kPlatIndexBuffer) : nullptr;
     s.indices = s.plat ? At<uint16_t*>(s.plat, kPlatIndices) : nullptr;
 }
 
-uint32_t CurrentHash(const SolidInfo& s) {
+uint32_t CurrentHash(const SolidIdentity& s) {
     int n = s.plat ? At<int>(s.plat, kPlatNumIndices) : 0;
     return s.indices && n > 0 && n < (1 << 20) ? IndexHash(s.indices, n) : 0;
 }
@@ -1072,15 +1082,15 @@ void RestoreAll(uint8_t* solid, SolidInfo& info);
 int s_hashSerial = 0;
 
 SolidInfo* GetSolid(uint8_t* solid) {
-    SolidInfo now;
-    ReadSolid(solid, now);
+    SolidIdentity identity;
+    ReadSolid(solid, identity);
     char name[65] = {};
-    memcpy(name, now.name, 64);
+    memcpy(name, identity.name, 64);
     auto it = s_solids.find(solid);
     if (it != s_solids.end()) {
         SolidInfo& was = it->second;
-        bool same = !memcmp(was.name, now.name, sizeof(now.name)) && was.plat == now.plat &&
-                    was.entries == now.entries && was.ib == now.ib && was.indices == now.indices;
+        bool same = !memcmp(was.name, identity.name, sizeof(identity.name)) && was.plat == identity.plat &&
+                    was.entries == identity.entries && was.ib == identity.ib && was.indices == identity.indices;
         // Drivers and split mirror entries can be restored in place by streaming. Wheel geometry
         // stays cached; only watch its indices while the triangle editor is active, where edits
         // require an explicit refresh.
@@ -1091,7 +1101,7 @@ SolidInfo* GetSolid(uint8_t* solid) {
                 same = true;
             else {
                 was.hashSeen = s_hashSerial;
-                same = CurrentHash(now) == was.indexHash;
+                same = CurrentHash(identity) == was.indexHash;
             }
         }
         if (same) {
@@ -1104,16 +1114,25 @@ SolidInfo* GetSolid(uint8_t* solid) {
                         was.wheel = PrepareWheel(solid, name, head->v);
                         if (was.wheel) RememberWheelTemplate(solid, name, *was.wheel);
                     }
-                    was.indexHash = CurrentHash(now);
+                    was.indexHash = CurrentHash(identity);
                     ApplyHides(solid, was);
                 }
             }
             return &was;
         }
+    }
+    // A cache hit needs no owning containers (MSVC's empty map allocates a
+    // sentinel). Keep all identity and streaming checks above, without that cost.
+    SolidInfo now;
+    static_cast<SolidIdentity&>(now) = identity;
+    if (it != s_solids.end()) {
+        SolidInfo& was = it->second;
         bool sameModel = !memcmp(was.name, now.name, sizeof(now.name)) && was.indices == now.indices && was.plat == now.plat;
         if (was.driver || was.wheel)
-            Log("cockpit: %.64s changed or reloaded (%s), preparing it again", was.name,
-                sameModel ? "its index order changed" : "another model at its address");
+            Log("cockpit: %.64s changed or reloaded, preparing it again: name=%d plat=%d entries=%d ib=%d indices=%d; old=%p/%p/%p/%p new=%p/%p/%p/%p (index check serial %d)",
+                was.name, memcmp(was.name, now.name, sizeof(now.name)) != 0,
+                was.plat != now.plat, was.entries != now.entries, was.ib != now.ib, was.indices != now.indices,
+                was.plat, was.entries, was.ib, was.indices, now.plat, now.entries, now.ib, now.indices, s_hashSerial);
         if (was.driver) s_retired.push_back(was.driver);
         if (was.wheel) s_retiredWheels.push_back(was.wheel);
         if (was.split) s_retiredSplits.push_back(was.split);
@@ -1135,9 +1154,13 @@ SolidInfo* GetSolid(uint8_t* solid) {
             }
         }
     }
-    now.indexHash = CurrentHash(now);
+    // Ordinary traffic/scenery (including newly spawned breakable pieces) never
+    // compares an index hash. Do not walk their entire mesh on a cache miss.
+    // Mirror splits establish their own hash in SplitMirrorEntries; wheels and
+    // drivers still need the baseline for the existing reload checks above.
+    if (now.driver || now.wheel) now.indexHash = CurrentHash(now);
     SolidInfo& stored = s_solids[solid];
-    stored = now;
+    stored = std::move(now);
     ApplyHides(solid, stored);
     return &stored;
 }

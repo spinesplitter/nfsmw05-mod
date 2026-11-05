@@ -30,18 +30,38 @@ int main() {
     assert(WritePrivateProfileStringA("Physics", "PremadeGroups", "1", ini));
     assert(WritePrivateProfileStringA("Group.Test", "Cars", "clio", ini));
     assert(WritePrivateProfileStringA("Group.Test", "RealWeight", "0", ini));
+    // b2762ee: these values belong to the selected car/group and its exported profile,
+    // not to the last vehicle driven or to a global-only slider.
+    const struct { float Config::*field; const char* key; const char* value; float expected; } perCar[] = {
+        {&Config::character, "Character", "0.25", 0.25f},
+        {&Config::tyrePeakAngle, "TyrePeakAngle", "12", 12.0f},
+        {&Config::slideWheelspin, "WheelspinInSlides", "0.75", 0.75f},
+        {&Config::frictionCircle, "FrictionCircle", "1.5", 1.5f},
+    };
+    Config defaults;
+    for (const auto& setting : perCar) {
+        assert(Physics_IsPerCar(&(g_cfg.*setting.field)));
+        assert(WritePrivateProfileStringA("Group.Test", setting.key, setting.value, ini));
+    }
     assert(WritePrivateProfileStringA("Car.legacy", "Grip", "1", ini));
     assert(Physics_IsPerCar(&g_cfg.realWeight));
     Physics_SetCar("clio");
     assert(g_cfg.realWeight == 0 && Physics_Section() == "Group.Test");
+    for (const auto& setting : perCar) assert(g_cfg.*setting.field == setting.expected);
     Physics_SetCar("legacy");
     assert(g_cfg.realWeight == 1); // Missing key inherits Shared, not the previous group.
+    for (const auto& setting : perCar) assert(g_cfg.*setting.field == defaults.*setting.field);
     Physics_SetCar("shared");
     assert(g_cfg.realWeight == 1);
     Physics_SetCar("clio");
     assert(g_cfg.realWeight == 0);
     std::string group = Physics_ExportGroup("Test");
     assert(GetPrivateProfileIntA("Values", "RealWeight", -1, group.c_str()) == 0);
+    for (const auto& setting : perCar) {
+        char value[64];
+        GetPrivateProfileStringA("Values", setting.key, "missing", value, sizeof(value), group.c_str());
+        assert(strcmp(value, "missing") != 0 && (float)atof(value) == setting.expected);
+    }
     assert(WritePrivateProfileStringA("Values", "RealWeight", "1", group.c_str()));
     Physics_ImportProfile("Group - Test.ini");
     assert(g_cfg.realWeight == 1);
@@ -50,6 +70,11 @@ int main() {
     assert(GetPrivateProfileIntA("Car.clio", "RealWeight", -1, ini) == 0);
     std::string car = Physics_ExportCar("clio");
     assert(GetPrivateProfileIntA("Values", "RealWeight", -1, car.c_str()) == 0);
+    for (const auto& setting : perCar) {
+        char value[64];
+        GetPrivateProfileStringA("Values", setting.key, "missing", value, sizeof(value), car.c_str());
+        assert(strcmp(value, "missing") != 0 && (float)atof(value) == setting.expected);
+    }
     assert(WritePrivateProfileStringA("Values", "RealWeight", "1", car.c_str()));
     Physics_ImportProfile("Car - clio.ini");
     assert(g_cfg.realWeight == 1);
