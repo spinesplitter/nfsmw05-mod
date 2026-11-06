@@ -1,12 +1,21 @@
 // Exercise the production seat hook against a small, synthetic v1.3 memory layout.
 // No game process, input injection or headset is used. Padding reserves the game's addresses.
 #include "../src/cockpit.cpp"
+bool Trace_On() { return false; }
+void Trace_Model(const char*, bool, bool, unsigned) {}
+void Trace_CacheRebuild() {}
+TraceDetailScope::TraceDetailScope(TraceDetail d) : detail_(d), start_(0) {}
+TraceDetailScope::~TraceDetailScope() {}
 #include <stdlib.h>
 
 Config g_cfg;
 volatile uint8_t gameAddressPadding[0x600000];
 static double testTime = 1;
-void Log(const char*, ...) {}
+static int wheelRejectionLogs;
+void Log(const char* format, ...) {
+    if (strstr(format, "steering wheel candidate rejected") || strstr(format, "no steering wheel found"))
+        ++wheelRejectionLogs;
+}
 void ConfigFile(const char*, char* out, bool) { strcpy(out, "missing-cockpit-test.ini"); }
 void D3D_AddMirror(void*, const float*, int, const float*, int) {}
 void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int) {}
@@ -382,6 +391,24 @@ static void TestSteeringWheel() {
     Check(w && w->ok, "steering wheel found in the interior");
     Check(w->turned[0] == 192 && w->kept[0] == 2, "ring triangles selected, dashboard kept");
     Check(indices[0] == dash && ib.data[0] == dash, "wheel triangles moved behind the dashboard");
+    size_t nameTail = kSolidName + strlen((char*)solid + kSolidName) + 1;
+    size_t retiredBefore = s_retiredWheels.size();
+    for (int attempt = 0; attempt < 131; ++attempt) {
+        solid[nameTail] = (uint8_t)(attempt + 1);
+        SolidInfo* unchanged = GetSolid(solid);
+        Check(unchanged->wheel == w && s_retiredWheels.size() == retiredBefore,
+              "131 changes after name terminator do not rebuild interior");
+    }
+    solid[nameTail] = 0;
+    static uint16_t relocatedIndices[4096];
+    memcpy(relocatedIndices, indices, ni * sizeof(uint16_t));
+    At<uint16_t*>(plat, kPlatIndices) = relocatedIndices;
+    Check(GetSolid(solid)->wheel != w && s_retiredWheels.size() == retiredBefore + 1,
+          "real index-copy relocation still invalidates interior");
+    At<uint16_t*>(plat, kPlatIndices) = indices;
+    info = GetSolid(solid);
+    w = info->wheel;
+    Check(w && w->ok, "original interior resources restored safely");
     for (int c = 0; c < 3; c++) Check(fabsf(w->centre[c] - centre[c]) < 0.005f, "wheel centre");
     Check(fabsf(w->axis[0] - n[0]) < 0.005f && fabsf(w->axis[2] - n[2]) < 0.005f, "steering column tilt");
 
@@ -457,6 +484,51 @@ static void TestSteeringWheel() {
     SolidInfo* editedReload = GetSolid(editedReloadSolid);
     Check(editedReload->wheel && editedReload->wheel->ok && editedReload->wheel->turned[0] == 193,
           "reloaded model uses refreshed wheel-picker template");
+    // Same ring vertices, but too few triangles: deterministic rejection must survive a
+    // resource reload, without treating a pointer or model name as geometry identity.
+    s_rejectedWheels.clear();
+    At<int>(entry, kEntryTris) = 1;
+    const char* rejectedName = "TESTCAR_KIT00_INTERIOR_B";
+    int before = wheelRejectionLogs;
+    Wheel* rejected = PrepareWheel(solid, rejectedName, head->v);
+    Check(!rejected->ok && wheelRejectionLogs == before + 1, "first rejected geometry searched");
+    delete rejected;
+    for (int attempt = 0; attempt < 132; ++attempt) {
+        rejected = PrepareWheel(solid, rejectedName, head->v);
+        Check(!rejected->ok, "cached rejection never enables a false wheel");
+        delete rejected;
+    }
+    Check(wheelRejectionLogs == before + 1, "132 unchanged rejections bypass wheel search");
+    static float copiedVerts[sizeof(verts) / sizeof(float)];
+    memcpy(copiedVerts, verts, sizeof(verts));
+    At<float*>(entry, kEntryVertices) = copiedVerts;
+    rejected = PrepareWheel(solid, rejectedName, head->v);
+    delete rejected;
+    Check(wheelRejectionLogs == before + 1, "identical geometry at new address reuses rejection");
+    copiedVerts[0] += 0.001f;
+    rejected = PrepareWheel(solid, rejectedName, head->v);
+    delete rejected;
+    Check(wheelRejectionLogs == before + 2, "changed geometry at same address is searched again");
+    float movedHead[3] = {head->v[0] + 0.001f, head->v[1], head->v[2]};
+    rejected = PrepareWheel(solid, rejectedName, movedHead);
+    delete rejected;
+    Check(wheelRejectionLogs == before + 3, "changed driver head is searched again");
+    uint16_t savedIndex = indices[0];
+    indices[0] = (uint16_t)((savedIndex + 1) % nv);
+    rejected = PrepareWheel(solid, rejectedName, movedHead);
+    delete rejected;
+    Check(wheelRejectionLogs == before + 4, "changed topology is searched again");
+    indices[0] = savedIndex;
+    size_t rejectedCount = s_rejectedWheels.size();
+    At<IDirect3DIndexBuffer9*>(plat, kPlatIndexBuffer) = nullptr;
+    rejected = PrepareWheel(solid, "TRANSIENT_INTERIOR_B", head->v);
+    delete rejected;
+    Check(s_rejectedWheels.size() == rejectedCount, "missing GPU resource is not cached as rejection");
+    At<IDirect3DIndexBuffer9*>(plat, kPlatIndexBuffer) = &ib;
+    RePrepareWheels(rejectedName);
+    Check(s_rejectedWheels.empty(), "wheel edits invalidate rejected geometry cache");
+    At<float*>(entry, kEntryVertices) = &verts[0][0];
+    At<int>(entry, kEntryTris) = ni / 3;
     g_cfg.steeringWheel = false;
 }
 

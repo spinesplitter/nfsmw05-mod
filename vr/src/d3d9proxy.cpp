@@ -499,6 +499,7 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
 // buffer, once per buffer and base): u along the glass within the job's range, v top to bottom.
 struct SavedGlassUV { UINT offset; float uv[2]; };
 static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlassUV>& saved) {
+    TraceDetailScope timing(TRACE_MIRROR_MAP);
     if (j.parts.empty()) return;
     IDirect3DVertexBuffer9* vb = nullptr;
     UINT offset = 0, stride = 0;
@@ -582,6 +583,7 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
 // the mirror draw so subsequent body draws never inherit the rear-view mapping.
 static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
     if (saved.empty()) return;
+    TraceDetailScope timing(TRACE_MIRROR_RESTORE);
     IDirect3DVertexBuffer9* vb = nullptr;
     UINT offset = 0, stride = 0;
     if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
@@ -608,6 +610,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
     for (size_t i : jobs->second) {
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
+        TraceDetailScope timing(TRACE_MIRROR_DRAW);
         std::vector<SavedGlassUV> saved;
         MapGlassVertices(j, base, saved);
         int stage = -1;
@@ -1972,6 +1975,7 @@ static DWORD HudColorWrite(DWORD mask) {
 
 // After the last eye's scene render: keep the scene, then point everything the game
 // draws next (HUD, frontend) at a transparent render target.
+static double s_hudTraceStart;
 void D3D_BeginHudPhase() {
     D3D_CaptureEye(1);
     if (!s_dev || !s_hudRT || s_hudPhase) return;
@@ -1988,6 +1992,7 @@ void D3D_BeginHudPhase() {
     DWORD mask;
     if (SUCCEEDED(s_dev->GetRenderState(D3DRS_COLORWRITEENABLE, &mask))) s_dev->SetRenderState(D3DRS_COLORWRITEENABLE, HudColorWrite(mask));
     s_hudPhase = true;
+    s_hudTraceStart = Trace_On() ? D3D_ProfNow() : 0;
 }
 
 static void EndHudPhase() {
@@ -1996,6 +2001,8 @@ static void EndHudPhase() {
     s_frameRT = s_frameDS = nullptr;
     s_skipPostPass = false;
     if (!s_hudPhase) return;
+    if (s_hudTraceStart > 0) Trace_Detail(TRACE_HUD_PHASE, D3D_ProfNow() - s_hudTraceStart);
+    s_hudTraceStart = 0;
     s_hudPhase = false;
     IDirect3DSurface9* cur = nullptr;
     s_dev->GetRenderTarget(0, &cur);

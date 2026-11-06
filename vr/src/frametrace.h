@@ -9,6 +9,24 @@
 // Render thread. Each call is a no-op unless a trace is running.
 void Trace_KeyCheck(int vk, IDirect3DDevice9* dev);   // once a frame: starts a trace on the key
 bool Trace_On();
+// CPU wall-time partition of each scene; boundaries are verified caller addresses.
+void Trace_RenderBoundary(unsigned site);
+void Trace_RenderBegin(int eye);
+void Trace_RenderEnd();
+// Nested CPU diagnostics; these overlap existing phases and must not be added to them.
+enum TraceDetail { TRACE_MIRROR_DRAW, TRACE_MIRROR_MAP, TRACE_MIRROR_RESTORE, TRACE_HUD_PHASE,
+    TRACE_PLAYER_CAR, TRACE_OTHER_CAR, TRACE_SOLID_CACHE, TRACE_DETAIL_COUNT };
+// Counts are render submissions across all views/eyes, not simulation population or impacts.
+void Trace_Model(const char* name, bool car, bool player, unsigned triangles);
+void Trace_CacheRebuild();
+void Trace_Detail(TraceDetail detail, double seconds);
+class TraceDetailScope {
+    TraceDetail detail_;
+    double start_;
+public:
+    explicit TraceDetailScope(TraceDetail detail);
+    ~TraceDetailScope();
+};
 void Trace_EyeBegin(int eye);                       // around the eye's scene render (GPU timestamps)
 void Trace_EyeEnd(int eye, double cpuSeconds, unsigned draws);
 void Trace_BeforeGpuWait();                          // the frame's last GPU command
