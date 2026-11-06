@@ -46,6 +46,8 @@ void Trace_RenderBoundary(unsigned site) {
     __asm { xorps xmm0, xmm0 }
 }
 void Trace_RenderEnd() {}
+TraceDetailScope::TraceDetailScope(TraceDetail detail) : detail_(detail), start_(0) {}
+TraceDetailScope::~TraceDetailScope() {}
 void D3D_HideTextures(void*, void*, void*) {}
 void* D3D_TextureOfSurface(void*) { return nullptr; }
 static void __stdcall Resolution(int* w, int* h) { *w = 1920; *h = 1080; }
@@ -111,6 +113,23 @@ int main() {
         assert(rearDrawn == 6);
     }
     g_cfg = Config();
+    // A live disable overrides cadence without changing preferences; re-enable refreshes normally.
+    g_cfg.rearViewEvery = 1;
+    g_cfg.disableMirrors = 1;
+    s_mirrorPatched = true;
+    for (int i = 0; i < 8; ++i) {
+        PickViewsThisFrame();
+        assert(s_viewSkipped[kRearView]);
+    }
+    BeginMirrors(nullptr); // must return before dereferencing a view
+    EndMirrors();
+    assert(g_cfg.mirrors && g_cfg.gameMirrors && g_cfg.rearViewEvery == 1);
+    g_cfg.disableMirrors = 0;
+    PickViewsThisFrame();
+    assert(!s_viewSkipped[kRearView]);
+    s_mirrorPatched = false;
+    g_cfg = Config();
+    puts("Mirror disable tests passed: live override, disabled eye work, preserved preferences, re-enable");
     // Depth split: a D3D perspective projection (near 0.3, far 3000) times a view; the world ends up
     // in [kCarDepth, 1] with its planes kept, the car's variant in [0, kCarDepth] with NearZ.
     {

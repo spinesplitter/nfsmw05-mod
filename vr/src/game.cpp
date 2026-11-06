@@ -207,6 +207,7 @@ void PickViewsThisFrame() {
     }
     unsigned every = (unsigned)std::max(1L, std::min(4L, lrintf(g_cfg.rearViewEvery)));
     if (every > 1 && frame % every != 0) s_viewSkipped[kRearView] = true;
+    if (g_cfg.disableMirrors > 0.5f) s_viewSkipped[kRearView] = true;
 }
 constexpr uintptr_t kPlayerAspectScale = 0x8AF994; // float 1.15 applied to player views' aspect
 constexpr uintptr_t kCallTotaledCam = 0x631257;  // EShowRaceOverMessage: call CameraAI::MaybeDoTotaledCam(IPlayer*)
@@ -589,7 +590,7 @@ void FixGameMirrors() {
     float* f = (float*)(mat + kMatData);
     float want[30];
     memcpy(want, original, sizeof(want));
-    if (g_cfg.gameMirrors && s_mirrorPatched) {
+    if (g_cfg.gameMirrors && s_mirrorPatched && g_cfg.disableMirrors <= 0.5f) {
         for (int i = 0; i < 3; i++) want[kMatDiffMinR + i] = want[kMatDiffMaxR + i] = 1.0f;
         want[kMatSpecMinScale] = want[kMatSpecMaxScale] = 0.0f;
         want[kMatEnvMinScale] = want[kMatEnvMaxScale] = 0.0f;
@@ -750,6 +751,7 @@ int RemoveSunLensFlares(uint8_t* flares, uint32_t* exclusions, int count) {
 }
 
 void __cdecl hkPreDisplay() {
+    TraceDetailScope preDisplayTiming(TRACE_PREDISPLAY);
     if (s_secondEye) {
         // The first eye's culled flares are still in the pool and would be drawn (and counted)
         // again for this eye. Put back what ePreDisplay left in it; this eye adds its own.
@@ -812,7 +814,7 @@ void* TextureOf(uintptr_t slot) {
 
 // The HUD's mirror textures, for the d3d9 wrapper to leave out while the mirrors are on.
 void UpdateHiddenTextures() {
-    if (s_mirrorPatched) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
+    if (s_mirrorPatched || (g_cfg.disableMirrors > 0.5f && Xr_Available())) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
     else D3D_HideTextures(nullptr, nullptr, nullptr);
 }
 
@@ -850,7 +852,7 @@ void BeginWheelHud(void* view, const uint8_t* seatParams) {
 // Before and after an eye's scene: the mirrors noted while it is submitted are drawn with their
 // models (d3d9proxy); the rear view is copied afterwards for the next eye.
 void BeginMirrors(void* view) {
-    if (!s_mirrorPatched) return;
+    if (!s_mirrorPatched || g_cfg.disableMirrors > 0.5f) return;
     void* plat = At<void*>(view, kViewPlatInfo);
     D3D_BeginMirrorEye((const float*)((char*)plat + kPlatView), EyeProjection(plat));
 }
@@ -863,7 +865,7 @@ void BeginDash(void* view, bool seated) {
 }
 
 void EndMirrors() {
-    if (s_mirrorPatched) D3D_EndMirrorEye(RvmSurface());
+    if (s_mirrorPatched && g_cfg.disableMirrors <= 0.5f) D3D_EndMirrorEye(RvmSurface());
 }
 
 void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
@@ -882,10 +884,13 @@ void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
 void __cdecl hkRenderScene() {
     D3D_ProfUpdateDone();
     s_stereoFrame = false;
-    ApplyShadowArea();
-    FixGameMirrors();
-    UpdateMirrorPatch();
-    UpdateHiddenTextures();
+    {
+        TraceDetailScope setupTiming(TRACE_RENDER_SETUP);
+        ApplyShadowArea();
+        FixGameMirrors();
+        UpdateMirrorPatch();
+        UpdateHiddenTextures();
+    }
     void* view = (void*)kPlayerView;
     void* cam = At<void*>(view, kViewCamera);
     bool active = At<int8_t>(view, kViewActive) != 0;

@@ -14,6 +14,7 @@
 #include "cockpit.h"
 #include "crash.h"
 #include "frametrace.h"
+#include "mirror_vertex_map.h"
 
 #include <d3d9.h>
 #include "d3d9device_gen.h"
@@ -134,6 +135,8 @@ static UINT s_mirrorW, s_mirrorH;
 static void ReleaseDash();
 static void ReleaseCustomDriver();
 static void ResetCustomDriverEye();
+static IDirect3DVertexBuffer9* s_glassStream;
+static UINT s_glassStreamBytes;
 
 // One reusable D3DSBT_ALL state block. Every place that changes device state for our own drawing
 // used to create a fresh one, which allocates the whole block and reads the device state back - and
@@ -157,6 +160,9 @@ static void ReleaseSavedState() {
 }
 
 static void ReleaseEyeTargets() {
+    if (s_glassStream) s_glassStream->Release();
+    s_glassStream = nullptr;
+    s_glassStreamBytes = 0;
     for (int i = 0; i < 3; i++) {
         if (s_eyeSurf[i]) s_eyeSurf[i]->Release();
         if (s_eyeTex[i]) s_eyeTex[i]->Release();
@@ -495,10 +501,9 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
     }
 }
 
-// Texture coordinates across the glass for the glass's own vertices (in the game's own vertex
-// buffer, once per buffer and base): u along the glass within the job's range, v top to bottom.
-struct SavedGlassUV { UINT offset; float uv[2]; };
-static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlassUV>& saved) {
+// Map a private copy: never write to vertex storage shared with body draws.
+static void MapGlassVertices(MirrorGlassJob& j, INT base,
+                             IDirect3DVertexBuffer9** original, UINT* originalOffset, UINT* originalStride) {
     TraceDetailScope timing(TRACE_MIRROR_MAP);
     if (j.parts.empty()) return;
     IDirect3DVertexBuffer9* vb = nullptr;
@@ -545,59 +550,54 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
         vb->Release();
         return;
     }
-    saved.reserve(saved.size() + vertexCount);
-    // All parts use the same stream. One lock avoids synchronizing with the
-    // previous GPU work again for every part of a split mirror.
+    // Read the source without modifying it. DISCARD on our private dynamic
+    // stream lets the driver rename storage still consumed by an earlier draw.
     uint8_t* buffer = nullptr;
-    if (FAILED(vb->Lock(0, 0, (void**)&buffer, 0)) || !buffer) {
+    if (FAILED(vb->Lock(0, 0, (void**)&buffer, D3DLOCK_READONLY)) || !buffer) {
         vb->Release();
         return;
     }
+    std::vector<uint8_t> copy(buffer, buffer + desc.Size);
+    vb->Unlock();
+    buffer = copy.data();
     size_t mappedVerts = 0;
     for (MirrorGlassPart& part : j.parts) {
         if (part.vertices.empty()) continue;
         mappedVerts += part.vertices.size();
         const float* b = part.basis;
-        float cu = b[0] * b[3] + b[1] * b[4] + b[2] * b[5], cv = b[0] * b[6] + b[1] * b[7] + b[2] * b[8];
         for (uint16_t v : part.vertices) {
             UINT vertexOffset = offset + (UINT)(base + v) * stride;
             const float* pos = (const float*)(buffer + vertexOffset + posOfs);
             float* uv = (float*)(buffer + vertexOffset + uvOfs);
-            SavedGlassUV old = {vertexOffset + (UINT)uvOfs, {uv[0], uv[1]}};
-            saved.push_back(old);
-            float pu = pos[0] * b[3] + pos[1] * b[4] + pos[2] * b[5], pv = pos[0] * b[6] + pos[1] * b[7] + pos[2] * b[8];
-            float s = b[9] > 0 ? (pu - (cu - b[9])) / (2 * b[9]) : 0.5f, t = b[10] > 0 ? ((cv + b[10]) - pv) / (2 * b[10]) : 0.5f;
-            s = s < 0 ? 0 : s > 1 ? 1 : s;
-            t = t < 0 ? 0 : t > 1 ? 1 : t;
-            uv[0] = b[11] + (b[12] - b[11]) * s;
-            uv[1] = t;
+            MirrorVertexUV(pos, b, uv);
         }
     }
-    vb->Unlock();
-    vb->Release();
+    if (!s_glassStream || s_glassStreamBytes < desc.Size) {
+        if (s_glassStream) s_glassStream->Release();
+        s_glassStream = nullptr;
+        s_glassStreamBytes = 0;
+        if (SUCCEEDED(s_dev->CreateVertexBuffer(desc.Size, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                               0, D3DPOOL_DEFAULT, &s_glassStream, nullptr)))
+            s_glassStreamBytes = desc.Size;
+    }
+    void* upload = nullptr;
+    if (!s_glassStream || FAILED(s_glassStream->Lock(0, desc.Size, &upload, D3DLOCK_DISCARD))) {
+        vb->Release();
+        return;
+    }
+    memcpy(upload, copy.data(), copy.size());
+    HRESULT unlocked = s_glassStream->Unlock();
+    if (FAILED(unlocked) || FAILED(s_dev->SetStreamSource(0, s_glassStream, offset, stride))) {
+        vb->Release();
+        return;
+    }
+    *original = vb; // GetStreamSource's reference lives through the draw.
+    *originalOffset = offset;
+    *originalStride = stride;
     static int logged;
     if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
 }
 
-// The body and mirror may share vertices. Restore their original texture coordinates after
-// the mirror draw so subsequent body draws never inherit the rear-view mapping.
-static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
-    if (saved.empty()) return;
-    TraceDetailScope timing(TRACE_MIRROR_RESTORE);
-    IDirect3DVertexBuffer9* vb = nullptr;
-    UINT offset = 0, stride = 0;
-    if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
-    // A normal lock after DrawIndexedPrimitive may wait for the GPU. Lock once,
-    // not once per vertex. Keep reverse order: overlapping parts can save the
-    // same UV more than once, and the earliest saved value must win.
-    void* p = nullptr;
-    if (SUCCEEDED(vb->Lock(0, 0, &p, 0)) && p) {
-        for (auto it = saved.rbegin(); it != saved.rend(); ++it)
-            memcpy((uint8_t*)p + it->offset, it->uv, sizeof(it->uv));
-        vb->Unlock();
-    }
-    vb->Release();
-}
 
 
 // The glass's draw: its own texture (sampler 0, a 2D texture; the car shader's environment cube is
@@ -611,8 +611,9 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
         TraceDetailScope timing(TRACE_MIRROR_DRAW);
-        std::vector<SavedGlassUV> saved;
-        MapGlassVertices(j, base, saved);
+        IDirect3DVertexBuffer9* original = nullptr;
+        UINT originalOffset = 0, originalStride = 0;
+        MapGlassVertices(j, base, &original, &originalOffset, &originalStride);
         int stage = -1;
         IDirect3DBaseTexture9* t0 = nullptr;
         real->GetTexture(0, &t0);
@@ -634,7 +635,10 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
                     if (t) t->Release();
                 }
             }
-            RestoreGlassVertices(saved);
+            if (original) {
+                real->SetStreamSource(0, original, originalOffset, originalStride);
+                original->Release();
+            }
             return false;
         }
         IDirect3DBaseTexture9* orig = nullptr;
@@ -659,7 +663,10 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
             real->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         }
         *hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
-        RestoreGlassVertices(saved);
+        if (original) {
+            real->SetStreamSource(0, original, originalOffset, originalStride);
+            original->Release();
+        }
         if (map) {
             real->SetPixelShaderConstantF(0, oldC, 2);
             real->SetSamplerState(0, D3DSAMP_ADDRESSU, oldAddr[0]);
@@ -1511,6 +1518,7 @@ void D3D_WarmUp() {
 }
 
 static void DrawDash() {
+    TraceDetailScope dashTiming(TRACE_DASH_DRAW);
     if (!EnsureDash()) return;
     IDirect3DStateBlock9* saved = SavedStateBlock();
     if (!saved) return;
@@ -1794,6 +1802,8 @@ static bool ProbeHud() {
     if (!s_probePending) {
         if (D3D_ProfNow() - s_lastProbe < 0.3) return false;
         s_lastProbe = D3D_ProfNow();
+        // GetRenderTargetData itself may block; DONOTWAIT on the later LockRect
+        // cannot make that transfer asynchronous. Include it in the probe timer.
         if (FAILED(s_dev->StretchRect(s_eyeSurf[2], nullptr, s_probeRT, nullptr, D3DTEXF_LINEAR)) ||
             FAILED(s_dev->GetRenderTargetData(s_probeRT, s_probeMem)))
             return false;
@@ -1891,6 +1901,7 @@ static void AutoLayout() {
 // In the HUD phase's end, with the HUD in s_eyeSurf[2]: each part into its cell of the dashboard
 // texture, then the HUD cleared from the headset's HUD layer (and the spectator) but the messages.
 static void ComposeDash() {
+    TraceDetailScope composeTiming(TRACE_DASH_COMPOSE);
     bool on = s_dashThisFrame;
     s_dashThisFrame = false;
     s_dashEye.on = false;                        // until the next frame's eyes say so
@@ -1904,7 +1915,10 @@ static void ComposeDash() {
         if (g_cfg.dashAdjust > 0.5f) OutlineCrops();
         return;
     }
-    ProbeHud();
+    {
+        TraceDetailScope probeTiming(TRACE_HUD_PROBE);
+        ProbeHud();
+    }
     s_dev->ColorFill(s_dashSurf, nullptr, D3DCOLOR_ARGB(0, 0, 0, 0));
     for (int i = 0; i < DASH_EL_COUNT; i++) {
         s_el[i].ok = false;
@@ -2070,16 +2084,12 @@ static unsigned s_eyeDrawCalls[2];
 
 static unsigned s_eyeDrawsAtBegin[2];
 
-// One readback per stream per eye, not one GPU synchronization per split skin run.
-struct DriverStreamSnapshot {
-    IDirect3DVertexBuffer9* buffer;
-    UINT offset, stride;
-    std::vector<unsigned char> bytes;
-};
-static std::vector<DriverStreamSnapshot> s_driverStreams;
+#include "driver_stream_range.h"
+#include "driver_stream_cache.h"
+static DriverStreamCache s_driverStreams;
 
 void D3D_EyePassBegin(int eye) {
-    s_driverStreams.clear();
+    s_driverStreams.Clear();
     s_tallyEye = eye;
     if (eye >= 0 && eye < 2) {
         s_eyeDrawsAtBegin[eye] = s_eyeDrawCalls[eye];
@@ -2470,7 +2480,7 @@ static void DrawOverlayOnBackBuffer() {
 }
 
 static void OnPresent() {
-    s_driverStreams.clear();
+    s_driverStreams.Clear();
     RaiseRenderPriority();
     if (KeyPressed(g_cfg.keySpectator)) {
         Spectator_CycleMode();
@@ -2708,8 +2718,9 @@ public:
         bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
         // Private stream copy: keep the game's textured/shaded draw, and never mutate its VB.
         std::vector<uint16_t> remapped;
-        if (type == D3DPT_TRIANGLELIST && DrawingPlayerView() &&
+        if (type == D3DPT_TRIANGLELIST && Cockpit_IsRegisteredDriverDraw(s_curIndices) && DrawingPlayerView() &&
             Cockpit_DriverDrawWork(s_curIndices,start,count,base,remapped)) {
+            TraceDetailScope driverTiming(TRACE_DRIVER_DRAW);
             IDirect3DVertexBuffer9* vb = nullptr;
             UINT offset = 0, stride = 0;
             if (SUCCEEDED(real->GetStreamSource(0,&vb,&offset,&stride)) && vb) {
@@ -2730,21 +2741,20 @@ public:
                     decl->Release();
                 }
                 if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size) {
-                    const std::vector<unsigned char>* source=nullptr;
-                    for (const auto& cached:s_driverStreams)
-                        if(cached.buffer==vb && cached.offset==offset && cached.stride==stride) { source=&cached.bytes; break; }
-                    if(!source) {
-                        void* locked=nullptr;
-                        if(SUCCEEDED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) {
-                            DriverStreamSnapshot snapshot{vb,offset,stride,{}};
-                            snapshot.bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
+                    const size_t required=DriverStreamBytes(remapped,stride,desc.Size-offset);
+                    const auto* source=s_driverStreams.Get(vb,offset,stride,desc.Size-offset,required,
+                        [&](std::vector<unsigned char>& bytes) {
+                            TraceDetailScope readbackTiming(TRACE_DRIVER_READBACK);
+                            void* locked=nullptr;
+                            // Preserve the original whole-buffer lock behavior. Bounded
+                            // per-draw copies below touch CPU memory only, never the GPU.
+                            if(FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) return false;
+                            bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
                             vb->Unlock();
-                            s_driverStreams.push_back(std::move(snapshot));
-                            source=&s_driverStreams.back().bytes;
-                        }
-                    }
-                    if(source) {
-                        std::vector<unsigned char> copy=*source;
+                            return true;
+                        });
+                    if(required && source) {
+                        std::vector<unsigned char> copy(source->begin(),source->begin()+required);
                         bool repaired=uv>=0 && Cockpit_RepairSkinUV(s_curIndices,start,count,base,stride,uv,copy.data(),copy.size());
                         bool posed=Cockpit_HasMarkedArmDraw(s_curIndices) &&
                             Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size());
@@ -2753,7 +2763,11 @@ public:
                             for(uint16_t index:remapped)
                                 if((size_t)(index+1)*stride>copy.size()) valid=false;
                             if(valid) {
-                                HRESULT result=real->DrawIndexedPrimitiveUP(type,0,(UINT)(copy.size()/stride),count,remapped.data(),D3DFMT_INDEX16,copy.data(),stride);
+                                HRESULT result;
+                                {
+                                    TraceDetailScope uploadTiming(TRACE_DRIVER_UPLOAD);
+                                    result=real->DrawIndexedPrimitiveUP(type,0,(UINT)(copy.size()/stride),count,remapped.data(),D3DFMT_INDEX16,copy.data(),stride);
+                                }
                                 real->SetStreamSource(0,vb,offset,stride);
                                 real->SetIndices(static_cast<IDirect3DIndexBuffer9*>(s_curIndices));
                                 vb->Release();
@@ -3035,6 +3049,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "HudPerCar")) return &g_cfg.hudPerCar;
     if (!strcmp(name, "Dash")) return &g_cfg.dash;
     if (!strcmp(name, "RearViewEvery")) return &g_cfg.rearViewEvery;
+    if (!strcmp(name, "DisableMirrors")) return &g_cfg.disableMirrors;
     if (!strcmp(name, "DepthSplit")) return &g_cfg.depthSplit;
     if (!strcmp(name, "SharedShadows")) return &g_cfg.sharedShadows;
     if (!strcmp(name, "Anisotropic")) return &g_cfg.anisotropic;

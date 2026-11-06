@@ -121,6 +121,7 @@ struct Config {
     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye
     int   envMapFacesPerFrame = 2;   // environment map cube faces refreshed per VR frame (1..6, 6 = every face every frame)
     float rearViewEvery = 1.0f;      // the rear view is rendered every Nth VR frame (1 = every frame; live)
+    float disableMirrors = 0.0f;    // live F4 diagnostic: stop rear view and all VR mirror work
     float sharedShadows = 1.0f;      // the sun shadow map drawn for the first eye only; the second eye reuses it (0/1, live)
     float anisotropic = 4.0f;        // anisotropic filtering: 0 off, 1 2x, 2 4x, 3 8x, 4 16x (live from F4)
     float simRateFromHeadset = 1.0f; // the widescreen fix's SimRate set to a multiple of the headset's rate (next start)

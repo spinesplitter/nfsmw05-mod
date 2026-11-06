@@ -20,6 +20,8 @@
 // stay fixed to the car model in the same frame.
 #include "cockpit.h"
 #include "frametrace.h"
+#include "driver_pose_selection.h"
+#include "driver_seam_cache.h"
 #include "mirror_glass.h"
 #include "d3d9hook.h"
 #include <d3d9.h>
@@ -112,6 +114,7 @@ struct Driver {
     // Per entry: runs (first index, triangles) of hidden-part triangles shown by hand, for runsKey.
     std::vector<std::vector<std::pair<int, int>>> shownRuns;
     int runsKey = -1;
+    DriverSeamCache seamCache;
 };
 
 // The steering wheel inside a car's interior model (<CAR>_KIT00_INTERIOR_*), found as a ring of
@@ -2966,11 +2969,16 @@ CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const flo
 
 // Returns the entry to submit (the first of the seated driver's ranges), or null for none.
 uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
+    TraceDetailScope submitTiming(TRACE_COCKPIT_SUBMIT);
     uint8_t* solid = model ? At<uint8_t*>(model, kModelSolid) : nullptr;
     SolidInfo* info = solid ? GetSolid(solid) : nullptr;
     if (info && Trace_On()) Trace_Model(info->name, s_curConn != nullptr, s_curConn && s_curPlayerCar,
                                       entry ? (unsigned)std::max(0, At<int>(entry, kEntryTris)) : 0);
     bool player = info && m && s_curConn && s_curPlayerCar;
+    // Model names can exceed the string's inline storage; construct once, not
+    // for each control/driver predicate in every split entry submission.
+    const std::string playerName = player ? SolidName(*info) : std::string();
+    const EditSet* playerEdits = player ? &EditsFor(playerName) : nullptr;
     if (player && info->wheel && info->wheel->ok) {
         const Wheel& wheel=*info->wheel;
         float upLength=sqrtf(wheel.axis[0]*wheel.axis[0]+wheel.axis[2]*wheel.axis[2]);
@@ -2998,23 +3006,23 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
             fitted->rigTried=true;
             char path[MAX_PATH];
             snprintf(path,sizeof(path),"%sDRIVERMOD\\rigs\\%s.bin",GameDir(),fitted->car.c_str());
-            if(SolidName(*info).find("_DRIVER_A")!=std::string::npos)
+            if(playerName.find("_DRIVER_A")!=std::string::npos)
                 DriverIK::LoadFile(path,&fitted->rig);
         }
         bool autoFingers=false;
         for (int i=1; i<(int)info->driver->arms.size(); ++i)
             autoFingers |= AutomaticDriverFinger(*info->driver,i);
-        if (fitted->rig.ok || autoFingers || !EditsFor(SolidName(*info)).arms.empty()) {
+        if (fitted->rig.ok || autoFingers || !playerEdits->arms.empty()) {
             void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
             s_armDraws[ib] = {solid, s_driverIKWorld};
         }
     }
     // The marked handbrake's grip, in world space: the right hand reaches for it when pulled.
-    if (player && (SolidName(*info).find("_INTERIOR_A")!=std::string::npos ||
-        !EditsFor(SolidName(*info)).handbrake.empty() || !EditsFor(SolidName(*info)).shifter.empty())) {
+    if (player && (playerName.find("_INTERIOR_A")!=std::string::npos ||
+        !playerEdits->handbrake.empty() || !playerEdits->shifter.empty())) {
         const ControlMarks& picked = ControlMarksFor(solid, *info);
         if (picked.shift) {
-            float travel=EditsFor(SolidName(*info)).shifter.empty()?0:DriverShiftTravel();
+            float travel=playerEdits->shifter.empty()?0:DriverShiftTravel();
             s_shifterHoverWorld = ToWorld(picked.shifter + V3{travel,0,DriverHoverMotion::clearance}, m);
             s_shifterHoverValid = true;
             s_shifterVehicle=ToWorld(s_shifterHoverWorld,MInvRigid(s_curBody));
@@ -3026,7 +3034,7 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
         }
         if(picked.shift || picked.handbrake) { s_controlVehicleValid=true; s_controlVehicle=s_head.worldId; }
     }
-    if (player && g_cfg.mirrors) NoteMirrors(solid, *info, m);
+    if (player && g_cfg.mirrors && g_cfg.disableMirrors <= 0.5f) NoteMirrors(solid, *info, m);
     if (player && info->wheel && info->wheel->dashOk && g_cfg.dash > 0.5f) {
         float origin[3], right[3], up[3], toEye[3];
         DashBasis(*info->wheel, m, origin, right, up, toEye);
@@ -3370,6 +3378,10 @@ bool Cockpit_HasMarkedArmDraw(void* ib) {
     return (NativeSteeringActive() || s_armHover.progress > 0.0001f) && s_armDraws.count(ib) != 0;
 }
 
+bool Cockpit_IsRegisteredDriverDraw(void* ib) {
+    return s_armDraws.count(ib) != 0;
+}
+
 bool Cockpit_DriverDrawWork(void* ib, unsigned first, unsigned triangles, int base,
                             std::vector<uint16_t>& indices) {
     indices.clear();
@@ -3407,7 +3419,8 @@ bool Cockpit_RepairSkinUV(void* ib, unsigned first, unsigned triangles, int base
     if (info==s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
         first>(unsigned)mesh.numIndices || triangles>((unsigned)mesh.numIndices-first)/3) return false;
     const auto& edits=EditsFor(SolidName(info->second));
-    std::set<unsigned> selected;
+    std::vector<unsigned char> visited(bytes/stride,0);
+    std::vector<unsigned> selected;
     for (unsigned t=0;t<triangles;++t) {
         const uint16_t* v=mesh.indices+first+t*3;
         uint64_t id=TriId(v[0],v[1],v[2]);
@@ -3415,10 +3428,14 @@ bool Cockpit_RepairSkinUV(void* ib, unsigned first, unsigned triangles, int base
             !AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3))) continue;
         for (int j=0;j<3;++j) {
             long long index=(long long)v[j]+base;
-            if (index>=0 && (unsigned long long)index<bytes/stride) selected.insert((unsigned)index);
+            if (index>=0 && (unsigned long long)index<bytes/stride && !visited[(size_t)index]) {
+                visited[(size_t)index]=1;
+                selected.push_back((unsigned)index);
+            }
         }
     }
     bool changed=false;
+    std::sort(selected.begin(),selected.end());
     for (unsigned index:selected) {
         unsigned char* dst=vertices+(size_t)index*stride+uvOffset+4;
         float v; memcpy(&v,dst,sizeof(v));
@@ -3481,9 +3498,12 @@ float NativeArmWeight(const DriverIK::Rig& rig, CustomDriver::Point p) {
     return weight;
 }
 
+#include "driver_binding_cache.h"
+
 bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int base,
                            unsigned stride, unsigned positionOffset, int normalOffset,
                            unsigned char* vertices, size_t bytes) {
+    TraceDetailScope poseTiming(TRACE_DRIVER_POSE);
     auto draw = s_armDraws.find(ib);
     if (draw == s_armDraws.end() || !vertices || stride < 12 || positionOffset + 12 > stride ||
         (!NativeSteeringActive() && s_armHover.progress <= 0.0001f)) return false;
@@ -3496,7 +3516,7 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     if (info == s_solids.end()) return false;
     const auto& edits = EditsFor(SolidName(info->second));
     const auto& marks = edits.arms;
-    std::set<unsigned> selected, automaticOnly;
+    DriverPoseSelection selection((unsigned)std::max(0,mesh.numVerts));
     for (unsigned t = 0; t < triangles; ++t) {
         const uint16_t* v = mesh.indices + first + t * 3;
         bool manual=marks.count(TriId(v[0], v[1], v[2]))!=0;
@@ -3504,22 +3524,28 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
             (AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3) ||
              AutomaticDriverArmIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3))))
             for (int j = 0; j < 3; ++j) if ((int)v[j] + base >= 0) {
-                selected.insert(v[j] + base);
-                if(!manual) automaticOnly.insert(v[j]+base);
+                selection.Add(v[j],manual);
             }
     }
-    // Explicit editor marks retain their meaning, even if adjacent automatic
-    // triangles share their vertices.
-    for(unsigned t=0;t<triangles;++t) {
-        const uint16_t* v=mesh.indices+first+t*3;
-        if(marks.count(TriId(v[0],v[1],v[2])))
-            for(int j=0;j<3;++j) if((int)v[j]+base>=0) automaticOnly.erase(v[j]+base);
-    }
+    // Manual priority is recorded during selection, independent of triangle order.
     // Shared sleeve/body seam vertices must not drag adjacent torso triangles.
     // Inspect all entries, not just this draw's subrange.
     if(info->second.driver && info->second.driver->rig.ok) {
-        const Driver& driver=*info->second.driver;
-        for(int i=0;i<mesh.n && i<(int)driver.body.size() && i<(int)driver.arms.size();++i) {
+        Driver& driver=*info->second.driver;
+        std::vector<int> layout;
+        int entries=std::min(mesh.n,(int)std::min(driver.body.size(),driver.arms.size()));
+        layout.reserve((size_t)std::max(0,entries)*4);
+        for(int i=0;i<entries;++i) {
+            uint8_t* entry=mesh.entries+i*kEntrySize;
+            layout.push_back(At<int>(entry,kEntryFirstIndex));
+            layout.push_back(At<int>(entry,kEntryTris));
+            layout.push_back(driver.body[i]);
+            layout.push_back(driver.arms[i]);
+        }
+        const auto& excluded=driver.seamCache.Get(mesh.indices,(size_t)mesh.numIndices,
+            (unsigned)std::max(0,mesh.numVerts),layout,edits.native,
+            [&](std::vector<unsigned char>& mask) {
+        for(int i=0;i<entries;++i) {
             uint8_t* entry=mesh.entries+i*kEntrySize;
             int begin=At<int>(entry,kEntryFirstIndex), count=At<int>(entry,kEntryTris);
             if(begin<0 || count<0 || begin>mesh.numIndices || count>(mesh.numIndices-begin)/3) continue;
@@ -3527,65 +3553,116 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
                 const uint16_t* v=mesh.indices+begin+t*3;
                 if(t>=driver.body[i] && t<driver.body[i]+driver.arms[i] &&
                     !edits.native.count(TriId(v[0],v[1],v[2]))) continue;
-                for(int j=0;j<3;++j) if((int)v[j]+base>=0 && automaticOnly.count(v[j]+base))
-                    selected.erase(v[j]+base);
+                for(int j=0;j<3;++j) if(v[j]<mask.size()) mask[v[j]]=1;
             }
         }
+        });
+        for(unsigned local:selection.Ordered())
+            if(local<excluded.size() && excluded[local]) selection.ExcludeAutomatic(local);
     }
     std::vector<V3> head, tail;
     DriverArmPose(draw->second.world, head, tail);
     if (head.empty()) return false;
     auto point = [](const float* p) { return CustomDriver::Point{p[0], p[1], p[2]}; };
+    const bool steering = NativeSteeringActive();
+    const int control = ControlSide();
+    int candidates[2][4];
+    DriverSteering::Grip grips[2]{};
+    float forearmRoll[2]{};
+    CustomDriver::Point wheelAxis{};
+    if (steering) {
+        M4 inv=MInvRigid(draw->second.world);
+        V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
+            ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
+        wheelAxis={axis.x,axis.y,axis.z};
+    }
+    for (int side=0;side<2;++side) {
+        for (int j=0;j<3;++j) candidates[side][j]=rig->arms[side*3+j];
+        candidates[side][3]=rig->Find(side ? "JNT_hand_tip.R" : "JNT_hand_tip.L");
+        if (!steering) continue;
+        grips[side]=NativeGrip(*rig,side,draw->second.world);
+        int fore=rig->arms[side*3+1], hand=rig->arms[side*3+2];
+        if (fore<0 || hand<0 || (side==control && (s_armControlBlend>0 || s_armControlOverride))) continue;
+        auto restDir=point(rig->bones[fore].tail)-point(rig->bones[fore].head);
+        CustomDriver::Point posedDir{tail[fore].x-head[fore].x,tail[fore].y-head[fore].y,tail[fore].z-head[fore].z};
+        auto restHand=point(rig->bones[hand].tail)-point(rig->bones[hand].head);
+        CustomDriver::Point posedHand{tail[hand].x-head[hand].x,tail[hand].y-head[hand].y,tail[hand].z-head[hand].z};
+        forearmRoll[side]=DriverSteering::CuffRoll(restDir,posedDir,restHand,posedHand,wheelAxis,grips[side].roll);
+    }
+    std::vector<CustomDriver::PreparedRotation> rotations;
+    rotations.reserve(rig->bones.size());
+    for(size_t b=0;b<rig->bones.size();++b)
+        rotations.emplace_back(point(rig->bones[b].tail)-point(rig->bones[b].head),
+            CustomDriver::Point{tail[b].x-head[b].x,tail[b].y-head[b].y,tail[b].z-head[b].z});
+    CustomDriver::PreparedTwist handTwists[2]={
+        {wheelAxis,grips[0].roll*(control==0 ? 1-s_armControlBlend : 1)},
+        {wheelAxis,grips[1].roll*(control==1 ? 1-s_armControlBlend : 1)}};
+    CustomDriver::PreparedRotation handRotations[2]={
+        {{1,0,0},{1,0,0}},{{1,0,0},{1,0,0}}};
+    CustomDriver::PreparedRotation tipRotations[2]={
+        {{1,0,0},{1,0,0}},{{1,0,0},{1,0,0}}};
+    if(steering) for(int side=0;side<2;++side) {
+        int hand=rig->arms[side*3+2];
+        if(hand<0) continue;
+        auto restDir=point(rig->bones[hand].tail)-point(rig->bones[hand].head);
+        CustomDriver::Point posedDir{tail[hand].x-head[hand].x,tail[hand].y-head[hand].y,tail[hand].z-head[hand].z};
+        handRotations[side]=CustomDriver::PreparedRotation(handTwists[side].Apply(restDir),posedDir);
+        int tip=candidates[side][3];
+        if(tip>=0) {
+            auto tipRest=point(rig->bones[tip].tail)-point(rig->bones[tip].head);
+            CustomDriver::Point tipDir{tail[tip].x-head[tip].x,tail[tip].y-head[tip].y,tail[tip].z-head[tip].z};
+            tipRotations[side]=CustomDriver::PreparedRotation(handTwists[side].Apply(tipRest),tipDir);
+        }
+    }
+    // Rest-space classification is independent of animation and editor marks.
+    // Exact rig/point comparisons also handle same-address asset reloads.
+    static DriverBindingCache bindings;
+    bindings.Prepare(*rig);
     bool changed = false;
-    for (unsigned v : selected) {
-        int localVertex = (int)v - base;
+    for (unsigned local : selection.Ordered()) {
+        if (!selection.IsSelected(local)) continue;
+        unsigned v=local+base;
+        int localVertex = (int)local;
         if ((size_t)v * stride + positionOffset + 12 > bytes || localVertex < 0 || localVertex >= mesh.numVerts) continue;
         auto p = point(mesh.pos(localVertex));
-        float automaticWeight=automaticOnly.count(v) && info->second.driver && info->second.driver->rig.ok ?
-            NativeArmWeight(*rig,p) : 1.0f;
-        if(automaticWeight<=0) continue;
-        // Bind to the nearest arm segment on either side, not to a global Y threshold.
-        float best = 1e9f; int nearest = -1;
-        for (int side = 0; side < 2; ++side) {
-            int candidates[4] = {rig->arms[side*3],rig->arms[side*3+1], rig->arms[side*3+2], rig->Find(side ? "JNT_hand_tip.R" : "JNT_hand_tip.L")};
-            for (int b : candidates) if (b >= 0) {
-                auto a = point(rig->bones[b].head), d = point(rig->bones[b].tail) - a;
-                float t = std::max(0.0f, std::min(1.0f, CustomDriver::Dot(p-a,d) / std::max(1e-10f,CustomDriver::Dot(d,d))));
-                float distance = CustomDriver::Length(p-(a+d*t));
-                if (distance < best) { best = distance; nearest = (side==ControlSide() || NativeSteeringActive()) ? b : -1; }
+        const auto binding=bindings.Get(local,p,[&]() {
+            DriverBindingCache::Binding result;
+            result.weight=NativeArmWeight(*rig,p);
+            float best=1e9f;
+            for (int side=0;side<2;++side) {
+                for (int b:candidates[side]) if (b>=0) {
+                    auto a=point(rig->bones[b].head), d=point(rig->bones[b].tail)-a;
+                    float t=std::max(0.0f,std::min(1.0f,CustomDriver::Dot(p-a,d)/std::max(1e-10f,CustomDriver::Dot(d,d))));
+                    float distance=CustomDriver::Length(p-(a+d*t));
+                    if (distance<best) { best=distance; result.bone=b; result.side=side; }
+                }
             }
-        }
+            return result;
+        });
+        float automaticWeight=selection.IsAutomatic(local) && info->second.driver && info->second.driver->rig.ok ?
+            binding.weight : 1.0f;
+        if(automaticWeight<=0) continue;
+        int nearest=(binding.side==control || steering) ? binding.bone : -1;
         if (nearest < 0) continue;
         int b = nearest;
         auto restHead = point(rig->bones[b].head), restDir = point(rig->bones[b].tail)-restHead;
         CustomDriver::Point posedHead{head[b].x,head[b].y,head[b].z};
         CustomDriver::Point posedDir{tail[b].x-head[b].x,tail[b].y-head[b].y,tail[b].z-head[b].z};
         float cuffRoll=0;
-        if(NativeSteeringActive()) for(int side=0;side<2;++side) {
-            if(b!=rig->arms[side*3+1] || (side==ControlSide() && (s_armControlBlend>0 || s_armControlOverride))) continue;
-            int hand=rig->arms[side*3+2];
-            auto restHand=point(rig->bones[hand].tail)-point(rig->bones[hand].head);
-            CustomDriver::Point posedHand{tail[hand].x-head[hand].x,tail[hand].y-head[hand].y,tail[hand].z-head[hand].z};
-            M4 inv=MInvRigid(draw->second.world);
-            V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
-                ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
+        if(steering) for(int side=0;side<2;++side) {
+            if(b!=rig->arms[side*3+1] || (side==control && (s_armControlBlend>0 || s_armControlOverride))) continue;
             float along=CustomDriver::Dot(p-restHead,restDir)/std::max(1e-10f,CustomDriver::Dot(restDir,restDir));
-            cuffRoll=DriverSteering::CuffRoll(restDir,posedDir,restHand,posedHand,
-                {axis.x,axis.y,axis.z},NativeGrip(*rig,side,draw->second.world).roll)*DriverSteering::CuffWeight(along);
+            cuffRoll=forearmRoll[side]*DriverSteering::CuffWeight(along);
         }
         auto deformDirection = [&](CustomDriver::Point value) {
-            if (NativeSteeringActive()) for (int side=0;side<2;++side) {
-                if (b!=rig->arms[side*3+2] && b!=rig->Find(side ? "JNT_hand_tip.R" : "JNT_hand_tip.L")) continue;
-                auto grip=NativeGrip(*rig,side,draw->second.world);
-                float roll=grip.roll*(side==ControlSide() ? 1-s_armControlBlend : 1);
-                M4 inv=MInvRigid(draw->second.world);
-                V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
-                    ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
-                CustomDriver::Point k{axis.x,axis.y,axis.z};
-                return CustomDriver::Rotate(CustomDriver::Twist(value,k,roll),
-                    CustomDriver::Twist(restDir,k,roll),posedDir);
+            if (steering) for (int side=0;side<2;++side) {
+                if (b!=rig->arms[side*3+2] && b!=candidates[side][3]) continue;
+                // Hand-tip bones may have a different rest direction from the hand.
+                if(b==rig->arms[side*3+2])
+                    return handRotations[side].Apply(handTwists[side].Apply(value));
+                return tipRotations[side].Apply(handTwists[side].Apply(value));
             }
-            auto rotated=CustomDriver::Rotate(value,restDir,posedDir);
+            auto rotated=rotations[b].Apply(value);
             return cuffRoll!=0 ? CustomDriver::Twist(rotated,posedDir,cuffRoll) : rotated;
         };
         float* dst = (float*)(vertices + (size_t)v*stride + positionOffset);
@@ -3670,6 +3747,7 @@ bool Cockpit_ApplySeat(M4& view) {
 }
 
 void Cockpit_EndFrame() {
+    TraceDetailScope frameTiming(TRACE_COCKPIT_FRAME);
     static double armTime = Now();
     double now = Now();
     float dt = (float)std::max(0.0, std::min(0.1, now - armTime));

@@ -201,6 +201,7 @@ constexpr struct {
     {MOD_VR, "AnimatedDriverSpread", 1.0f},
     {MOD_VR, "AnimatedDriverSave", 0.0f},
     {MOD_VR, "AnimatedDriverHandFix", 0.0f},
+    {MOD_VR, "DisableMirrors", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -237,13 +238,15 @@ enum {
     VR_SHOWDRIVERIK,
     VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
     VR_ANIMATEDDRIVERHANDFIX,
+    VR_DISABLEMIRRORS,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
-static_assert(VR_ANIMATEDDRIVERHANDFIX == EXT_COUNT - 1, "animated driver setting must match its bridge entry");
+static_assert(VR_DISABLEMIRRORS == EXT_COUNT - 1, "mirror setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
+static_assert(KeyIs(kExt[VR_DISABLEMIRRORS].key, "DisableMirrors"), "kExt out of order at VR_DISABLEMIRRORS");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
 static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
@@ -853,6 +856,7 @@ const Item kItems[] = {
     BACK_,
     {ACTION, "Hide Animated Driver Model", nullptr, "HideAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
     HEADER_("TESTING"),
+    {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Drop height", "Tires", "DropHeight", &g_cfg.dropHeight, 0.5f, 50.0f, 0.5f, 1, "%.1f m", 0},

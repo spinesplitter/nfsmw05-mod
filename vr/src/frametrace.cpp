@@ -89,7 +89,8 @@ DWORD WINAPI WriteCsv(LPVOID p) {
     if (f) {
         fprintf(f, "t_s,frame_ms,game_ms,headset_wait_ms,eyes_cpu_ms,gpu_wait_ms,submit_ms,spectator_ms,present_ms,update_ms,"
                    "eye0_cpu_ms,eye1_cpu_ms,eye0_draws,eye1_draws,eye0_gpu_ms,eye1_gpu_ms,gpu_frame_ms,game_step_s,"
-                    "physics_steps,env_faces,env_face_count,rear_view,shadow,hud_probe,mirror_draw_cpu_ms,mirror_map_cpu_ms,mirror_restore_cpu_ms,hud_phase_cpu_ms,player_car_cpu_ms,other_car_cpu_ms,solid_cache_cpu_ms");
+                    "physics_steps,env_faces,env_face_count,rear_view,shadow,hud_probe,mirror_draw_cpu_ms,mirror_map_cpu_ms,mirror_restore_cpu_ms,hud_phase_cpu_ms,player_car_cpu_ms,other_car_cpu_ms,solid_cache_cpu_ms,render_setup_cpu_ms,predisplay_cpu_ms,"
+                    "driver_draw_cpu_ms,driver_pose_cpu_ms,driver_readback_cpu_ms,driver_upload_cpu_ms,cockpit_submit_cpu_ms,cockpit_frame_cpu_ms,dash_draw_cpu_ms,dash_compose_cpu_ms,hud_probe_cpu_ms,custom_driver_cpu_ms");
         for (const char* label : objectLabels) fprintf(f, ",%s_submits,%s_triangles", label, label);
         fprintf(f, ",solid_cache_rebuilds,model_overflow_submits\n");
         for (int i = 0; i < n; i++) {

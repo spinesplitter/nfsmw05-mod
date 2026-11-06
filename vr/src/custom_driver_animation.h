@@ -29,6 +29,34 @@ inline Point Rotate(Point p, Point from, Point to) {
     if(c < -0.9999f) { Point axis=Unit(Cross(from,std::fabs(from.z)<0.9f ? Point{0,0,1}:Point{0,1,0})); return axis*(2*Dot(axis,p))-p; }
     return p+Cross(v,p)+Cross(v,Cross(v,p))*(1/(1+c));
 }
+// Prepared operators retain Rotate/Twist's arithmetic and degeneracy rules.
+// Prepare once per bone/pose, rather than normalizing and taking trig per vertex.
+struct PreparedRotation {
+    Point cross, axis;
+    float reciprocal=0;
+    bool opposite=false;
+    PreparedRotation(Point from, Point to) {
+        from=Unit(from); to=Unit(to);
+        float c=std::max(-1.0f,std::min(1.0f,Dot(from,to)));
+        cross=Cross(from,to);
+        opposite=c < -0.9999f;
+        if(opposite) axis=Unit(Cross(from,std::fabs(from.z)<0.9f ? Point{0,0,1}:Point{0,1,0}));
+        else reciprocal=1/(1+c);
+    }
+    Point Apply(Point p) const {
+        if(opposite) return axis*(2*Dot(axis,p))-p;
+        return p+Cross(cross,p)+Cross(cross,Cross(cross,p))*reciprocal;
+    }
+};
+struct PreparedTwist {
+    Point axis;
+    float cosine, sine;
+    PreparedTwist(Point direction, float radians) : axis(Unit(direction)),
+        cosine(std::cos(radians)), sine(std::sin(radians)) {}
+    Point Apply(Point p) const {
+        return p*cosine+Cross(axis,p)*sine+axis*(Dot(axis,p)*(1-cosine));
+    }
+};
 struct Controls {
     Point centre, axis{1,0,0}, shifter, handbrake;
     float radius=0, degrees=0, shift=0, brake=0;
@@ -125,12 +153,18 @@ struct AnimationRig {
             Point grip=Twist(Rotate(rest[hand].tail-rest[hand].head,{1,0,0},forward),forward,rolls[side]);
             Solve(pose,side,target,Unit(grip));
         }
+        std::vector<PreparedRotation> rotations;
+        rotations.reserve(rest.size());
+        for(size_t b=0;b<rest.size();++b)
+            rotations.emplace_back(rest[b].tail-rest[b].head,pose[b].tail-pose[b].head);
+        PreparedRotation handRotation({1,0,0},forward);
+        PreparedTwist handTwists[2]={{forward,rolls[0]},{forward,rolls[1]}};
         for(size_t i=0;i<output.size();i++) {
             Point p;
             for(auto w:weights[i]) {
-                Point offset=Rotate(w.offset,rest[w.bone].tail-rest[w.bone].head,pose[w.bone].tail-pose[w.bone].head);
+                Point offset=rotations[w.bone].Apply(w.offset);
                 for(int side=0;side<2;side++) if(w.bone==arms[side*3+2])
-                    offset=Twist(Rotate(w.offset,{1,0,0},forward),forward,rolls[side]);
+                    offset=handTwists[side].Apply(handRotation.Apply(w.offset));
                 p=p+(pose[w.bone].head+offset)*w.weight;
             }
             output[i].x=p.x; output[i].y=p.y; output[i].z=p.z;

@@ -29,6 +29,58 @@ int main() {
     Trace_Detail(TRACE_MIRROR_RESTORE, 0.001);
     Trace_Detail(TRACE_MIRROR_RESTORE, 0.002);
     assert(std::fabs(s.cur.detail[TRACE_MIRROR_RESTORE] - 3) < 0.00001);
+    { TraceDetailScope scope(TRACE_RENDER_SETUP); clockSeconds += .004; }
+    { TraceDetailScope scope(TRACE_PREDISPLAY); clockSeconds += .005; }
+    assert(std::fabs(s.cur.detail[TRACE_RENDER_SETUP] - 4) < .00001);
+    assert(std::fabs(s.cur.detail[TRACE_PREDISPLAY] - 5) < .00001);
+    for (int detail = TRACE_DRIVER_DRAW; detail < TRACE_DETAIL_COUNT; ++detail) {
+        { TraceDetailScope scope(static_cast<TraceDetail>(detail)); clockSeconds += .006; }
+        assert(std::fabs(s.cur.detail[detail] - 6) < .00001);
+    }
+    // Exercise the actual CSV writer: every detail must match its named column.
+    char oldDirectory[MAX_PATH], tempDirectory[MAX_PATH], testDirectory[MAX_PATH];
+    assert(GetCurrentDirectoryA(MAX_PATH, oldDirectory));
+    assert(GetTempPathA(MAX_PATH, tempDirectory));
+    assert(GetTempFileNameA(tempDirectory, "trc", 0, testDirectory));
+    assert(DeleteFileA(testDirectory));
+    assert(CreateDirectoryA(testDirectory, nullptr));
+    assert(SetCurrentDirectoryA(testDirectory));
+    Row* csvRows = (Row*)calloc(2, sizeof(Row));
+    assert(csvRows);
+    csvRows[0].t = 1;
+    csvRows[0].envFaces = 1;
+    for (int d = 0; d < TRACE_DETAIL_COUNT; ++d) csvRows[1].detail[d] = 100 + d;
+    WriteCsv(csvRows);
+    FILE* csv = fopen("nfsmw_frametrace_001.csv", "r");
+    assert(csv);
+    char header[4096], values[4096];
+    assert(fgets(header, sizeof(header), csv) && fgets(values, sizeof(values), csv));
+    fclose(csv);
+    const char* detailNames[] = {"mirror_draw_cpu_ms", "mirror_map_cpu_ms", "mirror_restore_cpu_ms",
+        "hud_phase_cpu_ms", "player_car_cpu_ms", "other_car_cpu_ms", "solid_cache_cpu_ms",
+        "render_setup_cpu_ms", "predisplay_cpu_ms", "driver_draw_cpu_ms", "driver_pose_cpu_ms",
+        "driver_readback_cpu_ms", "driver_upload_cpu_ms", "cockpit_submit_cpu_ms", "cockpit_frame_cpu_ms",
+        "dash_draw_cpu_ms", "dash_compose_cpu_ms", "hud_probe_cpu_ms", "custom_driver_cpu_ms"};
+    static_assert(sizeof(detailNames)/sizeof(detailNames[0]) == TRACE_DETAIL_COUNT, "CSV detail names");
+    char *nameContext = nullptr, *valueContext = nullptr;
+    char* name = strtok_s(header, ",\r\n", &nameContext);
+    char* value = strtok_s(values, ",\r\n", &valueContext);
+    int detailsSeen = 0;
+    while (name && value) {
+        for (int d = 0; d < TRACE_DETAIL_COUNT; ++d) if (!strcmp(name, detailNames[d])) {
+            assert(std::fabs(atof(value) - (100 + d)) < .00001);
+            ++detailsSeen;
+        }
+        name = strtok_s(nullptr, ",\r\n", &nameContext);
+        value = strtok_s(nullptr, ",\r\n", &valueContext);
+    }
+    assert(!name && !value && detailsSeen == TRACE_DETAIL_COUNT);
+    assert(DeleteFileA("nfsmw_frametrace_001.csv"));
+    assert(DeleteFileA("nfsmw_frametrace_001_models.csv"));
+    assert(DeleteFileA("nfsmw_frametrace_001_passes.csv"));
+    assert(SetCurrentDirectoryA(oldDirectory));
+    assert(RemoveDirectoryA(testDirectory));
+    puts("CSV detail ordering tests passed: driver, cockpit, dashboard and HUD diagnostics");
     s.on = false;
     Trace_Detail(TRACE_HUD_PHASE, 1);
     assert(s.cur.detail[TRACE_HUD_PHASE] == 0);

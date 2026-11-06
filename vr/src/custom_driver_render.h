@@ -24,6 +24,7 @@ static void DrawCustomDriver() {
     if (!s_colorEye || s_customDriverDrawn || !s_customDriverIb || s_customDriverIb != s_curIndices ||
         g_cfg.showCustomDriverModel < 0.5f || !DrawingPlayerView()) return;
     s_customDriverDrawn = true;
+    TraceDetailScope driverTiming(TRACE_CUSTOM_DRIVER);
     if (!s_customDriverAttempted) {
         s_customDriverAttempted = true;
         char path[MAX_PATH]; snprintf(path, sizeof(path), "%sdrivermod\\driver-runtime.bin", GameDir());
