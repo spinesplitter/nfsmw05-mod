@@ -1,0 +1,29 @@
+﻿{
+    "Tests":  "passed",
+    "Status":  "installed",
+    "Backup":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\DRIVERMOD\\hand-spacing-backup-20261106-112154",
+    "Files":  [
+                  {
+                      "Existed":  true,
+                      "Target":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\scripts\\nfsmw_vr.asi",
+                      "Backup":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\DRIVERMOD\\hand-spacing-backup-20261106-112154\\nfsmw_vr.asi",
+                      "Source":  "T:\\Games\\ModWanted\\driver-animation-publish\\vr\\bin\\d3d9.dll",
+                      "Hash":  "52D77B11024CA5C3C7535573E78BEDE8BDA25C3EDE9ABF5387B5C38A01A9F97F"
+                  },
+                  {
+                      "Existed":  true,
+                      "Target":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\nfsmw_vr_host.exe",
+                      "Backup":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\DRIVERMOD\\hand-spacing-backup-20261106-112154\\nfsmw_vr_host.exe",
+                      "Source":  "T:\\Games\\ModWanted\\driver-animation-publish\\vr\\bin\\nfsmw_vr_host.exe",
+                      "Hash":  "9711A6F65C343025B076FA91076DEA226A38FBD525BD3DD422A863F0EEBDB05B"
+                  },
+                  {
+                      "Existed":  true,
+                      "Target":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\nfsmw_crashdump.exe",
+                      "Backup":  "T:\\Games\\ModWanted\\driverNeed For Speed Most Wanted Black Edition - Copy\\DRIVERMOD\\hand-spacing-backup-20261106-112154\\nfsmw_crashdump.exe",
+                      "Source":  "T:\\Games\\ModWanted\\driver-animation-publish\\vr\\bin\\nfsmw_crashdump.exe",
+                      "Hash":  "F9F4E0EA6FAD82967586DD8E6A941BE43276DBE9370A9ED9AA6495151F829230"
+                  }
+              ],
+    "Build":  "passed"
+}

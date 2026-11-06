@@ -6,6 +6,38 @@ int main(int argc, char** argv) {
     CockpitSteeringRegressionMain();
     using namespace CustomDriver;
     Point axis{1,0,0}, pivot{}, right{0,-0.2f,0}, left{0,0.2f,0}, direction{1,0,0};
+    for(int side=0;side<2;++side) for(float spread:{0.5f,1.f,1.1f,1.5f}) {
+        Point rest=side ? right:left;
+        for(int angle=-450;angle<=450;++angle) {
+            auto grip=DriverSteering::Evaluate(rest,direction,pivot,axis,float(angle),side,0,spread);
+            auto scaled=DriverSteering::Evaluate(rest*spread,direction,pivot,axis,float(angle),side);
+            Near(Length(grip.wrist-scaled.wrist),0,"native spread matches scaled wheel-plane path through transfers");
+            Near(grip.release,scaled.release,"spread preserves transfer timing");
+        }
+        auto grip=DriverSteering::Evaluate(rest,direction,pivot,axis,0,side,0,spread);
+        Near(Length(grip.wrist),0.2f*spread,"spread scales native neutral separation");
+    }
+    for(int side=0;side<2;++side) {
+        Point fore{0.22f,side ? 0.06f : -0.06f,0.10f}, hand{0.075f,0,0.025f};
+        float previous=0;
+        for(int step=-22500;step<=22500;++step) {
+            float angle=step*0.02f;
+            auto grip=DriverSteering::Evaluate(side ? right:left,hand,pivot,axis,angle,side);
+            Point posedFore=Rotate(fore,hand,grip.direction);
+            float roll=DriverSteering::CuffRoll(fore,posedFore,hand,grip.direction,axis,grip.roll);
+            Check(std::isfinite(roll) && fabsf(roll)<=0.349066f,"cuff correction finite and at most 20 degrees across 900 degrees");
+            if(step>-22500) Check(fabsf(roll-previous)<0.003f,"cuff rotation continuous through both regrips");
+            previous=roll;
+            Near(Length(Twist(posedFore,posedFore,roll)-posedFore),0,"cuff roll preserves wrist and elbow endpoints");
+            Point radial=Unit(Cross(posedFore,{0,0,1}))*0.035f;
+            Near(Length(Twist(radial,posedFore,roll)),Length(radial),"cuff radius unchanged; no sleeve scaling");
+            Check(Length(Twist(radial,posedFore,roll)-radial)<0.0123f,"cuff surface correction bounded to 12.3 mm at 35 mm radius");
+        }
+    }
+    Near(DriverSteering::CuffWeight(0.70f),0,"proximal 70 percent of forearm unchanged");
+    Near(DriverSteering::CuffWeight(1),1,"full orientation correction only at cuff");
+    Near(DriverSteering::CuffRoll({1,0,0},{1,0,0},{1,0,0},{1,0,0},{1,0,0},0),0,
+        "neutral cuff has no correction even with collinear hand and forearm");
     for(Point wheelAxis:{axis,axis*-1,Point{0.9701f,0,-0.2425f},Point{-0.9701f,0,0.2425f}}) {
         Point normal=Unit(wheelAxis);
         Point up=Unit(Point{0,0,1}-normal*Dot({0,0,1},normal));
@@ -130,6 +162,7 @@ int main(int argc, char** argv) {
     Check(DriverSteering::Elbow({0,0,0},{0.3f,0,-0.2f},{0.6f,0,0},{0.5f,0.1f,0},elbow),"reachable IK target");
     Check(fabsf(Length(elbow)-sqrtf(0.13f))<1e-5f && fabsf(Length(Point{0.5f,0.1f,0}-elbow)-sqrtf(0.13f))<1e-5f,"IK preserves arm lengths");
     s_nativeWheelValid=true; s_nativeWheelCar=s_head.worldId;
+    s_head.car="GALLARDO";
     s_driverIKTried=true; s_driverIK.ok=true; s_driverIK.bones.resize(8);
     for(int side=0;side<2;++side) {
         for(int j=0;j<3;++j) s_driverIK.arms[side*3+j]=side*4+j;
@@ -143,6 +176,26 @@ int main(int argc, char** argv) {
     s_shifterHoverValid=true; s_shifterHoverWorld={0.3f,-0.5f,-0.1f};
     s_nativeWheelPivot={0.8f,0,0}; s_nativeWheelAxis={1,0,0}; s_curBody=Identity();
     s_nativeDriverBody=Identity();
+    Check(fabsf(DriverHoverMotion::clearance-0.05f)<1e-6f,
+        "shifter and handbrake hover clearance lowered by 3 cm to 5 cm");
+    for(const char* car : {"GALLARDO","CLIO"}) {
+        s_head.car=car;
+        for(int side=0;side<2;++side) {
+            for(float angle : {-220.0f,0.0f,210.0f}) {
+                g_steeringWheelAngle=angle;
+                s_nativeWheelOffset={};
+                auto original=NativeGrip(s_driverIK,side,Identity());
+                V3 shift={0,0.035f,-0.02f};
+                s_nativeWheelOffset=shift; s_nativeWheelPivot=s_nativeWheelPivot+shift;
+                auto moved=NativeGrip(s_driverIK,side,Identity());
+                Check(Length(moved.wrist-original.wrist-Point{shift.x,shift.y,shift.z})<1e-5f,
+                    "both handedness paths follow relocated wheel through steering and transfer");
+                s_nativeWheelPivot=s_nativeWheelPivot-shift;
+                s_nativeWheelOffset={};
+            }
+        }
+    }
+    s_head.car="GALLARDO";
     s_armHover.Reset(); s_armControlBlend=0; s_armControlOverride=false;
     s_armShiftPending=false; s_armShiftUntil=-1; g_cockpitHandbrake=0;
     g_steeringWheelAngle=210;
@@ -285,21 +338,36 @@ int main(int argc, char** argv) {
         }
         std::vector<V3> previousHeads;
         float largestStep=0, smallestClearance=100, clearanceAngle=0;
+        float previousCuff[2]={}, largestCuffStep=0;
         int clearanceLeft=0, clearanceRight=0;
         for(int step=-22500;step<=22500;++step) {
             g_steeringWheelAngle=step*0.02f;
             DriverArmPose(moved,heads,tails);
+            for(int side=0;side<2;++side) {
+                int f=s_driverIK.arms[side*3+1], h=s_driverIK.arms[side*3+2];
+                auto p=[](const float* v){return Point{v[0],v[1],v[2]};};
+                Point restFore=p(s_driverIK.bones[f].tail)-p(s_driverIK.bones[f].head);
+                Point restHand=p(s_driverIK.bones[h].tail)-p(s_driverIK.bones[h].head);
+                Point posedFore{tails[f].x-heads[f].x,tails[f].y-heads[f].y,tails[f].z-heads[f].z};
+                Point posedHand{tails[h].x-heads[h].x,tails[h].y-heads[h].y,tails[h].z-heads[h].z};
+                float cuff=DriverSteering::CuffRoll(restFore,posedFore,restHand,posedHand,
+                    {s_nativeWheelAxis.x,s_nativeWheelAxis.y,s_nativeWheelAxis.z},NativeGrip(s_driverIK,side,moved).roll);
+                Check(std::isfinite(cuff) && fabsf(cuff)<=0.349066f,"installed rig cuff correction bounded across full sweep");
+                if(step>-22500) {
+                    largestCuffStep=std::max(largestCuffStep,fabsf(cuff-previousCuff[side]));
+                    Check(fabsf(cuff-previousCuff[side])<0.01f,"installed rig cuff correction continuous through positive and negative regrips");
+                }
+                previousCuff[side]=cuff;
+            }
             if(g_steeringWheelAngle>=90 || g_steeringWheelAngle<=-100) {
                 int u=s_driverIK.arms[3], f=s_driverIK.arms[4], h=s_driverIK.arms[5];
                 auto p=[](const float* v){return Point{v[0],v[1],v[2]};};
                 auto target=NativeGrip(s_driverIK,1,moved).wrist;
                 Point naturalElbow;
                 Check(DriverSteering::Solve(p(s_driverIK.bones[u].head),p(s_driverIK.bones[f].head),
-                    p(s_driverIK.bones[h].head),target,naturalElbow,{},0,
-                    g_steeringWheelAngle<0 ? DriverSteering::Phase(-g_steeringWheelAngle,100,180) :
-                    DriverSteering::Phase(g_steeringWheelAngle,90,165)),"natural right elbow solves");
+                    p(s_driverIK.bones[h].head),target,naturalElbow),"natural right elbow solves");
                 Check(Length(naturalElbow-Point{heads[f].x,heads[f].y,heads[f].z})<1e-5f,
-                    "neither transfer forces elbow pole twist");
+                    "lift keeps transported fitted bend plane without fixed-elbow blend");
             }
             if(step%5==0 && (g_steeringWheelAngle>=90 || g_steeringWheelAngle<=-100) &&
                 (g_steeringWheelAngle<0 || g_steeringWheelAngle<=450)) {
@@ -332,6 +400,7 @@ int main(int argc, char** argv) {
             previousHeads=heads;
         }
         printf("PASS: real rig 0.02-degree sweep, maximum elbow step %.6f m\n",largestStep);
+        printf("PASS: installed rig cuff sweep maximum angular step %.6f radians\n",largestCuffStep);
         printf("Real rig sampled arm centreline clearance during transfer: %.6f m at %.1f degrees bones %d/%d\n",smallestClearance,clearanceAngle,clearanceLeft,clearanceRight);
         Check(smallestClearance>0.04f,"real rig transfer clears left arm centrelines");
         for(Point target:{Point{100,0,0},Point{-100,0,0},Point{-0.08f,0.222f,0.67f}}) {

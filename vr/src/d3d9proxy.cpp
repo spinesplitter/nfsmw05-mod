@@ -10,6 +10,7 @@
 #include "game.h"
 #include "xr.h"
 #include "spectator.h"
+#include "spectator_window.h"
 #include "cockpit.h"
 #include "crash.h"
 #include "frametrace.h"
@@ -2864,6 +2865,7 @@ bool D3D_EnsureXr() {
 // to the client area.
 static void FitWindow(HWND wnd, UINT w, UINT h) {
     if (!wnd || !g_cfg.forceWindowed || !w || !h) return;
+    static SpectatorHudWindow hudWindow;
     s_wnd = wnd;
     s_bbW = w;
     s_bbH = h;
@@ -2874,6 +2876,44 @@ static void FitWindow(HWND wnd, UINT w, UINT h) {
     float cw = s_xr && Spectator_Mode() != SpectatorMode::Eye ? (float)g_cfg.spectatorWidth : (float)w;
     cw = std::min(cw, std::min(maxW, maxH * aspect));
     float ch = cw / aspect;
+    if (s_xr && g_cfg.spectatorNativeFullscreen) {
+        float hudWidth = cw > 0.0f ? cw : std::min(1600.0f, std::min(maxW, maxH * aspect));
+        int hudW = (int)hudWidth;
+        int hudH = (int)(hudWidth / aspect);
+        if (!hudWindow.Attach(wnd, hudW, hudH)) {
+            Log("d3d9: native fullscreen HUD isolation failed; retaining legacy window");
+            return;
+        }
+        int desktopW = mi.rcMonitor.right - mi.rcMonitor.left;
+        int desktopH = mi.rcMonitor.bottom - mi.rcMonitor.top;
+        if (desktopW <= 0 || desktopH <= 0) {
+            Log("d3d9: native fullscreen monitor dimensions are invalid");
+            return;
+        }
+        Spectator_SetDesktopAspect((float)desktopW / desktopH);
+        LONG style = GetWindowLongA(wnd, GWL_STYLE);
+        SetLastError(0);
+        LONG previousStyle = SetWindowLongA(wnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        if (!previousStyle && GetLastError() != 0) {
+            DWORD error = GetLastError();
+            Spectator_SetDesktopAspect(0.0f);
+            Log("d3d9: native fullscreen window style change failed (%lu)", error);
+            return;
+        }
+        if (!SetWindowPos(wnd, nullptr, mi.rcMonitor.left, mi.rcMonitor.top, desktopW, desktopH,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)) {
+            DWORD error = GetLastError();
+            SetWindowLongA(wnd, GWL_STYLE, style);
+            SetWindowPos(wnd, nullptr, 0, 0, 0, 0,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
+            Spectator_SetDesktopAspect(0.0f);
+            Log("d3d9: native fullscreen window resize failed (%lu)", error);
+            return;
+        }
+        SendMessageA(wnd, WM_SIZE, SIZE_RESTORED, MAKELPARAM(desktopW, desktopH));
+        Log("d3d9: native fullscreen %dx%d, isolated HUD client %dx%d", desktopW, desktopH, hudW, hudH);
+        return;
+    }
     RECT r = {0, 0, (LONG)cw, (LONG)ch};
     AdjustWindowRectEx(&r, (DWORD)GetWindowLongA(wnd, GWL_STYLE), FALSE, (DWORD)GetWindowLongA(wnd, GWL_EXSTYLE));
     SetWindowPos(wnd, nullptr, mi.rcWork.left, mi.rcWork.top, r.right - r.left, r.bottom - r.top,

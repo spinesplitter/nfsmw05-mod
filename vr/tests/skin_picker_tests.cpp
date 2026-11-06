@@ -184,6 +184,15 @@ int main() {
     RunEditCommand(19);
     Check(edits.arms.size()==1 && edits.arms.count(s_pick.id) && edits.skin.count(s_pick.id),
         "single-triangle merge adds exactly the same arm membership as Mark as arms");
+    RunEditCommand(5);
+    Check(!edits.arms.count(s_pick.id) && !edits.skin.count(s_pick.id) &&
+        !edits.show.count(s_pick.id) && edits.native.count(s_pick.id),
+        "restore clears merge and persists automatic merge opt-out");
+    GetPrivateProfileStringA("SKIN_PICKER_TEST","Native","",saved,sizeof(saved),temporary);
+    Check(ParseTris(saved).size()==1,"restore opt-out saved for next launch");
+    RunEditCommand(19);
+    Check(!edits.native.count(s_pick.id) && edits.arms.count(s_pick.id),
+        "explicit merge re-enables a restored triangle");
     strcpy(const_cast<char*>(EditsPath()),oldPath);
     Check(DeleteFileA(temporary)!=0,"temporary editor ini removed");
     puts("SKIN PICKER TESTS PASSED");

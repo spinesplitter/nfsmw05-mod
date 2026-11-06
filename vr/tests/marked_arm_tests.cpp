@@ -113,11 +113,9 @@ int main() {
     UpdateDriverHover(0.02f);
     Check(CustomDriver::Length(s_armHover.wrist-beforeBrake)<=DriverHoverMotion::speed*0.02f+1e-6f,"extra brake clearance does not snap");
     for(int i=0;i<100;++i) UpdateDriverHover(0.02f);
-    Check(fabsf(s_armHover.wrist.x-(shiftElbow.x-0.08f))<1e-5f &&
-        fabsf(s_armHover.wrist.y-(shiftElbow.y-0.08f))<1e-5f &&
-        fabsf(s_armHover.wrist.z-(shiftElbow.z-0.10f))<1e-5f,"brake elbow is farther right and lower; shift unchanged");
+    Check(CustomDriver::Length(s_armHover.wrist-shiftElbow)<1e-5f,"same measured target gives same hand hover for brake and shift");
     DriverArmPose(Identity(),heads,tails);
-    Check(fabsf(heads[6].z-(shiftElbow.z-0.10f))<1e-5f,"brake elbow lowered 10 cm");
+    Check(fabsf(heads[6].z-shiftElbow.z)<1e-5f,"brake elbow clearance does not displace measured hand target");
     Check(fabsf(heads[7].z-heads[6].z)<1e-5f,"hand lowers together with elbow");
     for(int b:{4,5,6,7}) {
         auto& restBone=s_driverIK.bones[b];
@@ -151,6 +149,14 @@ int main() {
         "shifter to brake starts continuously and clears contact");
     for(int i=0;i<100;++i) UpdateDriverHover(0.02f,afterHold+i*0.02);
     Check(CustomDriver::Length(s_armHover.wrist-brakeWrist)<1e-5f,"reverse transfer preserves brake endpoint");
+    // A relocated control changes the endpoint, without moving the other hand.
+    auto relocated=s_handbrakeGripWorld+V3{0.04f,0.03f,0.02f};
+    s_handbrakeGripWorld=relocated;
+    for(int i=0;i<100;++i) UpdateDriverHover(0.02f,afterHold+2.1);
+    auto expected=CustomDriver::Point{relocated.x-0.4f,relocated.y,relocated.z};
+    Check(CustomDriver::Length(s_armHover.wrist-expected)<1e-5f,"hand follows relocated brake with no fixed-position clamp");
+    s_handbrakeGripWorld={0.1f,-0.1f,-0.3f};
+    for(int i=0;i<100;++i) UpdateDriverHover(0.02f,afterHold+2.2);
     ++g_cockpitShiftDown;
     UpdateDriverHover(0.02f,afterHold+3);
     Check(s_armShiftPending && CustomDriver::Length(s_armHover.wrist-brakeWrist)>1e-6f,"downshift also interrupts held brake");

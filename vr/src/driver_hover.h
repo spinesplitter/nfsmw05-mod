@@ -8,7 +8,7 @@ struct DriverHoverMotion {
     bool initialized = false;
     float progress = 0;
     static constexpr float speed = 2.0625f; // 50% faster than 1.375 m/s; fixed reach/release speed
-    static constexpr float clearance = 0.08f;
+    static constexpr float clearance = 0.05f; // both controls: 3 cm below the previous 8 cm hover
 
     void Reset() { initialized = false; progress = 0; brakeElbowOffset = {}; }
     void Update(float dt, bool engaged, CustomDriver::Point rest, CustomDriver::Point hover) {
