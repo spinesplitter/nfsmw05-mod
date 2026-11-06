@@ -2,13 +2,35 @@
 #include "custom_driver_animation.h"
 
 // Absolute wheel degrees, not frame time. Only the right hand transfers its grip.
-// The fitted native wrist is the neutral grip; no replacement mesh or hand spread.
+// The fitted native wrist is the neutral grip; optional spread matches the old overlay.
 namespace DriverSteering {
 using namespace CustomDriver;
 struct Grip {
     Point wrist, direction;
     float roll = 0, release = 0;
 };
+// Distal sleeve roll only: never move either joint or the hand's wheel contact.
+// Compare transported frames rather than absolute wheel degrees (which cross
+// multiple revolutions). A soft 20-degree limit avoids large sleeve corrections.
+inline float CuffRoll(Point restFore, Point posedFore, Point restHand, Point posedHand,
+                      Point wheelAxis, float handRoll) {
+    Point axis=Unit(posedFore);
+    Point reference=Unit(Cross(Unit(restFore),Unit(restHand)),
+        Unit(Cross(Unit(restFore),{0,0,1}),{0,1,0}));
+    Point sleeve=Rotate(reference,restFore,posedFore);
+    Point hand=Rotate(Twist(reference,wheelAxis,handRoll),
+        Twist(restHand,wheelAxis,handRoll),posedHand);
+    sleeve=sleeve-axis*Dot(sleeve,axis);
+    hand=hand-axis*Dot(hand,axis);
+    if(Length(sleeve)<1e-5f || Length(hand)<1e-5f) return 0;
+    float angle=std::atan2(Dot(axis,Cross(sleeve,hand)),Dot(sleeve,hand));
+    // sin avoids a discontinuity at the +/-pi frame seam.
+    return 0.34906585f*std::tanh(std::sin(angle)/0.34906585f);
+}
+inline float CuffWeight(float along) {
+    float t=std::max(0.0f,std::min(1.0f,(along-0.70f)/0.30f));
+    return t*t*t*(t*(t*6-15)+10);
+}
 inline float Phase(float degrees, float begin, float end) {
     float t = std::max(0.0f, std::min(1.0f, (degrees-begin)/(end-begin)));
     return t*t*t*(t*(t*6-15)+10); // zero velocity and acceleration at phase boundaries
@@ -17,7 +39,14 @@ inline float TransferSettle(float degrees) {
     return degrees<0 ? Phase(-degrees,270,310) : Phase(degrees,270,325);
 }
 inline Grip Evaluate(Point wrist, Point direction, Point pivot, Point axis,
-                      float degrees, int side, float handFix = 0) {
+                      float degrees, int side, float handFix = 0, float handSpread = 1) {
+    float spread = std::isfinite(handSpread) ? std::max(0.5f,std::min(1.5f,handSpread)) : 1.0f;
+    if (spread != 1) {
+        Point normal = Unit(axis), radial = wrist-pivot;
+        Point axial = normal*Dot(radial,normal);
+        // Scale only the wheel-plane path, never depth, fingers or bone lengths.
+        wrist = pivot+axial+(radial-axial)*spread;
+    }
     if (std::isfinite(handFix) && handFix != 0) {
         Point normal = Unit(axis);
         Point up = Unit(Point{0,0,1}-normal*Dot({0,0,1},normal), {0,1,0});

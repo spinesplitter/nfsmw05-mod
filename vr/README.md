@@ -129,7 +129,7 @@ Everything is in `nfsmw_vr.ini`. The useful ones:
 
 ## Recording
 
-The game window shows a stabilised version of the headset view, including the floating HUD. F6 switches between that view, side-by-side 3D (`sbs`) and the raw eye mirror. For a 16:9 recording, set `SpectatorFov=100` and `SpectatorAspect=1.7778`.
+The game window shows a stabilised version of the headset view, including the floating HUD. F6 switches between that view, side-by-side 3D (`sbs`) and the raw eye mirror. For a 16:9 recording, set `SpectatorFov=100` and `SpectatorAspect=1.7778`. Set `SpectatorNativeFullscreen=1` to fill the monitor while retaining the legacy headset-shaped HUD resize dimensions; this uses the monitor aspect for the desktop projection only.
 
 ## Known issues
 

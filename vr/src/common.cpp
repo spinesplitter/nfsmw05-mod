@@ -152,6 +152,7 @@ void LoadConfig() {
     c.spectatorSmoothing = ReadFloat(ini, "SpectatorSmoothing", c.spectatorSmoothing);
     c.spectatorFollowHead = ReadInt(ini, "SpectatorFollowHead", c.spectatorFollowHead) != 0;
     c.spectatorWidth = ReadInt(ini, "SpectatorWidth", c.spectatorWidth);
+    c.spectatorNativeFullscreen = ReadInt(ini, "SpectatorNativeFullscreen", 0) != 0;
     c.seat = ReadInt(ini, "Seat", c.seat) != 0;
     c.hideHead = ReadInt(ini, "HideHead", c.hideHead) != 0;
     c.showCustomDriverModel = ReadInt(ini, "ShowCustomDriverModel", 0) != 0 ? 1.0f : 0.0f;

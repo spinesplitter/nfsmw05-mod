@@ -103,6 +103,8 @@ struct Driver {
     bool skinBindingValid = false;
     bool ok = false;
     std::string car;
+    DriverIK::Rig rig;
+    bool rigTried = false;
     float head[3] = {};                             // head centre, model space
     std::vector<int> body, arms, heads;             // triangles per entry, in that order
     std::vector<uint8_t> parts;                     // per entry: kDriverPartSlots ranges to draw (kEntrySize each)
@@ -167,10 +169,10 @@ struct TriRef {
 // are not read.)
 struct EditSet {
     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
-    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin;
+    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin, native;
     bool loaded = false;
 };
-const char* const kEditKeys[8] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin"};
+const char* const kEditKeys[9] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin", "Native"};
 int s_editsGen = 0;                                 // counts edits, for caches built from them
 std::unordered_map<std::string, EditSet> s_edits;
 
@@ -226,8 +228,8 @@ EditSet& EditsFor(const std::string& solidName) {
         return ParseTris(buf.data());
     };
     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
-    std::set<uint64_t>* sets[8] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin};
-    for (int k = 0; k < 8; k++)
+    std::set<uint64_t>* sets[9] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native};
+    for (int k = 0; k < 9; k++)
         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
     size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size();
     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
@@ -238,9 +240,9 @@ void SaveEdits(const std::string& solidName) {
     const EditSet& e = EditsFor(solidName);
     std::vector<std::array<uint16_t, 3>> hide;
     for (auto& h : e.hide) hide.push_back(h.second);
-    const std::set<uint64_t>* sets[8] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin};
+    const std::set<uint64_t>* sets[9] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native};
     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
-    for (int k = 0; k < 8; k++) {
+    for (int k = 0; k < 9; k++) {
         std::vector<std::array<uint16_t, 3>> v;
         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
@@ -251,7 +253,14 @@ void SaveEdits(const std::string& solidName) {
 // at the same address. Each cache entry remembers what the solid looked like when it was seen, and
 // is prepared again when that changed. Drawing a freed model's buffers through a stale entry made
 // garbage polygons in the cockpit and corrupted d3d9 until it crashed releasing a buffer.
-struct SolidInfo {
+struct SolidIdentity {
+    char name[64] = {};
+    uint8_t* plat = nullptr;
+    uint8_t* entries = nullptr;
+    void* ib = nullptr;
+    uint16_t* indices = nullptr;
+};
+struct SolidInfo : SolidIdentity {
     Driver* driver = nullptr;                       // nullptr = not a driver
     Wheel* wheel = nullptr;                         // interiors, once the car's driver head is known
     GlassSplit* split = nullptr;                    // bodies whose mirror glass shares draw entries
@@ -260,11 +269,6 @@ struct SolidInfo {
     MirrorGlass glass[3];                           // left, right, rear view (model space)
     void* glassIb[2] = {};                          // the side glass's registered draw entries (first indices)
     std::vector<int> glassFirsts[2];
-    char name[64] = {};
-    uint8_t* plat = nullptr;
-    uint8_t* entries = nullptr;
-    void* ib = nullptr;
-    uint16_t* indices = nullptr;
     uint32_t indexHash = 0;                         // of the game's index copy, after reordering
     int hashSeen = -1;                              // eye the index hash above was last checked on
     // Triangle editor: the solid's triangles (built when needed, again after its indices changed),
@@ -1075,15 +1079,23 @@ uint32_t IndexHash(const uint16_t* indices, int count) {
 }
 
 // The solid's current plat info, entries, index buffer and index copy (null where missing).
-void ReadSolid(uint8_t* solid, SolidInfo& s) {
-    memcpy(s.name, solid + kSolidName, sizeof(s.name));
+void ReadSolid(uint8_t* solid, SolidIdentity& s) {
+    // The name is a C string, not a fixed-width identity blob. Bytes after its
+    // terminator may change independently of the model (including adjacent data).
+    // Canonicalize the unused tail, retaining all 64 bytes for a full-width name.
+    memset(s.name, 0, sizeof(s.name));
+    for (size_t i = 0; i < sizeof(s.name); ++i) {
+        char c = (char)solid[kSolidName + i];
+        if (!c) break;
+        s.name[i] = c;
+    }
     s.plat = At<uint8_t*>(solid, kSolidPlat);
     s.entries = s.plat ? At<uint8_t*>(s.plat, kPlatEntries) : nullptr;
     s.ib = s.plat ? At<void*>(s.plat, kPlatIndexBuffer) : nullptr;
     s.indices = s.plat ? At<uint16_t*>(s.plat, kPlatIndices) : nullptr;
 }
 
-uint32_t CurrentHash(const SolidInfo& s) {
+uint32_t CurrentHash(const SolidIdentity& s) {
     int n = s.plat ? At<int>(s.plat, kPlatNumIndices) : 0;
     return s.indices && n > 0 && n < (1 << 20) ? IndexHash(s.indices, n) : 0;
 }
@@ -1100,15 +1112,15 @@ void RestoreAll(uint8_t* solid, SolidInfo& info);
 int s_hashSerial = 0;
 
 SolidInfo* GetSolid(uint8_t* solid) {
-    SolidInfo now;
-    ReadSolid(solid, now);
+    SolidIdentity identity;
+    ReadSolid(solid, identity);
     char name[65] = {};
-    memcpy(name, now.name, 64);
+    memcpy(name, identity.name, 64);
     auto it = s_solids.find(solid);
     if (it != s_solids.end()) {
         SolidInfo& was = it->second;
-        bool same = !memcmp(was.name, now.name, sizeof(now.name)) && was.plat == now.plat &&
-                    was.entries == now.entries && was.ib == now.ib && was.indices == now.indices;
+        bool same = !memcmp(was.name, identity.name, sizeof(identity.name)) && was.plat == identity.plat &&
+                    was.entries == identity.entries && was.ib == identity.ib && was.indices == identity.indices;
         // Drivers and split mirror entries can be restored in place by streaming. Wheel geometry
         // stays cached; only watch its indices while the triangle editor is active, where edits
         // require an explicit refresh.
@@ -1119,7 +1131,7 @@ SolidInfo* GetSolid(uint8_t* solid) {
                 same = true;
             else {
                 was.hashSeen = s_hashSerial;
-                same = CurrentHash(now) == was.indexHash;
+                same = CurrentHash(identity) == was.indexHash;
             }
         }
         if (same) {
@@ -1132,16 +1144,25 @@ SolidInfo* GetSolid(uint8_t* solid) {
                         was.wheel = PrepareWheel(solid, name, head->v);
                         if (was.wheel) RememberWheelTemplate(solid, name, *was.wheel);
                     }
-                    was.indexHash = CurrentHash(now);
+                    was.indexHash = CurrentHash(identity);
                     ApplyHides(solid, was);
                 }
             }
             return &was;
         }
+    }
+    // A cache hit needs no owning containers (MSVC's empty map allocates a
+    // sentinel). Keep all identity and streaming checks above, without that cost.
+    SolidInfo now;
+    static_cast<SolidIdentity&>(now) = identity;
+    if (it != s_solids.end()) {
+        SolidInfo& was = it->second;
         bool sameModel = !memcmp(was.name, now.name, sizeof(now.name)) && was.indices == now.indices && was.plat == now.plat;
         if (was.driver || was.wheel)
-            Log("cockpit: %.64s changed or reloaded (%s), preparing it again", was.name,
-                sameModel ? "its index order changed" : "another model at its address");
+            Log("cockpit: %.64s changed or reloaded, preparing it again: name=%d plat=%d entries=%d ib=%d indices=%d; old=%p/%p/%p/%p new=%p/%p/%p/%p (index check serial %d)",
+                was.name, memcmp(was.name, now.name, sizeof(now.name)) != 0,
+                was.plat != now.plat, was.entries != now.entries, was.ib != now.ib, was.indices != now.indices,
+                was.plat, was.entries, was.ib, was.indices, now.plat, now.entries, now.ib, now.indices, s_hashSerial);
         if (was.driver) s_retired.push_back(was.driver);
         if (was.wheel) s_retiredWheels.push_back(was.wheel);
         if (was.split) s_retiredSplits.push_back(was.split);
@@ -1163,9 +1184,13 @@ SolidInfo* GetSolid(uint8_t* solid) {
             }
         }
     }
-    now.indexHash = CurrentHash(now);
+    // Ordinary traffic/scenery (including newly spawned breakable pieces) never
+    // compares an index hash. Do not walk their entire mesh on a cache miss.
+    // Mirror splits establish their own hash in SplitMirrorEntries; wheels and
+    // drivers still need the baseline for the existing reload checks above.
+    if (now.driver || now.wheel) now.indexHash = CurrentHash(now);
     SolidInfo& stored = s_solids[solid];
-    stored = now;
+    stored = std::move(now);
     ApplyHides(solid, stored);
     return &stored;
 }
@@ -1870,6 +1895,9 @@ V3 s_handbrakeGripWorld;
 bool s_handbrakeGripValid = false;
 V3 s_shifterHoverWorld;
 bool s_shifterHoverValid = false;
+V3 s_shifterVehicle, s_brakeVehicle;
+bool s_controlVehicleValid = false;
+uint32_t s_controlVehicle = 0;
 double s_armShiftUntil = -1;
 bool s_armShiftPending = false, s_shifterHandReady = false;
 float s_armShiftUp = 0, s_armShiftDown = 0;
@@ -1877,7 +1905,7 @@ bool s_armShiftInitialized = false;
 DriverHoverMotion s_armHover;
 V3 ToWorld(const V3& p, const float* m);
 V3 ToWorld(const V3& p, const M4& m) { return ToWorld(p,&m.m[0][0]); }
-V3 s_nativeWheelPivot, s_nativeWheelAxis;
+V3 s_nativeWheelPivot, s_nativeWheelAxis, s_nativeWheelOffset;
 // s_curBody is hook-scoped and restored before deferred draws / EndFrame.
 // Retain the matching body transform with the submitted native driver instead.
 M4 s_nativeDriverBody;
@@ -1885,6 +1913,8 @@ bool s_nativeWheelValid = false;
 uint32_t s_nativeWheelCar = 0;
 bool s_armControlOverride = false;
 float s_armControlBlend = 0;
+int ControlSide() { return s_head.car == "CLIO" || s_head.car == "MONARO" ? 0 : 1; }
+float SteeringDegrees() { return ControlSide()==0 ? -g_steeringWheelAngle : g_steeringWheelAngle; }
 
 bool NativeSteeringActive() {
     return s_nativeWheelValid && s_nativeWheelCar == s_head.worldId;
@@ -1898,15 +1928,47 @@ DriverSteering::Grip NativeGrip(const DriverIK::Rig& rig, int side, const M4& wo
     V3 axisWorld = ToWorld(s_nativeWheelPivot + s_nativeWheelAxis, s_nativeDriverBody);
     V3 pivot = ToWorld(pivotWorld, inv), end = ToWorld(axisWorld, inv);
     const auto& bone = rig.bones[rig.arms[side*3+2]];
-    return DriverSteering::Evaluate({bone.head[0],bone.head[1],bone.head[2]},
+    CustomDriver::Point wrist{bone.head[0],bone.head[1],bone.head[2]};
+    V3 offsetWorld=ToWorld(s_nativeWheelOffset,s_nativeDriverBody)-ToWorld(V3{},s_nativeDriverBody);
+    V3 offset=ToWorld(offsetWorld,inv)-ToWorld(V3{},inv);
+    wrist=wrist+CustomDriver::Point{offset.x,offset.y,offset.z};
+    CustomDriver::Point direction{bone.tail[0]-bone.head[0],bone.tail[1]-bone.head[1],bone.tail[2]-bone.head[2]};
+    if(ControlSide()==0) {
+        float centre=(rig.bones[rig.arms[2]].head[1]+rig.bones[rig.arms[5]].head[1])*0.5f;
+        auto grip=DriverSteering::Evaluate({wrist.x,2*centre-wrist.y,wrist.z},
+            {direction.x,-direction.y,direction.z},{pivot.x,2*centre-pivot.y,pivot.z},
+            {-(end.x-pivot.x),end.y-pivot.y,-(end.z-pivot.z)},
+            -g_steeringWheelAngle,1-side,g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
+        grip.wrist.y=2*centre-grip.wrist.y; grip.direction.y=-grip.direction.y;
+        grip.roll=-grip.roll;
+        return grip;
+    }
+    return DriverSteering::Evaluate(wrist,
         {bone.tail[0]-bone.head[0],bone.tail[1]-bone.head[1],bone.tail[2]-bone.head[2]},
         {pivot.x,pivot.y,pivot.z}, {end.x-pivot.x,end.y-pivot.y,end.z-pivot.z},
-        g_steeringWheelAngle, side, g_cfg.animatedDriverHandFix);
+        g_steeringWheelAngle, side, g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
 }
 struct ArmDraw { uint8_t* solid; M4 world; };
 std::unordered_map<void*, ArmDraw> s_armDraws;
 
 const DriverIK::Rig* DriverRig() {
+    // Per-driver cache survives eye boundaries but cannot leak across cars or LODs.
+    for(auto& item:s_solids) {
+        Driver* driver=item.second.driver;
+        if(!driver || driver->car!=s_head.car || !driver->ok) continue;
+        if(!driver->rigTried) {
+            driver->rigTried=true;
+            char path[MAX_PATH];
+            snprintf(path,sizeof(path),"%sDRIVERMOD\\rigs\\%s.bin",GameDir(),driver->car.c_str());
+            char name[65]{}; memcpy(name,item.second.name,64);
+            if(strstr(name,"_DRIVER_A"))
+                DriverIK::LoadFile(path,&driver->rig);
+        }
+        if(driver->rig.ok) return &driver->rig;
+    }
+    // Keep the original Gallardo path for older installs/tests only. A missing
+    // fit is not permission to animate another car with Gallardo coordinates.
+    if(!s_head.car.empty() && s_head.car!="GALLARDO") return nullptr;
     if (!s_driverIKTried) {
         s_driverIKTried = true;
         char path[MAX_PATH];
@@ -1937,7 +1999,8 @@ void UpdateDriverHover(float dt, double now = -1) {
     s_armControlOverride = brake || shift;
     s_shifterHandReady = false;
     const DriverIK::Rig* rig = DriverRig();
-    if (!s_head.valid || !s_driverIKWorldValid || !rig || rig->arms[5] < 0) {
+    int control=ControlSide();
+    if (!s_head.valid || !s_driverIKWorldValid || !rig || rig->arms[control*3+2] < 0) {
         s_armHover.Reset();
         s_armControlBlend = 0;
         s_armControlOverride = false;
@@ -1947,21 +2010,19 @@ void UpdateDriverHover(float dt, double now = -1) {
     }
     M4 inv = MInvRigid(s_driverIKWorld);
     V3 w = brake ? s_handbrakeGripWorld : s_shifterHoverWorld;
+    if(s_controlVehicleValid && s_controlVehicle==s_head.worldId)
+        w=ToWorld(brake?s_brakeVehicle:s_shifterVehicle,s_nativeDriverBody);
     V3 p = {w.x*inv.m[0][0]+w.y*inv.m[1][0]+w.z*inv.m[2][0]+inv.m[3][0],
             w.x*inv.m[0][1]+w.y*inv.m[1][1]+w.z*inv.m[2][1]+inv.m[3][1],
             w.x*inv.m[0][2]+w.y*inv.m[1][2]+w.z*inv.m[2][2]+inv.m[3][2]};
-    const auto& fore = rig->bones[rig->arms[5]];
+    const auto& fore = rig->bones[rig->arms[control*3+2]];
     // Drive the elbow, not wrist IK. The distal arm stays rigid, without hand articulation.
     CustomDriver::Point rest{fore.head[0],fore.head[1],fore.head[2]};
-    if (NativeSteeringActive()) rest = NativeGrip(*rig, 1, s_driverIKWorld).wrist;
+    if (NativeSteeringActive()) rest = NativeGrip(*rig, control, s_driverIKWorld).wrist;
     CustomDriver::Point goal{p.x-(fore.tail[0]-fore.head[0]),
         p.y-(fore.tail[1]-fore.head[1]),p.z-(fore.tail[2]-fore.head[2])};
-    goal.x = std::min(goal.x,fore.head[0]-0.12f);
-    goal.y = std::min(goal.y,fore.head[1]-0.08f); // control target independent of steering
-    // Extra handbrake clearance only; preserve the approved shifting pose.
-    // arms[5] is the wrist bone, not the elbow. Undo the extra lateral hand
-    // displacement; adjust the actual elbow separately without wrist articulation.
-    if (brake) { goal.x -= 0.08f; goal.y -= 0.08f; goal.z -= 0.10f; }
+    // The rigid hand tip, not an arbitrary clamped wrist pose, hovers over the
+    // measured control. Brake elbow clearance is applied separately below.
     // A free hand follows the angle exactly. Control interruptions remain speed
     // limited and return to the live steering grip rather than the neutral wrist.
     if (NativeSteeringActive() && !s_armControlOverride && s_armControlBlend == 0) {
@@ -1979,7 +2040,7 @@ void UpdateDriverHover(float dt, double now = -1) {
         s_armShiftPending = false;
         s_armShiftUntil = now + 0.24; // hold starts at arrival, not at the input edge
     }
-    CustomDriver::Point elbowGoal = brake ? CustomDriver::Point{0,-0.08f,-0.10f} : CustomDriver::Point{};
+    CustomDriver::Point elbowGoal = brake ? CustomDriver::Point{0,control ? -0.08f : 0.08f,-0.10f} : CustomDriver::Point{};
     auto elbowDelta = elbowGoal - s_armHover.brakeElbowOffset;
     float elbowDistance = CustomDriver::Length(elbowDelta);
     float elbowStep = DriverHoverMotion::speed * std::max(0.0f,std::min(0.1f,dt));
@@ -2000,7 +2061,7 @@ void DriverArmPose(const M4& world, std::vector<V3>& head, std::vector<V3>& tail
 
     if (NativeSteeringActive() || s_armHover.progress > 0.0001f) {
         for (int side=0; side<2; ++side) {
-            if (!NativeSteeringActive() && side==0) continue;
+            if (!NativeSteeringActive() && side!=ControlSide()) continue;
             int upper=rig->arms[side*3], fore=rig->arms[side*3+1], hand=rig->arms[side*3+2];
             if (upper<0 || fore<0 || hand<0) continue;
             const auto& restHand=rig->bones[hand];
@@ -2009,7 +2070,7 @@ void DriverArmPose(const M4& world, std::vector<V3>& head, std::vector<V3>& tail
                 {restHand.tail[0]-restHand.head[0],restHand.tail[1]-restHand.head[1],restHand.tail[2]-restHand.head[2]}};
             CustomDriver::Point wrist=grip.wrist;
             auto direction=grip.direction;
-            if (side==1 && s_armHover.initialized && (s_armControlBlend>0 || !NativeSteeringActive())) {
+            if (side==ControlSide() && s_armHover.initialized && (s_armControlBlend>0 || !NativeSteeringActive())) {
                 wrist=s_armHover.wrist;
                 const auto& b=rig->bones[hand];
                 direction=CustomDriver::Mix(direction,{b.tail[0]-b.head[0],b.tail[1]-b.head[1],b.tail[2]-b.head[2]},s_armControlBlend);
@@ -2017,14 +2078,12 @@ void DriverArmPose(const M4& world, std::vector<V3>& head, std::vector<V3>& tail
             }
             auto point=[](V3 p) { return CustomDriver::Point{p.x,p.y,p.z}; };
             CustomDriver::Point elbow;
-            // Favor the fitted elbow on either detached steering path, without
-            // forced pole rotation. Control overrides fade this preference out.
-            auto elbowOffset = side==1 ? s_armHover.brakeElbowOffset : CustomDriver::Point{};
+            // Transport the fitted bend plane with the shoulder-to-wrist ray.
+            // Blending toward a fixed model-space elbow during lift changes
+            // the bend plane independently of the hand and can splay the elbow.
+            auto elbowOffset = side==ControlSide() ? s_armHover.brakeElbowOffset : CustomDriver::Point{};
             if (!DriverSteering::Solve(point(head[upper]),point(head[fore]),point(head[hand]),wrist,elbow,
-                elbowOffset, 0,
-                side==1 && NativeSteeringActive() ?
-                (g_steeringWheelAngle<0 ? DriverSteering::Phase(-g_steeringWheelAngle,100,180) :
-                DriverSteering::Phase(g_steeringWheelAngle,90,165))*(1-s_armControlBlend) : 0)) continue;
+                elbowOffset)) continue;
             tail[upper]=head[fore]={elbow.x,elbow.y,elbow.z};
             tail[fore]=head[hand]={wrist.x,wrist.y,wrist.z};
             auto tip=wrist+direction;
@@ -2523,13 +2582,15 @@ void RunEditCommand(int cmd) {
                 wheel = true;
                 break;
             case 5:
+                e.arms.erase(id);
+                if(info.driver) e.native.insert(id); // persistent opt-out, not re-added next frame
                 e.skin.erase(id);
                 e.handbrake.erase(id);
                 e.shifter.erase(id);
                 wheel |= e.wheel.erase(id) + e.noWheel.erase(id) > 0;
                 e.hide.erase(id);
                 e.black.erase(id);
-                if (info.driver) e.show.insert(id);   // drawn even inside the seated driver's hidden arms / head
+                e.show.erase(id);
                 break;
             case 13:
             case 14:
@@ -2544,18 +2605,21 @@ void RunEditCommand(int cmd) {
                 e.shifter.erase(id);
                 break;
             case 16:
+                e.native.erase(id);
                 e.arms.insert(id);
                 break;
             case 17:
                 e.arms.erase(id);
                 break;
             case 18:
+                e.native.erase(id);
                 e.skin.insert(id);
                 e.black.erase(id);
                 e.hide.erase(id);
                 if (info.driver) e.show.insert(id);
                 break;
             case 19:
+                e.native.erase(id);
                 e.arms.insert(id);
                 e.skin.insert(id);
                 e.show.insert(id);
@@ -2654,6 +2718,16 @@ bool AutomaticDriverFingerIndex(const Driver& driver, uint8_t* entries, int n, i
     }
     return false;
 }
+// Full arm membership is independent of skin-material repair: jacket triangles
+// must retain their original material. Only enable it for a fitted native rig.
+bool AutomaticDriverArmIndex(const Driver& driver, uint8_t* entries, int n, int index) {
+    if(!driver.rig.ok) return false;
+    for(int i=0;i<n && i<(int)driver.arms.size() && i<(int)driver.body.size();++i) {
+        int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
+        if(index>=begin && index-begin<driver.arms[i]*3) return true;
+    }
+    return false;
+}
 
 // The triangles of the driver's hidden arms and head that the editor shows (EditSet::show), as runs
 // of consecutive triangles per draw entry. Rebuilt when the edits or the hide switches change.
@@ -2681,7 +2755,7 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
                 int p = first + t * 3;
                 if (p < 0 || p + 3 > numIndices) break;
                 const uint16_t* v = indices + p;
-                bool finger=AutomaticDriverFinger(*d,(int)i) &&
+                bool finger=!e.native.count(TriId(v[0],v[1],v[2])) && AutomaticDriverFinger(*d,(int)i) &&
                     t>=d->body[i] && t<d->body[i]+d->arms[i];
                 if (!finger && !e.show.count(TriId(v[0], v[1], v[2]))) continue;
                 shown++;
@@ -2703,16 +2777,90 @@ struct ControlMarks {
     int generation = -1;
     V3 shifter{}, brake{}, pivot{};
     bool shift = false, handbrake = false;
+    uint8_t* vertices = nullptr;
+    uint16_t* indices = nullptr;
+    int numVertices = 0, numIndices = 0;
+    uint32_t hash = 0;
+    std::string name;
 };
+
+// Identify disconnected centre-console control geometry, welding UV/material
+// seams first. Conservative dimensions reject the floor, seats and dashboard.
+// No synthetic fixed target is supplied when the mesh has no suitable control.
+void DetectConsoleControls(const SolidMesh& mesh, ControlMarks& picked) {
+    std::vector<int> parent(mesh.numVerts);
+    std::map<std::array<int,3>,int> welded;
+    for(int i=0;i<mesh.numVerts;++i) parent[i]=i;
+    auto root=[&](int i) { while(parent[i]!=i) { parent[i]=parent[parent[i]]; i=parent[i]; } return i; };
+    for(int i=0;i<mesh.numVerts;++i) {
+        V3 p=mesh.at(i);
+        if(!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+        // Bound quantization before converting untrusted mesh coordinates.
+        if(fabsf(p.x)>10 || fabsf(p.y)>10 || fabsf(p.z)>10) continue;
+        std::array<int,3> key={{(int)lrintf(p.x*10000),(int)lrintf(p.y*10000),(int)lrintf(p.z*10000)}};
+        auto inserted=welded.emplace(key,i);
+        if(!inserted.second) parent[root(i)]=root(inserted.first->second);
+    }
+    std::set<int> used;
+    for(int t=0;t+2<mesh.numIndices;t+=3) {
+        int a=mesh.indices[t], b=mesh.indices[t+1], c=mesh.indices[t+2];
+        if(a>=mesh.numVerts || b>=mesh.numVerts || c>=mesh.numVerts || a==b || b==c || a==c) continue;
+        parent[root(b)]=root(a); parent[root(c)]=root(a);
+        used.insert(a); used.insert(b); used.insert(c);
+    }
+    std::map<int,std::vector<int>> components;
+    for(int i:used) components[root(i)].push_back(i);
+    float shiftScore=-1, brakeScore=-1;
+    bool needShift=!picked.shift, needBrake=!picked.handbrake;
+    for(const auto& item:components) {
+        const auto& ids=item.second;
+        if(ids.size()<4) continue;
+        V3 lo=mesh.at(ids[0]), hi=lo;
+        for(int i:ids) {
+            V3 p=mesh.at(i);
+            lo={std::min(lo.x,p.x),std::min(lo.y,p.y),std::min(lo.z,p.z)};
+            hi={std::max(hi.x,p.x),std::max(hi.y,p.y),std::max(hi.z,p.z)};
+        }
+        V3 extent=hi-lo, centre=(hi+lo)*0.5f;
+        if(!std::isfinite(centre.x+centre.y+centre.z)) continue;
+        bool shift=needShift && lo.x>0.10f && hi.x<0.65f && fabsf(centre.y)<0.13f &&
+            lo.z>0.20f && hi.z<0.72f && extent.x>0.015f && extent.x<0.18f &&
+            extent.y>0.015f && extent.y<0.18f && extent.z>0.025f && extent.z<0.27f;
+        bool brake=needBrake && lo.x> -0.50f && hi.x<0.30f && fabsf(centre.y)<0.16f &&
+            lo.z>0.20f && hi.z<0.65f && extent.x>0.12f && extent.x<0.42f &&
+            extent.y<0.11f && extent.z<0.25f;
+        if(shift && hi.z>shiftScore) {
+            shiftScore=hi.z;
+            // Average the knob's top cap, not a single arbitrary corner.
+            V3 top{}; int count=0;
+            for(int i:ids) { V3 p=mesh.at(i); if(p.z>=hi.z-0.015f) { top=top+p; ++count; } }
+            picked.shifter=top*(1.0f/count); picked.shift=true;
+        }
+        if(brake && extent.x>brakeScore) {
+            brakeScore=extent.x;
+            // Forward end of a longitudinal lever is its grip; rear is hinge.
+            V3 grip{}; int count=0;
+            for(int i:ids) { V3 p=mesh.at(i); if(p.x>=hi.x-extent.x*0.25f) { grip=grip+p; ++count; } }
+            picked.brake=grip*(1.0f/count); picked.brake.z=hi.z;
+            picked.pivot={lo.x,centre.y,lo.z}; picked.handbrake=true;
+        }
+    }
+}
 
 const ControlMarks& ControlMarksFor(uint8_t* solid, SolidInfo& info) {
     static std::unordered_map<uint8_t*, ControlMarks> cache;
     ControlMarks& picked = cache[solid];
-    if (picked.generation != s_editsGen) {
+    SolidMesh mesh;
+    if(!ReadMesh(solid,mesh)) { picked=ControlMarks{}; return picked; }
+    if (picked.generation != s_editsGen || picked.vertices!=mesh.verts || picked.indices!=mesh.indices ||
+        picked.numVertices!=mesh.numVerts || picked.numIndices!=mesh.numIndices ||
+        picked.hash!=info.indexHash || picked.name!=SolidName(info)) {
         picked = ControlMarks{};
         picked.generation = s_editsGen;
-        SolidMesh mesh;
-        if (ReadMesh(solid, mesh)) {
+        picked.vertices=mesh.verts; picked.indices=mesh.indices;
+        picked.numVertices=mesh.numVerts; picked.numIndices=mesh.numIndices;
+        picked.hash=info.indexHash; picked.name=SolidName(info);
+        {
             const EditSet& edits = EditsFor(SolidName(info));
             float highestShift = -1e9f, highestBrake = -1e9f, lowest = 1e9f;
             for (int i = 0; i + 2 < mesh.numIndices; i += 3) {
@@ -2727,6 +2875,7 @@ const ControlMarks& ControlMarksFor(uint8_t* solid, SolidInfo& info) {
                     if (brake && p.z < lowest) { lowest = p.z; picked.pivot = p; }
                 }
             }
+            if(SolidName(info).find("_INTERIOR_A")!=std::string::npos) DetectConsoleControls(mesh,picked);
         }
     }
     return picked;
@@ -2780,8 +2929,10 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
             pivot.z+=wheel.axis[0]/upLength*g_cfg.wheelPivot[1];
         }
         M4 inv=MInvRigid(s_curBody);
-        s_nativeWheelPivot=ToWorld(ToWorld(pivot,m),inv);
-        V3 end=ToWorld(ToWorld(pivot+V3{wheel.axis[0],wheel.axis[1],wheel.axis[2]},m),inv);
+        float moved[16]; TurnedMatrix(wheel,0,m,moved);
+        s_nativeWheelPivot=ToWorld(ToWorld(pivot,moved),inv);
+        s_nativeWheelOffset=s_nativeWheelPivot-ToWorld(ToWorld(pivot,m),inv);
+        V3 end=ToWorld(ToWorld(pivot+V3{wheel.axis[0],wheel.axis[1],wheel.axis[2]},moved),inv);
         s_nativeWheelAxis=end-s_nativeWheelPivot;
         s_nativeWheelCar=s_head.worldId;
         s_nativeWheelValid=true;
@@ -2791,25 +2942,38 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
         s_nativeDriverBody = s_curBody;
         memcpy(&s_driverIKWorld, m, sizeof(M4));
         s_driverIKWorldValid = true;
+        Driver* fitted=info->driver;
+        if(!fitted->rigTried) {
+            fitted->rigTried=true;
+            char path[MAX_PATH];
+            snprintf(path,sizeof(path),"%sDRIVERMOD\\rigs\\%s.bin",GameDir(),fitted->car.c_str());
+            if(SolidName(*info).find("_DRIVER_A")!=std::string::npos)
+                DriverIK::LoadFile(path,&fitted->rig);
+        }
         bool autoFingers=false;
         for (int i=1; i<(int)info->driver->arms.size(); ++i)
             autoFingers |= AutomaticDriverFinger(*info->driver,i);
-        if (autoFingers || !EditsFor(SolidName(*info)).arms.empty()) {
+        if (fitted->rig.ok || autoFingers || !EditsFor(SolidName(*info)).arms.empty()) {
             void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
             s_armDraws[ib] = {solid, s_driverIKWorld};
         }
     }
     // The marked handbrake's grip, in world space: the right hand reaches for it when pulled.
-    if (player && (!EditsFor(SolidName(*info)).handbrake.empty() || !EditsFor(SolidName(*info)).shifter.empty())) {
+    if (player && (SolidName(*info).find("_INTERIOR_A")!=std::string::npos ||
+        !EditsFor(SolidName(*info)).handbrake.empty() || !EditsFor(SolidName(*info)).shifter.empty())) {
         const ControlMarks& picked = ControlMarksFor(solid, *info);
         if (picked.shift) {
-            s_shifterHoverWorld = ToWorld(picked.shifter + V3{DriverShiftTravel(),0,DriverHoverMotion::clearance}, m);
+            float travel=EditsFor(SolidName(*info)).shifter.empty()?0:DriverShiftTravel();
+            s_shifterHoverWorld = ToWorld(picked.shifter + V3{travel,0,DriverHoverMotion::clearance}, m);
             s_shifterHoverValid = true;
+            s_shifterVehicle=ToWorld(s_shifterHoverWorld,MInvRigid(s_curBody));
         }
         if (picked.handbrake) {
             s_handbrakeGripWorld = ToWorld(picked.brake + V3{0,0,DriverHoverMotion::clearance}, m);
             s_handbrakeGripValid = true;
+            s_brakeVehicle=ToWorld(s_handbrakeGripWorld,MInvRigid(s_curBody));
         }
+        if(picked.shift || picked.handbrake) { s_controlVehicleValid=true; s_controlVehicle=s_head.worldId; }
     }
     if (player && g_cfg.mirrors) NoteMirrors(solid, *info, m);
     if (player && info->wheel && info->wheel->dashOk && g_cfg.dash > 0.5f) {
@@ -2991,7 +3155,7 @@ bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, k
     auto marked = [&](int t) {
         const uint16_t* v = mesh.indices + first + t*3;
         uint64_t id=TriId(v[0],v[1],v[2]);
-        return skin.count(id)!=0 || (!edits.black.count(id) &&
+        return skin.count(id)!=0 || (!edits.native.count(id) && !edits.black.count(id) &&
             AutomaticDriverFingerIndex(driver,mesh.entries,mesh.n,first+t*3));
     };
     bool any = false;
@@ -3169,9 +3333,9 @@ bool Cockpit_DriverDrawWork(void* ib, unsigned first, unsigned triangles, int ba
     for (unsigned t=0;t<triangles;++t) {
         const uint16_t* v=mesh.indices+first+t*3;
         uint64_t id=TriId(v[0],v[1],v[2]);
-        bool automatic=AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3);
+        bool automatic=!edits.native.count(id) && AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3);
         if (edits.skin.count(id) || (automatic && !edits.black.count(id)) ||
-            (pose && (automatic || edits.arms.count(id)))) { needed=true; break; }
+            (pose && (automatic || (!edits.native.count(id) && AutomaticDriverArmIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3)) || edits.arms.count(id)))) { needed=true; break; }
     }
     if (!needed) return false;
     indices.reserve((size_t)triangles*3);
@@ -3196,7 +3360,7 @@ bool Cockpit_RepairSkinUV(void* ib, unsigned first, unsigned triangles, int base
     for (unsigned t=0;t<triangles;++t) {
         const uint16_t* v=mesh.indices+first+t*3;
         uint64_t id=TriId(v[0],v[1],v[2]);
-        if (!edits.skin.count(id) && (edits.black.count(id) ||
+        if (!edits.skin.count(id) && (edits.native.count(id) || edits.black.count(id) ||
             !AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3))) continue;
         for (int j=0;j<3;++j) {
             long long index=(long long)v[j]+base;
@@ -3237,6 +3401,35 @@ bool Cockpit_DriverDrawInfo(void* ib, unsigned first, unsigned triangles,
     return false;
 }
 
+// The visibility classifier is deliberately broad; it is not a skinning mask.
+// Limit automatic deformation to the fitted arm capsules, with fixed shoulder
+// roots and no influence below the elbow/wrist envelope (lap and jeans).
+float NativeArmWeight(const DriverIK::Rig& rig, CustomDriver::Point p) {
+    using namespace CustomDriver;
+    float weight=0;
+    for(int side=0;side<2;++side) {
+        auto point=[](const float* v){return Point{v[0],v[1],v[2]};};
+        Point shoulder=point(rig.bones[rig.arms[side*3]].head);
+        Point elbow=point(rig.bones[rig.arms[side*3+1]].head);
+        Point wrist=point(rig.bones[rig.arms[side*3+2]].head);
+        if(p.z<std::min(elbow.z,wrist.z)-0.07f) continue;
+        // Body-side vertices at the armpit remain anchored, unlike sleeves.
+        float lateral=side ? shoulder.y-p.y : p.y-shoulder.y;
+        if(lateral < -0.055f && p.x<elbow.x-0.06f) continue;
+        for(int j=0;j<3;++j) {
+            const auto& bone=rig.bones[rig.arms[side*3+j]];
+            Point a=point(bone.head), d=point(bone.tail)-a;
+            float t=std::max(0.0f,std::min(1.0f,Dot(p-a,d)/std::max(1e-10f,Dot(d,d))));
+            float distance=Length(p-(a+d*t));
+            float radius=j==0 ? 0.085f : 0.075f;
+            float w=1-DriverSteering::Phase(distance,radius-0.02f,radius);
+            if(j==0) w*=DriverSteering::Phase(t,0.05f,0.35f);
+            weight=std::max(weight,w);
+        }
+    }
+    return weight;
+}
+
 bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int base,
                            unsigned stride, unsigned positionOffset, int normalOffset,
                            unsigned char* vertices, size_t bytes) {
@@ -3250,13 +3443,43 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         triangles > ((unsigned)mesh.numIndices - first) / 3) return false;
     auto info = s_solids.find(draw->second.solid);
     if (info == s_solids.end()) return false;
-    const auto& marks = EditsFor(SolidName(info->second)).arms;
-    std::set<unsigned> selected;
+    const auto& edits = EditsFor(SolidName(info->second));
+    const auto& marks = edits.arms;
+    std::set<unsigned> selected, automaticOnly;
     for (unsigned t = 0; t < triangles; ++t) {
         const uint16_t* v = mesh.indices + first + t * 3;
-        if (marks.count(TriId(v[0], v[1], v[2])) || (info->second.driver &&
-            AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3)))
-            for (int j = 0; j < 3; ++j) if ((int)v[j] + base >= 0) selected.insert(v[j] + base);
+        bool manual=marks.count(TriId(v[0], v[1], v[2]))!=0;
+        if (manual || (!edits.native.count(TriId(v[0],v[1],v[2])) && info->second.driver &&
+            (AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3) ||
+             AutomaticDriverArmIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3))))
+            for (int j = 0; j < 3; ++j) if ((int)v[j] + base >= 0) {
+                selected.insert(v[j] + base);
+                if(!manual) automaticOnly.insert(v[j]+base);
+            }
+    }
+    // Explicit editor marks retain their meaning, even if adjacent automatic
+    // triangles share their vertices.
+    for(unsigned t=0;t<triangles;++t) {
+        const uint16_t* v=mesh.indices+first+t*3;
+        if(marks.count(TriId(v[0],v[1],v[2])))
+            for(int j=0;j<3;++j) if((int)v[j]+base>=0) automaticOnly.erase(v[j]+base);
+    }
+    // Shared sleeve/body seam vertices must not drag adjacent torso triangles.
+    // Inspect all entries, not just this draw's subrange.
+    if(info->second.driver && info->second.driver->rig.ok) {
+        const Driver& driver=*info->second.driver;
+        for(int i=0;i<mesh.n && i<(int)driver.body.size() && i<(int)driver.arms.size();++i) {
+            uint8_t* entry=mesh.entries+i*kEntrySize;
+            int begin=At<int>(entry,kEntryFirstIndex), count=At<int>(entry,kEntryTris);
+            if(begin<0 || count<0 || begin>mesh.numIndices || count>(mesh.numIndices-begin)/3) continue;
+            for(int t=0;t<count;++t) {
+                const uint16_t* v=mesh.indices+begin+t*3;
+                if(t>=driver.body[i] && t<driver.body[i]+driver.arms[i] &&
+                    !edits.native.count(TriId(v[0],v[1],v[2]))) continue;
+                for(int j=0;j<3;++j) if((int)v[j]+base>=0 && automaticOnly.count(v[j]+base))
+                    selected.erase(v[j]+base);
+            }
+        }
     }
     std::vector<V3> head, tail;
     DriverArmPose(draw->second.world, head, tail);
@@ -3267,6 +3490,9 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         int localVertex = (int)v - base;
         if ((size_t)v * stride + positionOffset + 12 > bytes || localVertex < 0 || localVertex >= mesh.numVerts) continue;
         auto p = point(mesh.pos(localVertex));
+        float automaticWeight=automaticOnly.count(v) && info->second.driver && info->second.driver->rig.ok ?
+            NativeArmWeight(*rig,p) : 1.0f;
+        if(automaticWeight<=0) continue;
         // Bind to the nearest arm segment on either side, not to a global Y threshold.
         float best = 1e9f; int nearest = -1;
         for (int side = 0; side < 2; ++side) {
@@ -3275,7 +3501,7 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
                 auto a = point(rig->bones[b].head), d = point(rig->bones[b].tail) - a;
                 float t = std::max(0.0f, std::min(1.0f, CustomDriver::Dot(p-a,d) / std::max(1e-10f,CustomDriver::Dot(d,d))));
                 float distance = CustomDriver::Length(p-(a+d*t));
-                if (distance < best) { best = distance; nearest = (side || NativeSteeringActive()) ? b : -1; }
+                if (distance < best) { best = distance; nearest = (side==ControlSide() || NativeSteeringActive()) ? b : -1; }
             }
         }
         if (nearest < 0) continue;
@@ -3283,11 +3509,24 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         auto restHead = point(rig->bones[b].head), restDir = point(rig->bones[b].tail)-restHead;
         CustomDriver::Point posedHead{head[b].x,head[b].y,head[b].z};
         CustomDriver::Point posedDir{tail[b].x-head[b].x,tail[b].y-head[b].y,tail[b].z-head[b].z};
+        float cuffRoll=0;
+        if(NativeSteeringActive()) for(int side=0;side<2;++side) {
+            if(b!=rig->arms[side*3+1] || (side==ControlSide() && (s_armControlBlend>0 || s_armControlOverride))) continue;
+            int hand=rig->arms[side*3+2];
+            auto restHand=point(rig->bones[hand].tail)-point(rig->bones[hand].head);
+            CustomDriver::Point posedHand{tail[hand].x-head[hand].x,tail[hand].y-head[hand].y,tail[hand].z-head[hand].z};
+            M4 inv=MInvRigid(draw->second.world);
+            V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
+                ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
+            float along=CustomDriver::Dot(p-restHead,restDir)/std::max(1e-10f,CustomDriver::Dot(restDir,restDir));
+            cuffRoll=DriverSteering::CuffRoll(restDir,posedDir,restHand,posedHand,
+                {axis.x,axis.y,axis.z},NativeGrip(*rig,side,draw->second.world).roll)*DriverSteering::CuffWeight(along);
+        }
         auto deformDirection = [&](CustomDriver::Point value) {
             if (NativeSteeringActive()) for (int side=0;side<2;++side) {
                 if (b!=rig->arms[side*3+2] && b!=rig->Find(side ? "JNT_hand_tip.R" : "JNT_hand_tip.L")) continue;
                 auto grip=NativeGrip(*rig,side,draw->second.world);
-                float roll=grip.roll*(side ? 1-s_armControlBlend : 1);
+                float roll=grip.roll*(side==ControlSide() ? 1-s_armControlBlend : 1);
                 M4 inv=MInvRigid(draw->second.world);
                 V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
                     ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
@@ -3295,14 +3534,16 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
                 return CustomDriver::Rotate(CustomDriver::Twist(value,k,roll),
                     CustomDriver::Twist(restDir,k,roll),posedDir);
             }
-            return CustomDriver::Rotate(value,restDir,posedDir);
+            auto rotated=CustomDriver::Rotate(value,restDir,posedDir);
+            return cuffRoll!=0 ? CustomDriver::Twist(rotated,posedDir,cuffRoll) : rotated;
         };
         float* dst = (float*)(vertices + (size_t)v*stride + positionOffset);
-        auto result = posedHead + deformDirection(point(dst)-restHead);
+        auto result = CustomDriver::Mix(p,posedHead + deformDirection(p-restHead),automaticWeight);
         memcpy(dst,&result,12);
         if (normalOffset >= 0 && (unsigned)normalOffset+12 <= stride) {
             float* normal = (float*)(vertices+(size_t)v*stride+normalOffset);
-            auto rotated = deformDirection(point(normal));
+            auto original=point(normal);
+            auto rotated = CustomDriver::Unit(CustomDriver::Mix(original,deformDirection(original),automaticWeight));
             memcpy(normal,&rotated,12);
         }
         changed = true;
@@ -3484,6 +3725,7 @@ void Cockpit_BeginEye() {
     s_driverIKWorldValid = false;
     s_handbrakeGripValid = false;
     s_shifterHoverValid = false;
+    s_controlVehicleValid = false;
     s_eyeIndex++;
 }
 
