@@ -19,6 +19,7 @@
 #include "xr.h"
 #include "vrmath.h"
 #include "cockpit.h"
+#include "frametrace.h"
 #include <string.h>
 #include <algorithm>
 #include <stdio.h>
@@ -1039,7 +1040,9 @@ void __cdecl hkRenderScene() {
             active = 0;
         }
         double tScene = D3D_ProfNow();
+        Trace_RenderBegin(eye);
         oRenderScene();
+        Trace_RenderEnd();
         D3D_EyeRenderProfile(eye, D3D_ProfNow() - tScene);
         carHitsFrame += s_carHits;
         carMatricesFrame += Cockpit_PlayerCarMatrices();
@@ -1346,6 +1349,49 @@ bool Game_ValidateHooks() {
     return true;
 }
 
+// These are instruction-level boundaries, not ordinary C++ callers. Preserve the
+// floating-point/SSE state as well: compiler-generated timing code may use either.
+// The return address identifies this particular boundary, including loop iterations.
+void __cdecl RenderBoundaryFromReturn(unsigned ret) { Trace_RenderBoundary(ret - 5); }
+void __cdecl RenderBoundaryAfterReturn(unsigned ret) { Trace_RenderBoundary((ret - 5) | 0x80000000u); }
+uintptr_t s_renderBoundaryTarget = 0x6E2F50;
+__declspec(naked) void hkRenderBoundary() {
+    __asm {
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 528
+        and esp, -16
+        fxsave [esp]
+        fninit
+        mov eax, [ebx + 36]
+        push eax
+        call RenderBoundaryFromReturn
+        add esp, 4
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        call dword ptr [s_renderBoundaryTarget]
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 528
+        and esp, -16
+        fxsave [esp]
+        fninit
+        mov eax, [ebx + 36]
+        push eax
+        call RenderBoundaryAfterReturn
+        add esp, 4
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        ret
+    }
+}
+
 bool Game_InstallHooks() {
     s_mirrorPatchOk = !memcmp((void*)kMirrorCamOption, kMirrorCamGame, 3) && !memcmp((void*)kRvmAllowed, kRvmAllowedGame, 3);
     if (!s_mirrorPatchOk) Log("game: unexpected rear view code, side mirrors off");
@@ -1379,6 +1425,12 @@ bool Game_InstallHooks() {
     PatchCall(kCallWorldViewProj, kMatrixMultiply, (void*)&hkWorldViewProjMultiply, "depth split (WorldViewProj)");
     PatchCall(kCallShadowPass, kShadowPass, (void*)&hkShadowPass, "shared shadow map");
     PatchCall(kCallPreDisplay, kPreDisplay, (void*)&hkPreDisplay, "per-frame display updates");
+    // Direct CALLs verified against the installed speed.exe. No scanning or guessed signatures.
+    for (uintptr_t site : {0x6DE4B1u, 0x6DE4DFu, 0x6DE582u, 0x6DE749u, 0x6DE79Fu,
+            0x6DE7CAu, 0x6DE88Eu, 0x6DE93Fu, 0x6DE96Du, 0x6DEB01u, 0x6DEBBDu,
+            0x6DEC80u, 0x6DED37u, 0x6DEDA0u, 0x6DEE66u, 0x6DEEC6u, 0x6DEF3Du,
+            0x6DEF54u, 0x6DEFBDu, 0x6DF24Eu})
+        PatchCall(site, 0x6E2F50, (void*)&hkRenderBoundary, "render timing boundary");
     for (uintptr_t site : kCallsCloneLightContext)
         PatchCall(site, kCloneLightContext, (void*)&hkCloneLightContext, "car reflections");
     for (uintptr_t site : kCallsSetupLightContext)

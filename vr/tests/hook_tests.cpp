@@ -37,6 +37,15 @@ void D3D_EndDashEye() {}
 void D3D_BeginDashEye(bool, const float*, const float*) {}
 double D3D_ProfNow() { return 0; }
 void D3D_ProfAdd(int, double) {}
+void Trace_RenderBegin(int) {}
+static unsigned boundarySite;
+void Trace_RenderBoundary(unsigned site) {
+    boundarySite = site;
+    // Deliberately clobber caller-saved floating state inside the instrumentation.
+    __asm { fldz }
+    __asm { xorps xmm0, xmm0 }
+}
+void Trace_RenderEnd() {}
 void D3D_HideTextures(void*, void*, void*) {}
 void* D3D_TextureOfSurface(void*) { return nullptr; }
 static void __stdcall Resolution(int* w, int* h) { *w = 1920; *h = 1080; }
@@ -48,6 +57,34 @@ int main() {
     static_assert(sizeof(void*) == 4, "test game layout");
     assert((uintptr_t)gameAddressPadding < kGetResolution &&
            (uintptr_t)gameAddressPadding + sizeof(gameAddressPadding) > kPlayerView);
+    {
+        DWORD oldProtect;
+        assert(VirtualProtect((void*)0x6E2F50, 1, PAGE_EXECUTE_READWRITE, &oldProtect));
+        *(unsigned char*)0x6E2F50 = 0xC3; // synthetic original target: ret
+        FlushInstructionCache(GetCurrentProcess(), (void*)0x6E2F50, 1);
+        double value = 0;
+        unsigned xmmValue = 0;
+        __asm {
+            fld1
+            mov eax, 0x12345678
+            movd xmm0, eax
+            call hkRenderBoundary
+            movd xmmValue, xmm0
+            fstp value
+        }
+        assert(value == 1.0 && xmmValue == 0x12345678);
+        assert(boundarySite != 0);
+        puts("Render boundary x87/SSE preservation test passed");
+        LARGE_INTEGER frequency, begin, end;
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&begin);
+        const unsigned frames = 10000;
+        for (unsigned frame = 0; frame < frames; ++frame)
+            for (unsigned boundary = 0; boundary < 40; ++boundary) hkRenderBoundary();
+        QueryPerformanceCounter(&end);
+        printf("Synthetic wrapper overhead: %.6f ms/frame (40 invocations, mock callback/target; no GPU)\n",
+               double(end.QuadPart - begin.QuadPart) * 1000 / frequency.QuadPart / frames);
+    }
     assert(!IsSharedViewForBothEyes(0));
     assert(!IsSharedViewForBothEyes(1));
     assert(IsSharedViewForBothEyes(3));

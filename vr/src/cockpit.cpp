@@ -19,6 +19,7 @@
 // rebuilt before the eyes render the same way CarRenderConn::OnRender builds it, so the eyes
 // stay fixed to the car model in the same frame.
 #include "cockpit.h"
+#include "frametrace.h"
 #include "mirror_glass.h"
 #include "d3d9hook.h"
 #include <d3d9.h>
@@ -123,6 +124,16 @@ struct WheelTemplate {
     std::vector<uint16_t> orderedIndices;
     std::vector<std::pair<int, int>> entryRanges;    // first index, triangle count per entry
 };
+// Only deterministic geometry rejections belong here, never missing resources or failed locks.
+// Own the input data: streamed models can reuse both names and memory addresses.
+struct RejectedWheel {
+    std::string name;
+    std::vector<V3> points;
+    std::vector<uint16_t> indices;
+    std::vector<std::pair<int, int>> ranges;
+    std::array<float, 3> head;
+};
+std::vector<RejectedWheel> s_rejectedWheels;
 // Side mirror glass that shares a draw entry with the rest of the body (BMW M3 GTR): in each such
 // entry its triangles are moved to the end, the other triangles first, then the left glass, then
 // the right, and the entry is submitted as up to three parts so the glass has draws of its own.
@@ -868,10 +879,37 @@ Wheel* PrepareWheel(uint8_t* solid, const char* name, const float head[3]) {
     auto pos = [&](int v) { return (const float*)(verts + v * stride); };
     std::vector<V3> pts(numVerts);
     for (int v = 0; v < numVerts; v++) pts[v] = {pos(v)[0], pos(v)[1], pos(v)[2]};
+    RejectedWheel input;
+    input.name = name;
+    input.head = {head[0], head[1], head[2]};
+    // Bound the copy and require a usable index copy before consulting the negative cache.
+    bool cacheable = numIndices > 0 && numIndices < (1 << 20);
+    if (cacheable) {
+        input.points = pts;
+        input.indices.assign(indices, indices + numIndices);
+        for (int i = 0; i < n; i++) {
+            uint8_t* e = entries + i * kEntrySize;
+            input.ranges.push_back({At<int>(e, kEntryFirstIndex), At<int>(e, kEntryTris)});
+        }
+        for (const auto& rejected : s_rejectedWheels) {
+            if (rejected.name == input.name && rejected.head == input.head &&
+                rejected.ranges == input.ranges && rejected.indices == input.indices &&
+                rejected.points.size() == pts.size() &&
+                !memcmp(rejected.points.data(), pts.data(), pts.size() * sizeof(V3)))
+                return w;
+        }
+    }
+    auto rememberRejection = [&]() {
+        if (!cacheable) return;
+        // Bounded across car changes; no live game pointers or GPU resources are retained.
+        if (s_rejectedWheels.size() >= 16) s_rejectedWheels.erase(s_rejectedWheels.begin());
+        s_rejectedWheels.push_back(std::move(input));
+    };
     // A wheel the usual search misses (the Clio's, the only one in the game) is looked for again
     // with deeper bins; a wheel the first search finds is never searched for that way.
     if (!FindWheel(pts, head, *w) && !FindWheel(pts, head, *w, 0.04f)) {
         Log("cockpit: %s: no steering wheel found", name);
+        rememberRejection();
         return w;
     }
     w->parts.assign(n * 2 * kEntrySize, 0);
@@ -907,6 +945,7 @@ Wheel* PrepareWheel(uint8_t* solid, const char* name, const float head[3]) {
     // A real wheel has well over a hundred triangles; a few means something else matched.
     if (total < 80) {
         Log("cockpit: %s: steering wheel candidate rejected (%d triangles)", name, total);
+        rememberRejection();
         return w;
     }
     for (int i = 0; i < n; i++) {
@@ -1082,6 +1121,7 @@ void RestoreAll(uint8_t* solid, SolidInfo& info);
 int s_hashSerial = 0;
 
 SolidInfo* GetSolid(uint8_t* solid) {
+    TraceDetailScope cacheTiming(TRACE_SOLID_CACHE);
     SolidIdentity identity;
     ReadSolid(solid, identity);
     char name[65] = {};
@@ -1124,6 +1164,7 @@ SolidInfo* GetSolid(uint8_t* solid) {
     // A cache hit needs no owning containers (MSVC's empty map allocates a
     // sentinel). Keep all identity and streaming checks above, without that cost.
     SolidInfo now;
+    Trace_CacheRebuild();
     static_cast<SolidIdentity&>(now) = identity;
     if (it != s_solids.end()) {
         SolidInfo& was = it->second;
@@ -1200,6 +1241,12 @@ M4 BodyMatrix(uint8_t* conn, bool pov) {
 }
 
 void __fastcall hkOnRender(uint8_t* conn, void* edx, uint8_t* view, int reflection) {
+    bool tracePlayer = false;
+    if (Trace_On()) {
+        uint8_t* anchor = ViewAnchor(view);
+        tracePlayer = anchor && At<uint32_t>(anchor, kAnchorWorldId) == At<uint32_t>(conn, kConnWorldId);
+    }
+    TraceDetailScope carTiming(tracePlayer ? TRACE_PLAYER_CAR : TRACE_OTHER_CAR);
     uint8_t* prev = s_curConn;
     M4 prevBody = s_curBody;
     bool prevPov = s_curPov;
@@ -2097,6 +2144,8 @@ void RestoreAll(uint8_t* solid, SolidInfo& info) {
 // Prepares the steering wheel of every loaded solid with that name again (after wheel edits).
 void RePrepareWheels(const std::string& name) {
     s_wheelTemplates.erase(name);
+    s_rejectedWheels.erase(std::remove_if(s_rejectedWheels.begin(), s_rejectedWheels.end(),
+        [&](const RejectedWheel& cached) { return cached.name == name; }), s_rejectedWheels.end());
     for (auto& kv : s_solids) {
         SolidInfo& info = kv.second;
         if (!info.interior || SolidName(info) != name) continue;
@@ -2441,6 +2490,8 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
 uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     uint8_t* solid = model ? At<uint8_t*>(model, kModelSolid) : nullptr;
     SolidInfo* info = solid ? GetSolid(solid) : nullptr;
+    if (info && Trace_On()) Trace_Model(info->name, s_curConn != nullptr, s_curConn && s_curPlayerCar,
+                                      entry ? (unsigned)std::max(0, At<int>(entry, kEntryTris)) : 0);
     bool player = info && m && s_curConn && s_curPlayerCar;
     if (player && g_cfg.mirrors) NoteMirrors(solid, *info, m);
     if (player && info->wheel && info->wheel->dashOk && g_cfg.dash > 0.5f) {

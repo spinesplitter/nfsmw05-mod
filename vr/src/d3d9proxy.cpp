@@ -495,6 +495,7 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
 // buffer, once per buffer and base): u along the glass within the job's range, v top to bottom.
 struct SavedGlassUV { UINT offset; float uv[2]; };
 static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlassUV>& saved) {
+    TraceDetailScope timing(TRACE_MIRROR_MAP);
     if (j.parts.empty()) return;
     IDirect3DVertexBuffer9* vb = nullptr;
     UINT offset = 0, stride = 0;
@@ -512,8 +513,39 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
             }
         decl->Release();
     }
-    if (posOfs < 0 || uvOfs < 0 || stride < 20) {
+    if (posOfs < 0 || uvOfs < 0 || stride < 20 ||
+        (UINT)posOfs + 3 * sizeof(float) > stride || (UINT)uvOfs + 2 * sizeof(float) > stride) {
         Log("d3d9: side mirror glass: unexpected vertex layout (position %d, uv %d, stride %u)", posOfs, uvOfs, stride);
+        vb->Release();
+        return;
+    }
+    // Validate all addresses before changing any UVs. Whole-buffer locks do not
+    // provide the range validation the old per-part locks supplied.
+    D3DVERTEXBUFFER_DESC desc = {};
+    if (FAILED(vb->GetDesc(&desc))) {
+        vb->Release();
+        return;
+    }
+    size_t vertexCount = 0;
+    for (const MirrorGlassPart& part : j.parts) {
+        vertexCount += part.vertices.size();
+        for (uint16_t v : part.vertices) {
+            int64_t vertex = (int64_t)base + v;
+            if (vertex < 0 || (uint64_t)offset + ((uint64_t)vertex + 1) * stride > desc.Size) {
+                vb->Release();
+                return;
+            }
+        }
+    }
+    if (!vertexCount) {
+        vb->Release();
+        return;
+    }
+    saved.reserve(saved.size() + vertexCount);
+    // All parts use the same stream. One lock avoids synchronizing with the
+    // previous GPU work again for every part of a split mirror.
+    uint8_t* buffer = nullptr;
+    if (FAILED(vb->Lock(0, 0, (void**)&buffer, 0)) || !buffer) {
         vb->Release();
         return;
     }
@@ -521,25 +553,13 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
     for (MirrorGlassPart& part : j.parts) {
         if (part.vertices.empty()) continue;
         mappedVerts += part.vertices.size();
-        uint16_t lo = 0xFFFF, hi = 0;
-        for (uint16_t v : part.vertices) {
-            lo = v < lo ? v : lo;
-            hi = v > hi ? v : hi;
-        }
-        UINT firstVertex = (UINT)(base + lo), count = (UINT)(hi - lo + 1);
-        uint8_t* p = nullptr;
-        if (FAILED(vb->Lock(offset + firstVertex * stride, count * stride, (void**)&p, 0)) || !p) {
-            Log("d3d9: side mirror glass: vertex buffer lock failed");
-            vb->Release();
-            return;
-        }
         const float* b = part.basis;
         float cu = b[0] * b[3] + b[1] * b[4] + b[2] * b[5], cv = b[0] * b[6] + b[1] * b[7] + b[2] * b[8];
         for (uint16_t v : part.vertices) {
-            UINT i = v - lo;
-            const float* pos = (const float*)(p + i * stride + posOfs);
-            float* uv = (float*)(p + i * stride + uvOfs);
-            SavedGlassUV old = {offset + (firstVertex + i) * stride + (UINT)uvOfs, {uv[0], uv[1]}};
+            UINT vertexOffset = offset + (UINT)(base + v) * stride;
+            const float* pos = (const float*)(buffer + vertexOffset + posOfs);
+            float* uv = (float*)(buffer + vertexOffset + uvOfs);
+            SavedGlassUV old = {vertexOffset + (UINT)uvOfs, {uv[0], uv[1]}};
             saved.push_back(old);
             float pu = pos[0] * b[3] + pos[1] * b[4] + pos[2] * b[5], pv = pos[0] * b[6] + pos[1] * b[7] + pos[2] * b[8];
             float s = b[9] > 0 ? (pu - (cu - b[9])) / (2 * b[9]) : 0.5f, t = b[10] > 0 ? ((cv + b[10]) - pv) / (2 * b[10]) : 0.5f;
@@ -548,8 +568,8 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
             uv[0] = b[11] + (b[12] - b[11]) * s;
             uv[1] = t;
         }
-        vb->Unlock();
     }
+    vb->Unlock();
     vb->Release();
     static int logged;
     if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
@@ -559,15 +579,18 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, std::vector<SavedGlass
 // the mirror draw so subsequent body draws never inherit the rear-view mapping.
 static void RestoreGlassVertices(const std::vector<SavedGlassUV>& saved) {
     if (saved.empty()) return;
+    TraceDetailScope timing(TRACE_MIRROR_RESTORE);
     IDirect3DVertexBuffer9* vb = nullptr;
     UINT offset = 0, stride = 0;
     if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
-    for (auto it = saved.rbegin(); it != saved.rend(); ++it) {
-        void* p = nullptr;
-        if (SUCCEEDED(vb->Lock(it->offset, sizeof(it->uv), &p, 0)) && p) {
-            memcpy(p, it->uv, sizeof(it->uv));
-            vb->Unlock();
-        }
+    // A normal lock after DrawIndexedPrimitive may wait for the GPU. Lock once,
+    // not once per vertex. Keep reverse order: overlapping parts can save the
+    // same UV more than once, and the earliest saved value must win.
+    void* p = nullptr;
+    if (SUCCEEDED(vb->Lock(0, 0, &p, 0)) && p) {
+        for (auto it = saved.rbegin(); it != saved.rend(); ++it)
+            memcpy((uint8_t*)p + it->offset, it->uv, sizeof(it->uv));
+        vb->Unlock();
     }
     vb->Release();
 }
@@ -583,6 +606,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
     for (size_t i : jobs->second) {
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
+        TraceDetailScope timing(TRACE_MIRROR_DRAW);
         std::vector<SavedGlassUV> saved;
         MapGlassVertices(j, base, saved);
         int stage = -1;
@@ -1866,6 +1890,7 @@ static DWORD HudColorWrite(DWORD mask) {
 
 // After the last eye's scene render: keep the scene, then point everything the game
 // draws next (HUD, frontend) at a transparent render target.
+static double s_hudTraceStart;
 void D3D_BeginHudPhase() {
     D3D_CaptureEye(1);
     if (!s_dev || !s_hudRT || s_hudPhase) return;
@@ -1882,6 +1907,7 @@ void D3D_BeginHudPhase() {
     DWORD mask;
     if (SUCCEEDED(s_dev->GetRenderState(D3DRS_COLORWRITEENABLE, &mask))) s_dev->SetRenderState(D3DRS_COLORWRITEENABLE, HudColorWrite(mask));
     s_hudPhase = true;
+    s_hudTraceStart = Trace_On() ? D3D_ProfNow() : 0;
 }
 
 static void EndHudPhase() {
@@ -1890,6 +1916,8 @@ static void EndHudPhase() {
     s_frameRT = s_frameDS = nullptr;
     s_skipPostPass = false;
     if (!s_hudPhase) return;
+    if (s_hudTraceStart > 0) Trace_Detail(TRACE_HUD_PHASE, D3D_ProfNow() - s_hudTraceStart);
+    s_hudTraceStart = 0;
     s_hudPhase = false;
     IDirect3DSurface9* cur = nullptr;
     s_dev->GetRenderTarget(0, &cur);
