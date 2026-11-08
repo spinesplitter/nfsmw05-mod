@@ -913,7 +913,8 @@ void BeginDash(void* view, bool seated) {
 }
 
 void EndMirrors() {
-    if (s_mirrorPatched && g_cfg.disableMirrors <= 0.5f) D3D_EndMirrorEye(RvmSurface());
+    if (s_mirrorPatched && g_cfg.disableMirrors <= 0.5f)
+        D3D_EndMirrorEye(s_viewSkipped[kRearView] ? nullptr : RvmSurface());
 }
 
 void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {

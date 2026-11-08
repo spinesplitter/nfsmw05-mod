@@ -7,6 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class MirrorDepthTests(unittest.TestCase):
+    def test_skipped_rear_view_keeps_image_without_recopying_it(self):
+        source = (ROOT / "src" / "game.cpp").read_text()
+        end_mirrors = source.split("void EndMirrors() {", 1)[1].split("}", 1)[0]
+        self.assertIn("s_viewSkipped[kRearView] ? nullptr : RvmSurface()", end_mirrors)
+        proxy = (ROOT / "src" / "d3d9proxy.cpp").read_text()
+        end_mirror_eye = proxy.split("void D3D_EndMirrorEye(void* rearViewSurface) {", 1)[1]
+        end_mirror_eye = end_mirror_eye.split("// --- the in-car dashboard", 1)[0]
+        self.assertIn("if (rearViewSurface) MirrorTexture((IDirect3DSurface9*)rearViewSurface);", end_mirror_eye)
+
     def test_rim_writes_depth_in_model_pass(self):
         source = (ROOT / "src" / "d3d9proxy.cpp").read_text()
         draw = source.split("static void DrawMirrorGlass(const PendingMirror& m, bool depth) {", 1)[1]
