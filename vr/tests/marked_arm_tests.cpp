@@ -92,7 +92,7 @@ int main() {
         selection.SetBoneOverride(2,5,1,2);
         selection.SetBoneOverride(2,6,0,1);
         Check(selection.GetBoneOverride(2,sleeve) && sleeve.bone==5 && sleeve.side==1,
-            "hand-triangle binding takes priority over a shared sleeve cuff binding");
+            "hand-vertex binding takes priority over a shared sleeve cuff binding");
         Check(selection.IsSelected(2) && !selection.IsAutomatic(2),
             "sleeve binding override preserves manual hand-mark priority");
         DriverPoseSelection empty(0); empty.Add(0,true); empty.ExcludeAutomatic(0);

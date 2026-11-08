@@ -3628,8 +3628,11 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
             if(binding.side>=0 &&
                (binding.bone==rig->arms[binding.side*3+2] ||
                 binding.bone==candidates[binding.side][3])) {
-                for(int j=0;j<3;++j)
-                    selection.SetBoneOverride(v[j],binding.bone,binding.side,2);
+                for(int j=0;j<3;++j) {
+                    auto p=point(mesh.pos(v[j]));
+                    auto vertexBinding=bindings.Get(v[j],p,[&]() { return buildBinding(p); });
+                    selection.SetBoneOverride(v[j],vertexBinding.bone,vertexBinding.side,2);
+                }
             } else if(binding.side>=0 &&
                (binding.bone==rig->arms[binding.side*3] ||
                 binding.bone==rig->arms[binding.side*3+1])) {
