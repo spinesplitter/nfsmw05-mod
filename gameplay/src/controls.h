@@ -3,6 +3,9 @@
 
 void Controls_Install();
 
+constexpr int kResetCarAction = 12;
+inline bool Controls_ShouldBlockAction(int actionId) { return actionId == kResetCarAction; }
+
 // Speed-sensitive wheel steering: the share of the full front wheel lock (45 degrees) that the
 // steering lock gives at `kmh`. One smooth curve instead of the game's table (45 degrees parked,
 // 15 at 64 km/h, then kinks down to 7): full lock parked, falling off with speed toward

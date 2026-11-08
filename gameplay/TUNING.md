@@ -21,6 +21,10 @@ feedback** for how the wheel feels. Change one thing at a time and drive the sam
 That's it for most people. Every car then gets its own feel from the game's data for it; there's
 nothing to set up per car. The rest of this guide is for when a car still feels wrong.
 
+The game's car-reset action is disabled. A car that flips over will stay where it lands; the
+**Reset car (disabled)** binding in the Controls page has no effect. Race restarts and safehouse
+transitions are unaffected.
+
 ## How a car gets its feel
 
 Four things, in this order:

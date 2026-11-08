@@ -69,7 +69,7 @@ constexpr int kAQ_Port = 0x268;                     // ActionQueue: device index
 // ActionID (the game's GAMEACTION_* / CAMERAACTION_* names table)
 enum {
     A_STEERLEFT = 1, A_STEERRIGHT = 2, A_GAS = 5, A_BRAKE = 6, A_HANDBRAKE = 7, A_GAMEBREAKER = 8,
-    A_NOS = 11, A_RESET = 12, A_CAMERA = 20, A_LOOKBACK = 23,
+    A_NOS = 11, A_RESET = kResetCarAction, A_CAMERA = 20, A_LOOKBACK = 23,
 };
 
 struct ActionData {
@@ -79,6 +79,19 @@ struct ActionData {
 };
 
 typedef bool(__thiscall* ReceiveAction_t)(void* queue, const ActionData* a);
+ReceiveAction_t s_receiveAction;
+
+bool __fastcall Hook_ReceiveAction(void* queue, void*, const ActionData* action) {
+    if (action && Controls_ShouldBlockAction(action->id)) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("controls: car reset action blocked");
+        }
+        return false;
+    }
+    return s_receiveAction(queue, action);
+}
 
 // Held controls: value actions. Buttons that act on every action they get (the speedbreaker
 // toggle, reset, camera) are only sent on a press.
@@ -252,6 +265,13 @@ void __cdecl Hook_DoFetchInput(void* ip) {
 }  // namespace
 
 void Controls_Install() {
+    if (Expect(kReceiveAction, {0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C})) {
+        s_receiveAction = (ReceiveAction_t)Detour(kReceiveAction, 6, (void*)&Hook_ReceiveAction);
+        Log(s_receiveAction ? "controls: automatic and manual car resets disabled" :
+                              "controls: could not block car resets");
+    } else {
+        Log("controls: unexpected action queue code, car reset blocking unavailable");
+    }
     if (!Expect(kDoFetchInput, {0x8B, 0x4C, 0x24, 0x04, 0x8B, 0x01, 0xFF, 0x60, 0x10})) {
         Log("controls: unexpected code, [Controls] unavailable");
         return;

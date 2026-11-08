@@ -479,7 +479,7 @@ const Item kItems[] = {
     BINDING("Handbrake", "Controls", "Handbrake", button[0], 0),
     BINDING("Nitrous", "Controls", "Nitrous", button[1], 0),
     BINDING("Speedbreaker", "Controls", "Speedbreaker", button[2], 0),
-    BINDING("Reset car", "Controls", "ResetCar", button[3], 0),
+    BINDING("Reset car (disabled)", "Controls", "ResetCar", button[3], 0),
     BINDING("Change camera", "Controls", "Camera", button[4], 0),
     BINDING("Look back", "Controls", "LookBack", button[5], 0),
     BINDING("Recenter VR view", "Controls", "RecenterVr", recenterVr, 0),

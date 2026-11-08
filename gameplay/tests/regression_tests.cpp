@@ -94,6 +94,12 @@ static void TestBindings() {
     assert(!Down(bindings[0], true));
 }
 
+static void TestCarResetBlocking() {
+    assert(Controls_ShouldBlockAction(12));
+    for (int action : {0, 1, 5, 6, 8, 11, 20, 23, 24})
+        assert(!Controls_ShouldBlockAction(action));
+}
+
 static void TestSteeringWheelAngle() {
     s_joy[0].dev = (IDirectInputDevice8A*)1;
     s_joy[0].ok = true;
@@ -278,6 +284,7 @@ static void TestTelemetryInputs() {
 }
 
 int main() {
+    TestCarResetBlocking();
     TestCareerOpponentSpeed();
     for (bool wall : {false, true}) {
         assert(ImpactDamage(7.9f, 8.0f, 1.0f, wall) == 0.0f);
