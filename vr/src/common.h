@@ -34,7 +34,7 @@ struct Config {
     float fovScale = 1.0f;         // >1 renders a slightly wider FOV than the HMD (more reprojection margin)
     float nearZ = 0.05f;           // player view near clip plane (m; the game's is 0.5), so the cockpit isn't cut off; 0 = the game's own
     float depthSplit = 1.0f;       // seated: the player car gets NearZ, the world WorldNearZ, in separate parts of the depth buffer (0/1, live)
-    float worldNearZ = 0.3f;       // with DepthSplit, the near plane of everything but the player car (m)
+    float worldNearZ = 0.5f;       // stock world near plane; cockpit keeps its independent NearZ (m)
     float screenDistance = 2.5f;   // menu/movie virtual screen distance (m)
     float screenWidth = 3.0f;      // menu/movie virtual screen width (m)
     float hudDistance = 1.2f;      // in-game HUD/frontend panel distance (m)
@@ -121,6 +121,7 @@ struct Config {
     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye
     int   envMapFacesPerFrame = 2;   // environment map cube faces refreshed per VR frame (1..6, 6 = every face every frame)
     float rearViewEvery = 1.0f;      // the rear view is rendered every Nth VR frame (1 = every frame; live)
+    float disableMirrors = 0.0f;    // live F4 diagnostic: stop rear view and all VR mirror work
     float sharedShadows = 1.0f;      // the sun shadow map drawn for the first eye only; the second eye reuses it (0/1, live)
     float anisotropic = 4.0f;        // anisotropic filtering: 0 off, 1 2x, 2 4x, 3 8x, 4 16x (live from F4)
     float simRateFromHeadset = 1.0f; // the widescreen fix's SimRate set to a multiple of the headset's rate (next start)

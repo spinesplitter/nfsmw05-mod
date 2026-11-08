@@ -9,7 +9,6 @@
 #include "../src/telemetry_inputs.h"
 #include "../src/telemetry.h"
 #include "../src/shift_direction.h"
-#include "../src/extra_options.h"
 #include <assert.h>
 Config g_cfg;
 volatile unsigned char gameAddressPadding[0x600000];
@@ -21,37 +20,6 @@ float Physics_EngineSmokeBack() { return 0.0f; }
 const char* const kButtonKeys[6] = {"Handbrake", "Nitrous", "Speedbreaker", "ResetCar", "Camera", "LookBack"};
 
 static bool player;
-static void TestCareerRoster() {
-    for (int mode : {-1, 0, 1, 2, 3})
-        for (int type = -1; type <= 11; ++type)
-            for (int count : {-1, 0, 1, 3, 11, 15, 16})
-                for (int racers : {0, 1, 2, 12, 16})
-                    for (bool current : {false, true})
-                      for (bool boss : {false, true})
-                       for (uint32_t eventId : {0u, 0x42938CE2u, 0x9F60A40Eu, 0xF7E4440Au,
-                               0xD348F2CDu, 0x6DDD8383u, 0x027D2A00u}) {
-                        bool intro = eventId != 0 && eventId != 0x027D2A00;
-                        bool expected = current && !boss && !intro && mode == 2 &&
-                            (type == 0 || type == 1 || type == 5) &&
-                            count > 0 && count <= 15 && racers == 1;
-                        assert(CareerIntroEvent(eventId) == intro);
-                        assert(CareerRosterEligible(mode, type, count, racers, current, boss, eventId) == expected);
-                    }
-    for (int count = 1; count <= 15; ++count) {
-        for (int index = 0; index < 11; ++index) {
-            int mapped = CareerRosterIndex(index, count);
-            assert(mapped >= 0 && mapped < count);
-            assert(mapped == index % count);
-            if (index < count) assert(mapped == index);
-        }
-    }
-    assert(CareerRosterIndex(-1, 3) == -1);
-    assert(CareerRosterIndex(11, 3) == -1);
-    assert(CareerRosterIndex(0, 0) == -1);
-    // The executable allocates [0x18,0x1958) to 0x194-byte racer records.
-    static_assert((0x1958 - 0x18) / 0x194 == 16, "verified racer capacity");
-    static_assert(kCareerOpponents + 1 <= 16, "player plus opponents must fit");
-}
 static float observedTarget;
 static void __fastcall ObserveRacerTarget(void* ai, void*, float) {
     observedTarget = *(float*)((uint8_t*)ai + 0x84);
@@ -82,120 +50,7 @@ static void __fastcall ResetRaceTimer(void* race, void*) {
     *(float*)((uint8_t*)race + 0x1980) = 0.0f;
 }
 static int __fastcall TollboothType(void*, void*) { return 4; }
-static int __fastcall DragTrafficType(void*, void*) { return kRaceDrag; }
-static unsigned stageCalls;
-static bool stageResult;
-static void* stageManager;
-static bool __fastcall SpawnRoadStub(void* manager, void*, void* position) {
-    assert(manager == stageManager && position == stageManager);
-    ++stageCalls;
-    return stageResult;
-}
-static uint32_t __fastcall SpawnSelectionStub(void* manager, void*) {
-    assert(manager == stageManager);
-    ++stageCalls;
-    return stageResult ? 0x12345678u : 0;
-}
-static void* __fastcall SpawnVehicleStub(void* manager, void*, uint32_t key, bool allowCreate) {
-    assert(manager == stageManager && key == 0x12345678u && allowCreate == stageResult);
-    ++stageCalls;
-    return stageResult ? manager : nullptr;
-}
 static void TestRaceControls() {
-    auto road = s_spawnRoad;
-    auto selection = s_spawnSelection;
-    auto vehicle = s_spawnVehicle;
-    s_spawnRoad = &SpawnRoadStub;
-    s_spawnSelection = &SpawnSelectionStub;
-    s_spawnVehicle = &SpawnVehicleStub;
-    stageManager = &stageCalls;
-    stageCalls = 0;
-    s_spawnStages = {};
-    for (bool result : {false, true}) {
-        stageResult = result;
-        assert(TrafficSpawnRoad(stageManager, nullptr, stageManager) == result);
-        assert(TrafficSpawnSelection(stageManager, nullptr) == (result ? 0x12345678u : 0));
-        assert(TrafficSpawnVehicle(stageManager, nullptr, 0x12345678u, result) ==
-            (result ? stageManager : nullptr));
-    }
-    assert(stageCalls == 6); // exactly one original call per stage; no retries
-    assert(s_spawnStages.roads == 2 && s_spawnStages.roadOK == 1);
-    assert(s_spawnStages.selections == 2 && s_spawnStages.selectionOK == 1);
-    assert(s_spawnStages.vehicles == 2 && s_spawnStages.vehicleOK == 1);
-    assert(s_spawnStages.creationAllowed == 1);
-    s_spawnRoad = road;
-    s_spawnSelection = selection;
-    s_spawnVehicle = vehicle;
-    s_spawnStages = {};
-    uint8_t trafficRace[0x1970] = {};
-    auto trafficType = s_trafficRaceType;
-    s_trafficRaceType = &DragTrafficType;
-    assert(TrafficRaceType(nullptr) == -1);
-    assert(TrafficRaceType(trafficRace) == -1); // free roam ignores stale parameters
-    *(int*)(trafficRace + 0x1960) = 1;
-    assert(TrafficRaceType(trafficRace) == kRaceDrag); // no parameters: fail closed
-    *(void**)(trafficRace + 0x1968) = trafficRace;
-    assert(TrafficRaceType(trafficRace) == kRaceDrag);
-    s_trafficRaceType = trafficType;
-    assert(Config{}.careerTrafficMultiplier == 3.0f);
-    g_cfg.careerTrafficMultiplier = 3;
-    g_cfg.raceTrafficFloor = 75;
-    for (int play : {0, 1}) {
-        assert(CareerTrafficLimit(4, 2, play) == 12);
-        assert(CareerTrafficLimit(20, 2, play) == 60);
-        assert(CareerTrafficLimit(0, 2, play) == 0); // retain unlimited sentinel
-        assert(CareerTrafficLimit(UINT32_MAX, 2, play) == UINT32_MAX);
-        for (int context : {0, 1, 3})
-            assert(CareerTrafficLimit(4, context, play) == (context == 1 ? 4u : 12u));
-    }
-    assert(CareerTrafficLimit(4, 2, 7) == 4);
-    assert(CareerTrafficValue(0.75f, 2, 1) == 0.75f);
-    assert(CareerTrafficValue(0.5f, 2, 0) == 0.75f);
-    for (int play : {0, 1}) {
-        assert(CareerSpawnRateValue(2.0f, 2, play) == 6.0f);
-        assert(CareerSpawnRateValue(0.0f, 2, play) == 0.0f);
-        for (int context : {0, 1, 3})
-            assert(CareerSpawnRateValue(2.0f, context, play) == (context == 1 ? 2.0f : 6.0f));
-    }
-    assert(CareerSpawnRateValue(2.0f, 2, 7) == 2.0f);
-    for (int context : {0, 1, 3})
-        for (int play : {0, 1}) assert(CareerTrafficValue(0.5f, context, play) ==
-            (context != 1 && play == 0 ? 0.75f : 0.5f));
-    assert(CareerTrafficValue(0.5f, 2, 7) == 0.5f);
-    assert(CareerTrafficValue(0, 2, 1) == 0);
-    for (int repeat = 0; repeat < 20; ++repeat)
-        assert(CareerTrafficValue(0.75f, 2, 1) == 0.75f);
-    g_cfg.careerTrafficMultiplier = 1;
-    assert(CareerTrafficLimit(4, 2, 0) == 4);
-    assert(CareerTrafficLimit(20, 2, 1) == 20);
-    assert(CareerSpawnRateValue(2.0f, 2, 1) == 2.0f);
-    assert(CareerTrafficValue(0.5f, 2, 0) == 0.5f);
-    g_cfg.careerTrafficMultiplier = 3;
-    g_cfg.raceTrafficFloor = 75;
-    assert(RaceTrafficValue(10, 2) == 75);
-    assert(RaceTrafficValue(0, 2) == 75);
-    assert(RaceTrafficValue(100, 2) == 100);
-    assert(RaceTrafficValue(10, 1) == 10);
-    // Every traffic override must bypass drag, online and unsupported contexts.
-    for (float multiplier : {1.0f, 2.0f, 3.0f, 5.0f, 10.0f, 100.0f}) {
-        g_cfg.careerTrafficMultiplier = multiplier;
-        for (int context : {-1, 0, 1, 2, 3, 4}) {
-            assert(CareerTrafficLimit(4, context, 1, kRaceDrag) == 4);
-            assert(CareerSpawnRateValue(8, context, 1, kRaceDrag) == 8);
-            assert(CareerTrafficValue(0.25f, context, 1, kRaceDrag) == 0.25f);
-            assert(RaceTrafficValue(10, context, kRaceDrag) == 10);
-            assert(CareerTrafficLimit(4, context, 1, -1) == 4);
-            for (int play : {0, 1}) for (int type : {0, 1, 3, 4, 5}) {
-                bool eligible = context >= 0 && context <= 3 && context != 1;
-                float scale = eligible ? Clamp(multiplier, 1.0f, 10.0f) : 1.0f;
-                assert(CareerTrafficLimit(4, context, play, type) == (uint32_t)(4 * scale));
-                assert(CareerSpawnRateValue(8, context, play, type) == 8 * scale);
-            }
-        }
-    }
-    g_cfg.careerTrafficMultiplier = 3;
-    g_cfg.raceTrafficFloor = -1;
-    assert(RaceTrafficValue(10, 2) == 10);
     uint8_t race[0x19A0] = {};
     *(void**)(race + 0x1968) = race; // fake parameters, read by the stub only
     auto start = s_startRace;
@@ -422,29 +277,8 @@ static void TestTelemetryInputs() {
     assert(!out.steering && !out.bound[3] && out.pedal[3] == 0.0f);
 }
 
-static void TestExtraOptions() {
-    char dir[MAX_PATH], path[MAX_PATH];
-    assert(GetTempPathA(MAX_PATH, dir));
-    assert(GetTempFileNameA(dir, "exo", 0, path));
-    for (int i = 0; i < extra_options::count; i++)
-        assert(extra_options::Read(path, i) == extra_options::settings[i].def);
-    assert(WritePrivateProfileStringA("TrafficControllers", "High", "82 // upstream comment", path));
-    assert(extra_options::Read(path, 5) == 82);
-    assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", "99", path));
-    assert(extra_options::Read(path, 0) == 15);
-    assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", "-1", path));
-    assert(extra_options::Read(path, 0) == 0);
-    for (const char* bad : {"", "invalid", "nan", "inf"}) {
-        assert(WritePrivateProfileStringA("OpponentControllers", "Maximum", bad, path));
-        assert(extra_options::Read(path, 0) == 15);
-    }
-    assert(DeleteFileA(path));
-}
-
 int main() {
-    TestCareerRoster();
     TestCareerOpponentSpeed();
-    TestExtraOptions();
     for (bool wall : {false, true}) {
         assert(ImpactDamage(7.9f, 8.0f, 1.0f, wall) == 0.0f);
         assert(ImpactDamage(8.0f, 8.0f, 1.0f, wall) == 0.0f);

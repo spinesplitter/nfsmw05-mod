@@ -1,10 +1,7 @@
-Extra Options bundle: see EXTRA-OPTIONS.md. Our former live traffic multiplier,
-opponent-speed and racer-rubberband controls have been removed. The package includes
-the separate ExOpts v10.0.1.1337 plugin, license and corresponding source under
-extras\ExtraOptions. Run Install-ExtraOptions.ps1 as documented to activate it without
-replacing our ASI loader or overwriting an existing ExOpts INI. The bundled profile
-reserves F4, exposes up to 15 Quick Race opponents and sets Maximum traffic to 100.
-Career/free-roam density and large-race stability are not verified.
+Traffic density, spawn limits and Career opponent counts use the game's own values.
+ExtraOptions integration and bundling have been removed. Existing installations
+must separately disable the old ExtraOptions ASI for stock behavior; see
+gameplay/STOCK-TRAFFIC.md in the source. Unrelated VR, wheel and gameplay settings are kept.
 
 Most Wanted 2005 Immersion Pack Mod - VR, force feedback, gameplay (H-pattern shifter + clutch and more)
 https://github.com/cook1e0/mw2005-immersion-pack

@@ -15,7 +15,6 @@
 #include "physics.h"
 #include "cars.h"
 #include "inisave.h"
-#include "extra_options.h"
 #include "draw2d.h"
 #include "telemetry.h"
 #include <d3d9.h>
@@ -84,41 +83,6 @@ void DrawGauge(const EngineStatus& st, int W, int H, float k) {
 // per-car sliders (Physics_IsPerCar) are saved to the car's section while it has its own.
 enum Kind { HEADER, TOGGLE, NUMBER, BIND, LINK, CAR, ACTION, SOUND, PAGE, RESET };
 
-float s_extra[extra_options::count];
-float s_extraSaved[extra_options::count];
-std::string s_extraPath;
-bool s_extraLoaded = false;
-
-int ExtraIndex(const void* value) {
-    for (int i = 0; i < extra_options::count; i++)
-        if (value == &s_extra[i]) return i;
-    return -1;
-}
-
-void LoadExtraOptions() {
-    // Resolve the INI beside the actual loaded plugin, not our own config directory.
-    // Do not create settings or install/load code from the render thread.
-    HMODULE mod = GetModuleHandleA("NFSMWExtraOptions.asi");
-    char path[MAX_PATH] = {};
-    if (!mod || !GetModuleFileNameA(mod, path, MAX_PATH)) return;
-    std::string file(path);
-    size_t slash = file.find_last_of("\\/");
-    if (slash == std::string::npos) return;
-    file.resize(slash + 1);
-    file += "NFSMWExtraOptionsSettings.ini";
-    if (GetFileAttributesA(file.c_str()) == INVALID_FILE_ATTRIBUTES) return;
-    if (s_extraLoaded) return; // Keep pending asynchronous saves when reopening F4.
-    s_extraPath = file;
-    for (int i = 0; i < extra_options::count; i++)
-        s_extra[i] = s_extraSaved[i] = extra_options::Read(file, i);
-    s_extraLoaded = true;
-}
-
-const char* ExtraStatus() {
-    if (s_extraLoaded) return "Loaded - INI edits require a game restart";
-    if (GetModuleHandleA("NFSMWExtraOptions.asi")) return "Loaded, but INI missing - controls unavailable";
-    return "Not loaded - run Install-ExtraOptions.ps1, then restart";
-}
 enum { BF_REQUIRED = 1, BF_CLUTCH = 2, BF_STEER = 8, BF_PEDAL = 16, BF_GAME = 32, BF_ONOFF = 64 };
 
 // Settings of the other mods, changed live through their exports and saved to their .ini: the
@@ -201,6 +165,7 @@ constexpr struct {
     {MOD_VR, "AnimatedDriverSpread", 1.0f},
     {MOD_VR, "AnimatedDriverSave", 0.0f},
     {MOD_VR, "AnimatedDriverHandFix", 0.0f},
+    {MOD_VR, "DisableMirrors", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -237,13 +202,15 @@ enum {
     VR_SHOWDRIVERIK,
     VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
     VR_ANIMATEDDRIVERHANDFIX,
+    VR_DISABLEMIRRORS,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
-static_assert(VR_ANIMATEDDRIVERHANDFIX == EXT_COUNT - 1, "animated driver setting must match its bridge entry");
+static_assert(VR_DISABLEMIRRORS == EXT_COUNT - 1, "mirror setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
+static_assert(KeyIs(kExt[VR_DISABLEMIRRORS].key, "DisableMirrors"), "kExt out of order at VR_DISABLEMIRRORS");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
 static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
@@ -486,26 +453,10 @@ const Item kItems[] = {
     LINK_("Damage and tires", "DAMAGE AND TIRES"),
     LINK_("Physics", "PHYSICS"),
     LINK_("Traffic and HUD", "TRAFFIC AND HUD"),
-    LINK_("Extra Options", "EXTRA OPTIONS"),
     LINK_("Telemetry", "TELEMETRY"),
     LINK_("VR", "VR"),
     LINK_("Animated Driver", "ANIMATED DRIVER"),
     LINK_("Menu and testing", "MENU AND TESTING"),
-
-    PAGE_("EXTRA OPTIONS"),
-    BACK_,
-    {ACTION, "Plugin status", nullptr, "ExtraStatus", nullptr, 0, 0, 0, 0, nullptr, 0},
-    HEADER_("EXOPTS TEAM - GPLv3 - SEE EXTRA-OPTIONS.md"),
-    HEADER_("SAVED ON F4 CLOSE - RESTART GAME TO APPLY"),
-    HEADER_("QUICK RACE LIMITS (CHOOSE RACE VALUES IN GAME)"),
-    {NUMBER, "Maximum opponents", "OpponentControllers", "Maximum", &s_extra[0], 0, 15, 1, 1, "%.0f", 0},
-    {NUMBER, "Random Race maximum opponents", "OpponentControllers", "RandomRace", &s_extra[1], 0, 15, 1, 1, "%.0f", 0},
-    {NUMBER, "Maximum laps", "LapControllers", "Maximum", &s_extra[2], 0, 127, 1, 1, "%.0f", 0},
-    HEADER_("TRAFFIC PRESETS - NOT FREE-ROAM CAR LIMITS"),
-    {NUMBER, "Minimum traffic preset", "TrafficControllers", "Low", &s_extra[3], 0, 100, 1, 1, "%.0f", 0},
-    {NUMBER, "Moderate traffic preset", "TrafficControllers", "Medium", &s_extra[4], 0, 100, 1, 1, "%.0f", 0},
-    {NUMBER, "Maximum traffic preset", "TrafficControllers", "High", &s_extra[5], 0, 100, 1, 1, "%.0f", 0},
-    HEADER_("15-OPPONENT STABILITY UNVERIFIED - BACK UP SAVES"),
 
     PAGE_("CONTROLS"),
     BACK_,
@@ -698,12 +649,8 @@ const Item kItems[] = {
     PAGE_("TRAFFIC AND HUD"),
     BACK_,
     HEADER_("TRAFFIC"),
-    {NUMBER, "Offline race traffic floor", "Traffic", "RaceDensityFloor", &g_cfg.raceTrafficFloor, -1, 100, 5, 1, "%.0f / 100", 0},
-    {NUMBER, "Offline traffic multiplier", "Traffic", "CareerMultiplier", &g_cfg.careerTrafficMultiplier, 1, 10, 0.5f, 100, "%.0f%%", 0},
-    {NUMBER, "Career opponent speed", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
+    {NUMBER, "Opponent speed (Career)", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     HEADER_("OPPONENT SPEED: LIVE IN CAREER; 100% IS STOCK"),
-    HEADER_("TRAFFIC: LIVE, OFFLINE RACES / FREE ROAM; STOCK IN DRAG"),
-    HEADER_("FREE ROAM USES RACE FLOOR; SPAWN LIMITS STILL APPLY"),
     {TOGGLE, "No head-on ramming SUVs", "Traffic", "NoHeavySupport", &g_cfg.noHeavySupport, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Drive drag races normally", "Races", "NormalDragRaces", &g_cfg.normalDragRaces, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Normal HUD in drag races", "Races", "NormalDragHud", &g_cfg.normalDragHud, 0, 0, 0, 0, nullptr, 0},
@@ -853,6 +800,7 @@ const Item kItems[] = {
     BACK_,
     {ACTION, "Hide Animated Driver Model", nullptr, "HideAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
     HEADER_("TESTING"),
+    {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Drop height", "Tires", "DropHeight", &g_cfg.dropHeight, 0.5f, 50.0f, 0.5f, 1, "%.1f m", 0},
@@ -1117,9 +1065,6 @@ std::string SourceText() {
 
 std::string ValueText(const Item& it, int index) {
     char buf[64];
-    if (it.value == &g_cfg.raceTrafficFloor && g_cfg.raceTrafficFloor < 0) return "Event default";
-    if (it.kind == ACTION && strcmp(it.key, "ExtraStatus") == 0) return ExtraStatus();
-    if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) return "ExOpts / INI unavailable";
     if (it.value == &g_cfg.sequential) return g_cfg.sequential ? "Sequential" : "H-pattern";
     if (it.kind == TOGGLE) return *(bool*)it.value ? "On" : "Off";
     if (it.kind == CAR) return *Physics_Car() ? (Physics_OwnSettings() ? "On" : "Off") : "No car";
@@ -1666,8 +1611,6 @@ bool IsPickKey(const char* key) {
 
 void Change(int index, int dir) {
     const Item& it = kItems[index];
-    if (it.kind == ACTION && strcmp(it.key, "ExtraStatus") == 0) { Note(ExtraStatus()); return; }
-    if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) return;
     if (it.kind == ACTION && IsGroupKey(it.key) && (dir > 0 || IsPickKey(it.key))) {
         ChangeGroup(index, it.key, dir);
         return;
@@ -1806,16 +1749,6 @@ void Save() {
     std::vector<IniWrite> writes;
     for (const Item& it : kItems) {
         if (it.kind == HEADER || it.kind == LINK || it.kind == CAR || it.kind == ACTION || it.kind == PAGE || it.kind == RESET) continue;
-        int extra = ExtraIndex(it.value);
-        if (extra >= 0) {
-            // Only explicitly changed keys: never replace existing hotkeys or other ExOpts options.
-            if (s_extraLoaded && s_extra[extra] != s_extraSaved[extra]) {
-                const auto& setting = extra_options::settings[extra];
-                writes.push_back({s_extraPath, setting.section, setting.key, std::to_string((int)s_extra[extra])});
-                s_extraSaved[extra] = s_extra[extra];
-            }
-            continue;
-        }
         char buf[32];
         std::string text;
         if (it.kind == TOGGLE) snprintf(buf, sizeof(buf), "%d", *(bool*)it.value ? 1 : 0), text = buf;
@@ -1893,7 +1826,6 @@ void SetOpen(bool open) {
     if (open == s_menu.open) return;
     s_menu.open = open;
     if (open) {
-        LoadExtraOptions();
         for (int i = 0; i < EXT_COUNT; i++)
             if (ExtSetting(i)) s_ext[i] = *ExtSetting(i);
         FfbRefreshDevices();
@@ -2255,6 +2187,7 @@ const struct {
     {&g_cfg.wallBounce, "How much your car springs back off walls and barriers, as a share of the game's bounce. 0% = none: it stops at the wall or slides along it (the game already does that for head-on hits). The friction along the wall, the spin from the hit, force feedback jolts and damage stay as they were. Every car."},
     {&g_cfg.offroadGrip, "Tyre grip on grass, dirt, mud, gravel and sand (each tyre by the surface under it). 100% = as on the road."},
     {&g_cfg.gravity, "Gravity in g. Grip scales with it."},
+    {&g_cfg.opponentSpeed, "Career race opponents only; applies live. 100% = the game's speed, 90% = slower opponents. Range: 25-200%, in 5% steps. Does not change traffic density, opponent counts, police or other race modes."},
     {&g_cfg.gravityAll, "Gravity applies to AI and traffic too."},
     {&g_cfg.noHeavySupport, "No heavy support: the SUVs a pursuit sends to ram you head-on out of oncoming traffic don't come. SUV patrols and SUVs in roadblocks still do."},
     {&g_cfg.normalDragHud, "Drag races show the normal race HUD (tachometer, speedometer, minimap, damage meter) instead of the drag HUD. Applies from the next race."},
@@ -2627,10 +2560,6 @@ void ValueWidget(int i, float w, float k) {
             break;
         }
         case NUMBER: {
-            if (ExtraIndex(it.value) >= 0 && !s_extraLoaded) {
-                ImGui::TextDisabled("ExOpts / INI unavailable");
-                break;
-            }
             int ext = ExtIndex(it.value);
             if (ext >= 0 && !ExtSetting(ext)) {
                 ImGui::AlignTextToFramePadding();
@@ -2739,7 +2668,7 @@ void ValueWidget(int i, float w, float k) {
                 ImGui::TextUnformatted(v.c_str());
                 break;
             }
-            if (strcmp(it.key, "CarInfo") == 0 || strcmp(it.key, "GroupMembers") == 0 || strcmp(it.key, "ExtraStatus") == 0) {
+            if (strcmp(it.key, "CarInfo") == 0 || strcmp(it.key, "GroupMembers") == 0) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
                 ImGui::TextUnformatted(v.c_str());

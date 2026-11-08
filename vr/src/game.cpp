@@ -19,6 +19,7 @@
 #include "xr.h"
 #include "vrmath.h"
 #include "cockpit.h"
+#include "frametrace.h"
 #include <string.h>
 #include <algorithm>
 #include <stdio.h>
@@ -206,6 +207,7 @@ void PickViewsThisFrame() {
     }
     unsigned every = (unsigned)std::max(1L, std::min(4L, lrintf(g_cfg.rearViewEvery)));
     if (every > 1 && frame % every != 0) s_viewSkipped[kRearView] = true;
+    if (g_cfg.disableMirrors > 0.5f) s_viewSkipped[kRearView] = true;
 }
 constexpr uintptr_t kPlayerAspectScale = 0x8AF994; // float 1.15 applied to player views' aspect
 constexpr uintptr_t kCallTotaledCam = 0x631257;  // EShowRaceOverMessage: call CameraAI::MaybeDoTotaledCam(IPlayer*)
@@ -400,35 +402,49 @@ void WorldDepthRemap(M4& m) {
 // projection (for the mod's own cockpit drawing: dashboard, wheel over the HUD, mirrors), and the
 // world's matrices remapped in place. False (and nothing changed) if the matrices are not the
 // expected perspective ones.
-const void* s_carViewProjFor[2];
-M4 s_carViewProj[2], s_carProj;
+const void* s_carViewProjFor[2 * kNumViews];
+M4 s_carViewProj[2 * kNumViews], s_carProj;
+int s_carViewProjCount = 0;
 bool s_carProjSet = false;
 int s_carHits = 0, s_carMissFrames = 0;
 bool s_depthSplitFailed = false;
 
-bool SplitPlayerDepth(void* view) {
+bool SplitPlayerDepth(void* view, bool player = true, bool validateOnly = false) {
     uint8_t* plat = At<uint8_t*>(view, kViewPlatInfo);
+    if (!plat) return false;
     M4& P = *(M4*)(plat + kPlatProjection);
+    // Some views alias the same platform matrices. Never remap them twice.
+    if (!validateOnly && !player)
+        for (int i = 0; i < s_carViewProjCount; i++)
+            if (s_carViewProjFor[i] == plat + kPlatViewProj) return true;
+    M4& checkedVP = *(M4*)(plat + kPlatViewProj);
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            if (!std::isfinite(P.m[i][j]) || !std::isfinite(checkedVP.m[i][j])) return false;
     if (fabsf(P.m[0][3]) > 1e-5f || fabsf(P.m[1][3]) > 1e-5f || fabsf(P.m[2][3] - 1.0f) > 1e-5f || fabsf(P.m[3][3]) > 1e-5f)
         return false;
     float A = P.m[2][2], B = P.m[3][2];
     if (!(A > 0.0f) || !(B < 0.0f)) return false;
     M4& VP = *(M4*)(plat + kPlatViewProj);
     if (!ZColumnIs(VP, A, B)) return false;
-    s_carProj = CarDepthVariant(P);
-    s_carProjSet = true;
-    s_carViewProj[0] = CarDepthVariant(VP);
-    s_carViewProjFor[0] = &VP;
+    if (validateOnly) return true;
+    if (!player && s_carViewProjCount > 2 * kNumViews - 2) return false;
+    if (player) {
+        s_carViewProjCount = 0;
+        s_carProj = CarDepthVariant(P);
+        s_carProjSet = true;
+    }
+    s_carViewProj[s_carViewProjCount] = CarDepthVariant(VP);
+    s_carViewProjFor[s_carViewProjCount++] = &VP;
     WorldDepthRemap(P);
     WorldDepthRemap(VP);
     // The alternative pair, when it holds a perspective projection of its own.
     M4& P2 = *(M4*)(plat + kPlatProjAlt);
     M4& VP2 = *(M4*)(plat + kPlatViewProjAlt);
-    s_carViewProjFor[1] = nullptr;
     float A2 = P2.m[2][2], B2 = P2.m[3][2];
     if (fabsf(P2.m[2][3] - 1.0f) < 1e-5f && fabsf(P2.m[3][3]) < 1e-5f && A2 > 0.0f && B2 < 0.0f && ZColumnIs(VP2, A2, B2)) {
-        s_carViewProj[1] = CarDepthVariant(VP2);
-        s_carViewProjFor[1] = &VP2;
+        s_carViewProj[s_carViewProjCount] = CarDepthVariant(VP2);
+        s_carViewProjFor[s_carViewProjCount++] = &VP2;
         WorldDepthRemap(P2);
         WorldDepthRemap(VP2);
     }
@@ -437,7 +453,7 @@ bool SplitPlayerDepth(void* view) {
 
 void* __stdcall hkWorldViewProjMultiply(void* out, const void* local, const void* viewProj) {
     if (s_depthSplit && viewProj && local) {
-        for (int k = 0; k < 2; k++)
+        for (int k = 0; k < s_carViewProjCount; k++)
             if (viewProj == s_carViewProjFor[k] && Cockpit_IsPlayerCarMatrix(local)) {
                 viewProj = &s_carViewProj[k];
                 s_carHits++;
@@ -557,6 +573,23 @@ template <class Fn> void ForEachCompanion(void* cam, Fn fn) {
     }
 }
 
+// Glow/specular geometry must use the same depth convention as the main image,
+// whether drawing into its depth surface or an independently cleared one. Keep
+// player-car variants for those queues too. Validate the entire camera group
+// before modifying anything, so a failure can rebuild every view without a split.
+bool SplitCameraDepth(void* view, void* cam) {
+    bool valid = SplitPlayerDepth(view, true, true);
+    ForEachCompanion(cam, [&](void* v, int, const uint32_t*) {
+        if (!SplitPlayerDepth(v, false, true)) valid = false;
+    });
+    if (!valid) return false;
+    SplitPlayerDepth(view);
+    ForEachCompanion(cam, [](void* v, int, const uint32_t*) {
+        SplitPlayerDepth(v, false);
+    });
+    return true;
+}
+
 // While the eyes render: the eye's view matrix and the seat's, for WorldView.
 bool s_stableView = false;
 M4 s_eyeView, s_seatView;
@@ -588,7 +621,7 @@ void FixGameMirrors() {
     float* f = (float*)(mat + kMatData);
     float want[30];
     memcpy(want, original, sizeof(want));
-    if (g_cfg.gameMirrors && s_mirrorPatched) {
+    if (g_cfg.gameMirrors && s_mirrorPatched && g_cfg.disableMirrors <= 0.5f) {
         for (int i = 0; i < 3; i++) want[kMatDiffMinR + i] = want[kMatDiffMaxR + i] = 1.0f;
         want[kMatSpecMinScale] = want[kMatSpecMaxScale] = 0.0f;
         want[kMatEnvMinScale] = want[kMatEnvMaxScale] = 0.0f;
@@ -749,6 +782,7 @@ int RemoveSunLensFlares(uint8_t* flares, uint32_t* exclusions, int count) {
 }
 
 void __cdecl hkPreDisplay() {
+    TraceDetailScope preDisplayTiming(TRACE_PREDISPLAY);
     if (s_secondEye) {
         // The first eye's culled flares are still in the pool and would be drawn (and counted)
         // again for this eye. Put back what ePreDisplay left in it; this eye adds its own.
@@ -811,7 +845,7 @@ void* TextureOf(uintptr_t slot) {
 
 // The HUD's mirror textures, for the d3d9 wrapper to leave out while the mirrors are on.
 void UpdateHiddenTextures() {
-    if (s_mirrorPatched) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
+    if (s_mirrorPatched || (g_cfg.disableMirrors > 0.5f && Xr_Available())) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
     else D3D_HideTextures(nullptr, nullptr, nullptr);
 }
 
@@ -849,7 +883,7 @@ void BeginWheelHud(void* view, const uint8_t* seatParams) {
 // Before and after an eye's scene: the mirrors noted while it is submitted are drawn with their
 // models (d3d9proxy); the rear view is copied afterwards for the next eye.
 void BeginMirrors(void* view) {
-    if (!s_mirrorPatched) return;
+    if (!s_mirrorPatched || g_cfg.disableMirrors > 0.5f) return;
     void* plat = At<void*>(view, kViewPlatInfo);
     D3D_BeginMirrorEye((const float*)((char*)plat + kPlatView), EyeProjection(plat));
 }
@@ -862,7 +896,7 @@ void BeginDash(void* view, bool seated) {
 }
 
 void EndMirrors() {
-    if (s_mirrorPatched) D3D_EndMirrorEye(RvmSurface());
+    if (s_mirrorPatched && g_cfg.disableMirrors <= 0.5f) D3D_EndMirrorEye(RvmSurface());
 }
 
 void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
@@ -881,10 +915,13 @@ void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
 void __cdecl hkRenderScene() {
     D3D_ProfUpdateDone();
     s_stereoFrame = false;
-    ApplyShadowArea();
-    FixGameMirrors();
-    UpdateMirrorPatch();
-    UpdateHiddenTextures();
+    {
+        TraceDetailScope setupTiming(TRACE_RENDER_SETUP);
+        ApplyShadowArea();
+        FixGameMirrors();
+        UpdateMirrorPatch();
+        UpdateHiddenTextures();
+    }
     void* view = (void*)kPlayerView;
     void* cam = At<void*>(view, kViewCamera);
     bool active = At<int8_t>(view, kViewActive) != 0;
@@ -1003,8 +1040,8 @@ void __cdecl hkRenderScene() {
             }
         }
         SetupPlayerView(view, cam, tanX, tanY);
-        if (s_depthSplit && !SplitPlayerDepth(view)) {
-            Log("game: depth split off - the player view's matrices are not the expected perspective ones");
+        if (s_depthSplit && !SplitCameraDepth(view, cam)) {
+            Log("game: depth split off - a player/companion view has unexpected projection matrices");
             s_depthSplitFailed = true;
             s_depthSplit = false;
             SetupPlayerView(view, cam, tanX, tanY);   // again with NearZ for everything
@@ -1039,7 +1076,9 @@ void __cdecl hkRenderScene() {
             active = 0;
         }
         double tScene = D3D_ProfNow();
+        Trace_RenderBegin(eye);
         oRenderScene();
+        Trace_RenderEnd();
         D3D_EyeRenderProfile(eye, D3D_ProfNow() - tScene);
         carHitsFrame += s_carHits;
         carMatricesFrame += Cockpit_PlayerCarMatrices();
@@ -1346,6 +1385,49 @@ bool Game_ValidateHooks() {
     return true;
 }
 
+// These are instruction-level boundaries, not ordinary C++ callers. Preserve the
+// floating-point/SSE state as well: compiler-generated timing code may use either.
+// The return address identifies this particular boundary, including loop iterations.
+void __cdecl RenderBoundaryFromReturn(unsigned ret) { Trace_RenderBoundary(ret - 5); }
+void __cdecl RenderBoundaryAfterReturn(unsigned ret) { Trace_RenderBoundary((ret - 5) | 0x80000000u); }
+uintptr_t s_renderBoundaryTarget = 0x6E2F50;
+__declspec(naked) void hkRenderBoundary() {
+    __asm {
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 528
+        and esp, -16
+        fxsave [esp]
+        fninit
+        mov eax, [ebx + 36]
+        push eax
+        call RenderBoundaryFromReturn
+        add esp, 4
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        call dword ptr [s_renderBoundaryTarget]
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 528
+        and esp, -16
+        fxsave [esp]
+        fninit
+        mov eax, [ebx + 36]
+        push eax
+        call RenderBoundaryAfterReturn
+        add esp, 4
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        ret
+    }
+}
+
 bool Game_InstallHooks() {
     s_mirrorPatchOk = !memcmp((void*)kMirrorCamOption, kMirrorCamGame, 3) && !memcmp((void*)kRvmAllowed, kRvmAllowedGame, 3);
     if (!s_mirrorPatchOk) Log("game: unexpected rear view code, side mirrors off");
@@ -1379,6 +1461,12 @@ bool Game_InstallHooks() {
     PatchCall(kCallWorldViewProj, kMatrixMultiply, (void*)&hkWorldViewProjMultiply, "depth split (WorldViewProj)");
     PatchCall(kCallShadowPass, kShadowPass, (void*)&hkShadowPass, "shared shadow map");
     PatchCall(kCallPreDisplay, kPreDisplay, (void*)&hkPreDisplay, "per-frame display updates");
+    // Direct CALLs verified against the installed speed.exe. No scanning or guessed signatures.
+    for (uintptr_t site : {0x6DE4B1u, 0x6DE4DFu, 0x6DE582u, 0x6DE749u, 0x6DE79Fu,
+            0x6DE7CAu, 0x6DE88Eu, 0x6DE93Fu, 0x6DE96Du, 0x6DEB01u, 0x6DEBBDu,
+            0x6DEC80u, 0x6DED37u, 0x6DEDA0u, 0x6DEE66u, 0x6DEEC6u, 0x6DEF3Du,
+            0x6DEF54u, 0x6DEFBDu, 0x6DF24Eu})
+        PatchCall(site, 0x6E2F50, (void*)&hkRenderBoundary, "render timing boundary");
     for (uintptr_t site : kCallsCloneLightContext)
         PatchCall(site, kCloneLightContext, (void*)&hkCloneLightContext, "car reflections");
     for (uintptr_t site : kCallsSetupLightContext)

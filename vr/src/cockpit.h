@@ -39,6 +39,8 @@ bool Cockpit_PoseMarkedArms(void* indexBuffer, unsigned first, unsigned triangle
                            unsigned stride, unsigned positionOffset, int normalOffset,
                            unsigned char* vertices, size_t bytes);
 bool Cockpit_HasMarkedArmDraw(void* indexBuffer);
+// Cheap draw-hook rejection before any D3D surface queries. Includes UV-only driver draws.
+bool Cockpit_IsRegisteredDriverDraw(void* indexBuffer);
 // Reject unaffected ranges before touching GPU buffers; copy indices from the live CPU mesh.
 bool Cockpit_DriverDrawWork(void* indexBuffer, unsigned first, unsigned triangles, int base,
                             std::vector<uint16_t>& indices);

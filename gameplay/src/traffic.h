@@ -1,6 +1,5 @@
-// Traffic density multiplier, and no SUV cops.
+// Optional pursuit, race driving and HUD behavior. Traffic counts remain stock.
 #pragma once
 
-// Patches AITrafficManager's spawn rate and traffic cap, and
-// redirects cop spawns that ask for an SUV. Called from Game_Install.
+// Installs the independent race/HUD and heavy-support options. Called from Game_Install.
 void Traffic_Install();

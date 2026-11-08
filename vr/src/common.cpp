@@ -214,6 +214,7 @@ void LoadConfig() {
     c.asyncSubmit = ReadInt(ini, "AsyncSubmit", c.asyncSubmit) != 0;
     int every = ReadInt(ini, "RearViewEvery", 1);
     c.rearViewEvery = (float)(every < 1 ? 1 : every > 4 ? 4 : every);
+    c.disableMirrors = ReadInt(ini, "DisableMirrors", 0) ? 1.0f : 0.0f;
     c.logPasses = ReadInt(ini, "LogPasses", c.logPasses) != 0;
     c.stableReflections = ReadInt(ini, "StableReflections", c.stableReflections) != 0;
     c.mirrors = ReadInt(ini, "Mirrors", c.mirrors) != 0;
