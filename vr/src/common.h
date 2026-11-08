@@ -34,7 +34,7 @@ struct Config {
     float fovScale = 1.0f;         // >1 renders a slightly wider FOV than the HMD (more reprojection margin)
     float nearZ = 0.05f;           // player view near clip plane (m; the game's is 0.5), so the cockpit isn't cut off; 0 = the game's own
     float depthSplit = 1.0f;       // seated: the player car gets NearZ, the world WorldNearZ, in separate parts of the depth buffer (0/1, live)
-    float worldNearZ = 0.8f;       // world near plane to improve distant depth precision; the player car keeps NearZ (m)
+    float worldNearZ = 0.5f;       // stock world near plane; player car keeps its independent NearZ (m)
     float screenDistance = 2.5f;   // menu/movie virtual screen distance (m)
     float screenWidth = 3.0f;      // menu/movie virtual screen width (m)
     float hudDistance = 1.2f;      // in-game HUD/frontend panel distance (m)
