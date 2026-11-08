@@ -211,7 +211,6 @@ enum {
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
-static_assert(VR_RENDERSCALE == EXT_COUNT - 1, "render-scale setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
@@ -794,6 +793,8 @@ const Item kItems[] = {
     {ACTION, "Clear handbrake / shifter marks", nullptr, "EdClearControl", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Mark as arms", nullptr, "EdArms", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Clear arm marks", nullptr, "EdClearArms", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Make mirror", nullptr, "EdMakeMirror", nullptr, 0, 0, 0, 0, nullptr, 0},
+    {ACTION, "Clear mirror marks", nullptr, "EdClearMirror", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
 
@@ -1664,7 +1665,8 @@ void Change(int index, int dir) {
                 {"EdHandbrake", 13, "Marked as handbrake"}, {"EdShifter", 14, "Marked as shifter"},
                 {"EdClearControl", 15, "Control marks cleared"},
                 {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"},
-                {"EdSkin", 18, "Drawn as skin"}, {"EdMergeFingers", 19, "Merge fingers requested"}};
+                {"EdSkin", 18, "Drawn as skin"}, {"EdMergeFingers", 19, "Merge fingers requested"},
+                {"EdMakeMirror", 20, "Marked as mirror"}, {"EdClearMirror", 21, "Mirror marks cleared"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;

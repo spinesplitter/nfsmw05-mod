@@ -10,6 +10,14 @@ Automated cockpit tests check both sides with MirrorFlip on/off and crop widths
 left/right glass positions for Camaro, Carrera GT, Cayman S, Monaro, Punto, RX-8.
 This is not an exhaustive visual validation of every installed model or body kit.
 
+For custom mirror geometry that is slow or not detected automatically, use
+F4 > VR > Triangle editor > Pick triangles to select the mirror glass, then
+choose **Make mirror**. This per-solid selection is saved in
+`nfsmw_vr_edits.ini` and drawn as a small overlay without remapping the car's
+vertex stream. Mark both sides separately when they share a body solid.
+**Clear mirror marks** returns that selection to automatic handling. The
+interior rear-view mirror is a separate path and is not changed by these actions.
+
 Live validation for each drivable model and available body kit:
 
 1. Park near a distinguishable object behind the LEFT side of the car. It should
@@ -19,3 +27,5 @@ Live validation for each drivable model and available body kit:
    unchanged. Width=1 intentionally shows the entire rear camera in both mirrors.
 4. Change car, body kit and camera, pause/resume, and repeat in the headset.
 5. GameMirrorsSkip cars retain their stock mirrors and are outside this change.
+6. On manually marked mirrors, check that only selected glass shows the rear
+   view, bodywork still occludes it, and the interior rear-view mirror is unchanged.

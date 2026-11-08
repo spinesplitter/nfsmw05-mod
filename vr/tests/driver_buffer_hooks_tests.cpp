@@ -1,7 +1,10 @@
 #include <assert.h>
 #include <stdio.h>
+#include <d3d9.h>
 #include "../src/driver_stream_cache.h"
 static DriverStreamCache s_driverStreams;
+static unsigned mirrorInvalidations;
+static void InvalidateMirrorMappedStreams(IDirect3DVertexBuffer9*) { ++mirrorInvalidations; }
 #include "../src/driver_buffer_hooks.h"
 
 struct FakeBuffer { void** vt; ULONG refs; unsigned char bytes[32]; unsigned locks; };
@@ -29,10 +32,12 @@ int main() {
     assert((*get())[0]==1 && reads==1);
     void* data=nullptr;
     assert(SUCCEEDED(vb->Lock(0,0,&data,0))); b.bytes[0]=2;
+    assert(mirrorInvalidations==1);
     assert((*get())[0]==2 && reads==2);
     assert(vb->Release()==1);
     assert((*get())[0]==2 && reads==2);
     assert(vb->Release()==0);
+    assert(mirrorInvalidations==2);
     b.refs=1; b.bytes[0]=3; // same-address resource reuse
     assert((*get())[0]==3 && reads==3);
     // An independent vtable must retain its own originals.

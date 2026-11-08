@@ -32,6 +32,7 @@
 #include "driver_stream_cache.h"
 #include "driver_skin_state.h"
 static DriverStreamCache s_driverStreams;
+static void InvalidateMirrorMappedStreams(IDirect3DVertexBuffer9* vb);
 #include "driver_buffer_hooks.h"
 static unsigned s_mirrorSnapshotFallbacks;
 static unsigned long long s_mirrorUploadBytes, s_mirrorFullUploadBytes;
@@ -184,6 +185,7 @@ static void ReleaseCustomDriver();
 static void ResetCustomDriverEye();
 static IDirect3DVertexBuffer9* s_glassStream;
 static UINT s_glassStreamBytes;
+static void ReleaseMirrorMappedStreams();
 
 // One reusable D3DSBT_ALL state block. Every place that changes device state for our own drawing
 // used to create a fresh one, which allocates the whole block and reads the device state back - and
@@ -210,6 +212,7 @@ static void ReleaseEyeTargets() {
     if (s_glassStream) s_glassStream->Release();
     s_glassStream = nullptr;
     s_glassStreamBytes = 0;
+    ReleaseMirrorMappedStreams();
     for (int i = 0; i < 3; i++) {
         if (s_eyeSurf[i]) s_eyeSurf[i]->Release();
         if (s_eyeTex[i]) s_eyeTex[i]->Release();
@@ -495,19 +498,50 @@ struct MirrorGlassPart {
     float basis[14];
     std::vector<uint16_t> vertices;               // the glass's own vertices (index values)
 };
+struct MirrorMappedStream {
+    IDirect3DVertexBuffer9* source = nullptr;      // weak: writes and final release invalidate it
+    IDirect3DVertexBuffer9* stream = nullptr;
+    UINT sourceOffset = 0, stride = 0, sourceSize = 0;
+    UINT rangeBegin = 0, rangeBytes = 0, mappedOffset = 0;
+    UINT minIndex = 0, verts = 0;
+    INT base = 0, drawBase = 0, posOfs = 0, uvOfs = 0;
+    bool singleStream = false, valid = false;
+};
 struct MirrorGlassJob {
     void* ib;
     UINT first, tris;
     std::vector<MirrorGlassPart> parts;           // one glass, or both sides' in one entry
     std::vector<std::pair<void*, INT>> mapped;    // vertex buffer, base vertex already given texture coordinates
+    MirrorMappedStream mappedStream;
     float corners[8];                             // the rear view's u, v at the glass's corners, this eye
     bool haveCorners = false;
 };
 static std::vector<MirrorGlassJob> s_glassJobs;
 static std::unordered_map<void*, std::vector<size_t>> s_glassJobsByIb;
+static std::unordered_set<void*> s_suppressedMirrorGlass;
+static constexpr UINT kMaxCachedMirrorStreamBytes = 64 * 1024;
+
+static void ReleaseMappedStream(MirrorMappedStream& mapped) {
+    if (mapped.stream) mapped.stream->Release();
+    mapped = MirrorMappedStream{};
+}
+
+static void ReleaseMirrorMappedStreams() {
+    for (MirrorGlassJob& job : s_glassJobs) ReleaseMappedStream(job.mappedStream);
+}
+
+static void InvalidateMirrorMappedStreams(IDirect3DVertexBuffer9* vb) {
+    for (MirrorGlassJob& job : s_glassJobs)
+        if (job.mappedStream.valid && job.mappedStream.source == vb)
+            ReleaseMappedStream(job.mappedStream);
+}
 
 void D3D_SetMirrorsDisabled(bool disabled) {
     s_mirrorsDisabled = disabled;
+}
+
+void D3D_SuppressMirrorGlass(void* indexBuffer) {
+    if (indexBuffer) s_suppressedMirrorGlass.insert(indexBuffer);
 }
 
 static bool IsMirrorGlassDraw(void* indexBuffer, UINT firstIndex) {
@@ -535,6 +569,7 @@ void D3D_RegisterMirrorGlass(void* indexBuffer, int firstIndex, int triangles, c
     memcpy(job->parts[0].basis, basis, sizeof(job->parts[0].basis));
     job->parts[0].vertices.assign(vertices, vertices + vertexCount);
     job->mapped.clear();
+    ReleaseMappedStream(job->mappedStream);
     job->haveCorners = false;
 }
 
@@ -550,6 +585,7 @@ void D3D_AddMirrorGlassPart(void* indexBuffer, int firstIndex, const float basis
         p.vertices.assign(vertices, vertices + vertexCount);
         j.parts.push_back(p);
         j.mapped.clear();
+        ReleaseMappedStream(j.mappedStream);
         return;
     }
 }
@@ -628,11 +664,27 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
             if (!MirrorVertexInRange(range, base, v, offset, stride)) {
                 range.begin = 0; range.bytes = desc.Size; range.base = base;
             }
-    // Read the source without modifying it. DISCARD on our private dynamic
-    // stream lets the driver rename storage still consumed by an earlier draw.
-    // Reuse only immutable source bytes. UVs are still recomputed in a private
-    // copy for every draw; writes, release, reset and frame boundaries invalidate.
-    if (!ObserveDriverBuffer(vb)) {
+    const bool observed = ObserveDriverBuffer(vb);
+    const bool cacheOutput = observed && range.bytes <= kMaxCachedMirrorStreamBytes;
+    if (observed) {
+        MirrorMappedStream& cached = j.mappedStream;
+        if (cacheOutput && cached.valid && cached.source == vb && cached.sourceOffset == offset && cached.stride == stride &&
+            cached.sourceSize == desc.Size && cached.rangeBegin == range.begin && cached.rangeBytes == range.bytes &&
+            cached.minIndex == minIndex && cached.verts == verts && cached.base == base &&
+            cached.posOfs == posOfs && cached.uvOfs == uvOfs && cached.singleStream == singleStream &&
+            cached.stream && SUCCEEDED(s_dev->SetStreamSource(0, cached.stream, cached.mappedOffset, stride))) {
+            *original = vb;
+            *originalOffset = offset;
+            *originalStride = stride;
+            *drawBase = cached.drawBase;
+            return;
+        }
+        ReleaseMappedStream(cached);
+    } else ReleaseMappedStream(j.mappedStream);
+    // Read the source without modifying it. A stable stream is mapped once and
+    // reused by both eyes; writable locks, release and reset invalidate it.
+    // DISCARD lets the driver rename storage still consumed by an earlier draw.
+    if (!observed) {
         ++s_mirrorSnapshotFallbacks;
         s_driverStreams.Invalidate(vb);
     }
@@ -647,16 +699,18 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         vb->Release();
         return;
     }
-    if (!s_glassStream || s_glassStreamBytes < range.bytes) {
-        if (s_glassStream) s_glassStream->Release();
-        s_glassStream = nullptr;
-        s_glassStreamBytes = 0;
+    IDirect3DVertexBuffer9*& outputStream = cacheOutput ? j.mappedStream.stream : s_glassStream;
+    UINT& outputBytes = cacheOutput ? j.mappedStream.rangeBytes : s_glassStreamBytes;
+    if (!outputStream || outputBytes < range.bytes) {
+        if (outputStream) outputStream->Release();
+        outputStream = nullptr;
+        outputBytes = 0;
         if (SUCCEEDED(s_dev->CreateVertexBuffer(range.bytes, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
-                                               0, D3DPOOL_DEFAULT, &s_glassStream, nullptr)))
-            s_glassStreamBytes = range.bytes;
+                                               0, D3DPOOL_DEFAULT, &outputStream, nullptr)))
+            outputBytes = range.bytes;
     }
     void* upload = nullptr;
-    if (!s_glassStream || FAILED(s_glassStream->Lock(0, range.bytes, &upload, D3DLOCK_DISCARD))) {
+    if (!outputStream || FAILED(outputStream->Lock(0, range.bytes, &upload, D3DLOCK_DISCARD))) {
         vb->Release();
         return;
     }
@@ -676,11 +730,29 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
     }
     s_mirrorUploadBytes += range.bytes;
     s_mirrorFullUploadBytes += desc.Size;
-    HRESULT unlocked = s_glassStream->Unlock();
+    HRESULT unlocked = outputStream->Unlock();
     const UINT mappedOffset = range.begin ? 0 : offset;
-    if (FAILED(unlocked) || FAILED(s_dev->SetStreamSource(0, s_glassStream, mappedOffset, stride))) {
+    if (FAILED(unlocked) || FAILED(s_dev->SetStreamSource(0, outputStream, mappedOffset, stride))) {
         vb->Release();
         return;
+    }
+    if (cacheOutput) {
+        MirrorMappedStream& cached = j.mappedStream;
+        cached.source = vb;
+        cached.sourceOffset = offset;
+        cached.stride = stride;
+        cached.sourceSize = desc.Size;
+        cached.rangeBegin = range.begin;
+        cached.rangeBytes = range.bytes;
+        cached.mappedOffset = mappedOffset;
+        cached.minIndex = minIndex;
+        cached.verts = verts;
+        cached.base = base;
+        cached.drawBase = range.base;
+        cached.posOfs = posOfs;
+        cached.uvOfs = uvOfs;
+        cached.singleStream = singleStream;
+        cached.valid = true;
     }
     *original = vb; // GetStreamSource's reference lives through the draw.
     *originalOffset = offset;
@@ -696,7 +768,7 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
 // on sampler 1) is the rear view for this draw.
 static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts,
                                   UINT start, UINT count, HRESULT* hr) {
-    if (s_glassJobs.empty() || !s_mirrorTex) return false;
+    if (s_glassJobs.empty() || !s_mirrorTex || s_suppressedMirrorGlass.count(s_curIndices)) return false;
     auto jobs = s_glassJobsByIb.find(s_curIndices);
     if (jobs == s_glassJobsByIb.end()) return false;
     for (size_t i : jobs->second) {
@@ -798,6 +870,7 @@ static void ClearPlayerViewCache() {
 void D3D_BeginMirrorEye(const float* view, const float* proj) {
     ClearPlayerViewCache();
     s_pendingMirrors.clear();
+    s_suppressedMirrorGlass.clear();
     memcpy(&s_mirrorView, view, sizeof(s_mirrorView));
     memcpy(&s_mirrorProj, proj, sizeof(s_mirrorProj));
     s_mirrorEye = true;
@@ -2842,6 +2915,7 @@ public:
     HRESULT STDMETHODCALLTYPE ProcessVertices(UINT source, UINT dest, UINT count, IDirect3DVertexBuffer9* vb,
                                                IDirect3DVertexDeclaration9* decl, DWORD flags) override {
         s_driverStreams.Invalidate(vb);
+        InvalidateMirrorMappedStreams(vb);
         return real->ProcessVertices(source,dest,count,vb,decl,flags);
     }
     HRESULT STDMETHODCALLTYPE DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts, UINT start,

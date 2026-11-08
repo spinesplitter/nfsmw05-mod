@@ -20,6 +20,7 @@ void ConfigFile(const char*, char* out, bool) { strcpy(out, "missing-cockpit-tes
 void D3D_AddMirror(void*, const float*, int, const float*, int) {}
 void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int) {}
 void D3D_SetGlassCorners(void*, int, const float*) {}
+void D3D_SuppressMirrorGlass(void*) {}
 void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_RegisterWheelDraw(void*, int) {}
 void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
@@ -810,6 +811,30 @@ static void TestEditsText() {
     Check(t.size() == 3 && t[1][0] == 40 && t[1][2] == 60, "edits text parsed");
     Check(TrisText(t) == "1.2.3,40.50.60,7.8.9", "edits text written back");
     Check(IdTri(TriId(9, 4, 7))[0] == 4 && IdTri(TriId(9, 4, 7))[2] == 9, "id back to its vertices");
+    Check(!strcmp(kEditKeys[9], "Mirror"), "manual mirror marks have a persisted edit key");
+}
+
+static void TestMarkedMirrorGeometry() {
+    SolidInfo info;
+    TriRef left{};
+    left.p[0] = {0, 0.7f, 0};
+    left.p[1] = {0, 0.8f, 0};
+    left.p[2] = {0, 0.8f, 0.1f};
+    left.id = TriId(1, 2, 3);
+    info.tris.push_back(left);
+    EditSet edits;
+    edits.mirror.insert(left.id);
+    g_cfg.sideMirrorWidth = 0.6f;
+    g_cfg.mirrorFlip = false;
+    std::vector<float> vertices;
+    float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    Check(BuildMarkedMirrorVertices(info, edits, identity, 0, vertices), "marked side glass builds");
+    Check(vertices.size() == 15, "manual mirror preserves selected triangle geometry");
+    Near(vertices[0], -0.008f, "mirror overlay is lifted toward the driver");
+    Near(vertices[3], 1.0f, "left mirror maps the outer glass edge to rear-view high-u");
+    Near(vertices[8], 0.4f, "left mirror maps the inner glass edge to its crop");
+    Near(vertices[14], 0.0f, "top edge maps to rear-view top");
+    Check(!BuildMarkedMirrorVertices(info, edits, identity, 1, vertices), "left glass is not drawn on right");
 }
 
 int main() {
@@ -846,6 +871,7 @@ int main() {
     TestWheelPositionSave();
     TestDash();
     TestEditsText();
+    TestMarkedMirrorGeometry();
     TestLevelUpsideDown();
     TestMirrorGlass();
     testTime = Now();
@@ -931,6 +957,21 @@ int main() {
     TestArms();
     TestSteeringWheel();
     TestPerCarDefaults();
-    puts("PASS: cockpit motion, offsets, current POV, unload, anchor switch, LOD, frame lifecycle, reloaded drivers, steering wheel and per-model HUD defaults");
+    s_handbrakeGripValid = false;
+    s_shifterHoverValid = false;
+    s_armHover.initialized = true;
+    s_armHover.progress = 0.5f;
+    s_armControlBlend = 1;
+    s_armControlOverride = true;
+    s_armShiftPending = true;
+    s_armShiftUntil = 5;
+    s_armShiftInitialized = true;
+    s_shifterHandReady = true;
+    UpdateDriverHover(0.016f, 10);
+    Check(!s_armHover.initialized && s_armHover.progress == 0 && s_armControlBlend == 0 &&
+          !s_armControlOverride && !s_armShiftPending && s_armShiftUntil < 0 &&
+          !s_armShiftInitialized && !s_shifterHandReady,
+          "unselected controls immediately cancel and reset driver reach");
+    puts("PASS: cockpit motion, offsets, current POV, unload, anchor switch, LOD, frame lifecycle, reloaded drivers, steering wheel, per-model HUD defaults and idle control reset");
     return 0;
 }

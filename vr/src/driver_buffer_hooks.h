@@ -13,13 +13,19 @@ struct DriverBufferHooks {
 static std::unordered_map<void**,DriverBufferHooks> s_driverBufferHooks;
 static HRESULT WINAPI DriverBufferLock(IDirect3DVertexBuffer9* vb, UINT offset, UINT bytes, void** data, DWORD flags) {
     auto original=s_driverBufferHooks.at(*(void***)vb).lock;
-    if (!(flags&D3DLOCK_READONLY)) s_driverStreams.Invalidate(vb);
+    if (!(flags&D3DLOCK_READONLY)) {
+        s_driverStreams.Invalidate(vb);
+        InvalidateMirrorMappedStreams(vb);
+    }
     return original(vb,offset,bytes,data,flags);
 }
 static ULONG WINAPI DriverBufferRelease(IDirect3DVertexBuffer9* vb) {
     auto original=s_driverBufferHooks.at(*(void***)vb).release;
     ULONG refs=original(vb);
-    if (!refs) s_driverStreams.Invalidate(vb);
+    if (!refs) {
+        s_driverStreams.Invalidate(vb);
+        InvalidateMirrorMappedStreams(vb);
+    }
     return refs;
 }
 static bool ObserveDriverBuffer(IDirect3DVertexBuffer9* vb) {

@@ -1,9 +1,25 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "../src/cockpit_controls.h"
+#include "../src/custom_driver_animation.h"
 #include <cassert>
 #include <limits>
 #include <cstdio>
 
 int main() {
+    CustomDriver::Controls selected;
+    selected.hasShifter=true; selected.shift=1;
+    selected.hasHandbrake=true; selected.brake=1;
+    CustomDriver::GateUnselectedControls(selected,false,false);
+    assert(!selected.hasShifter && selected.shift==0 && !selected.hasHandbrake && selected.brake==0);
+    selected.hasShifter=true; selected.shift=1; selected.hasHandbrake=true; selected.brake=1;
+    CustomDriver::GateUnselectedControls(selected,true,false);
+    assert(selected.hasShifter && selected.shift==1 && !selected.hasHandbrake && selected.brake==0);
+    selected.hasShifter=true; selected.shift=1; selected.hasHandbrake=true; selected.brake=1;
+    CustomDriver::GateUnselectedControls(selected,false,true);
+    assert(!selected.hasShifter && selected.shift==0 && selected.hasHandbrake && selected.brake==1);
+    selected.hasShifter=true; selected.shift=1; selected.hasHandbrake=true; selected.brake=1;
+    CustomDriver::GateUnselectedControls(selected,true,true);
+    assert(selected.hasShifter && selected.shift==1 && selected.hasHandbrake && selected.brake==1);
     CockpitControlMotion m;
     m.Update(1, 10, 20, true);
     assert(m.Shift(1.1) == 0); // initial counters cannot generate a phantom shift

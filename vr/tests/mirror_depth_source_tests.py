@@ -7,6 +7,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class MirrorDepthTests(unittest.TestCase):
+    def test_mapped_glass_stream_is_reused_and_invalidated(self):
+        proxy = (ROOT / "src" / "d3d9proxy.cpp").read_text()
+        mapping = proxy.split("static void MapGlassVertices(", 1)[1].split(
+            "// The glass's draw", 1
+        )[0]
+        self.assertIn("cached.source == vb", mapping)
+        self.assertIn("SetStreamSource(0, cached.stream", mapping)
+        self.assertIn("cached.valid = true", mapping)
+        release_targets = proxy.split("static void ReleaseEyeTargets() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("ReleaseMirrorMappedStreams();", release_targets)
+        hooks = (ROOT / "src" / "driver_buffer_hooks.h").read_text()
+        self.assertIn("InvalidateMirrorMappedStreams(vb);", hooks)
+        process_vertices = proxy.split("HRESULT STDMETHODCALLTYPE ProcessVertices", 1)[1].split("}", 1)[0]
+        self.assertIn("InvalidateMirrorMappedStreams(vb);", process_vertices)
+
     def test_skipped_rear_view_keeps_image_without_recopying_it(self):
         source = (ROOT / "src" / "game.cpp").read_text()
         end_mirrors = source.split("void EndMirrors() {", 1)[1].split("}", 1)[0]

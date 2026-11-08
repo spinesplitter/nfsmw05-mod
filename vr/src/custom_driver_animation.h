@@ -63,6 +63,16 @@ struct Controls {
     float handSpread=1;
     bool wheel=false, hasShifter=false, hasHandbrake=false;
 };
+inline void GateUnselectedControls(Controls& controls, bool shifterSelected, bool handbrakeSelected) {
+    if (!shifterSelected) {
+        controls.hasShifter = false;
+        controls.shift = 0;
+    }
+    if (!handbrakeSelected) {
+        controls.hasHandbrake = false;
+        controls.brake = 0;
+    }
+}
 struct BonePose { Point head, tail; };
 struct Weight { uint32_t bone; float weight; Point offset; };
 struct AnimationRig {

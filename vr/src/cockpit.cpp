@@ -183,10 +183,10 @@ struct TriRef {
 // are not read.)
 struct EditSet {
     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
-    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin, native;
+    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin, native, mirror;
     bool loaded = false;
 };
-const char* const kEditKeys[9] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin", "Native"};
+const char* const kEditKeys[10] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin", "Native", "Mirror"};
 int s_editsGen = 0;                                 // counts edits, for caches built from them
 std::unordered_map<std::string, EditSet> s_edits;
 
@@ -242,10 +242,10 @@ EditSet& EditsFor(const std::string& solidName) {
         return ParseTris(buf.data());
     };
     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
-    std::set<uint64_t>* sets[9] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native};
-    for (int k = 0; k < 9; k++)
+    std::set<uint64_t>* sets[10] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror};
+    for (int k = 0; k < 10; k++)
         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
-    size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size();
+    size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size() + e.mirror.size();
     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
     return e;
 }
@@ -254,9 +254,9 @@ void SaveEdits(const std::string& solidName) {
     const EditSet& e = EditsFor(solidName);
     std::vector<std::array<uint16_t, 3>> hide;
     for (auto& h : e.hide) hide.push_back(h.second);
-    const std::set<uint64_t>* sets[9] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native};
+    const std::set<uint64_t>* sets[10] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror};
     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
-    for (int k = 0; k < 9; k++) {
+    for (int k = 0; k < 10; k++) {
         std::vector<std::array<uint16_t, 3>> v;
         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
@@ -292,6 +292,7 @@ struct SolidInfo : SolidIdentity {
     std::map<uint64_t, std::array<uint16_t, 3>> hidden;
     std::vector<V3> black;                          // model space, 3 points per triangle
     bool blackDirty = true;
+    bool manualMirrorLogged = false;
 };
 std::unordered_map<uint8_t*, SolidInfo> s_solids;
 std::unordered_map<std::string, std::vector<WheelTemplate>> s_wheelTemplates;
@@ -1404,6 +1405,7 @@ bool ReadMesh(uint8_t* solid, SolidMesh& s) {
 // --- side mirrors ------------------------------------------------------------------------------
 // The solids whose rear view mirror was handed to the d3d9 side in the current eye.
 std::vector<uint8_t*> s_mirrorSolids;
+std::vector<uint8_t*> s_manualMirrorSolids;
 
 // All of a solid's triangles (three points each), for which `keep` is true.
 template <class Keep> void SolidTriangles(uint8_t* solid, std::vector<V3>& out, Keep keep) {
@@ -1533,6 +1535,12 @@ void SideMirrorRange(int side, float* u0, float* u1) {
     *u1 = *u0 + w;
     if (g_cfg.mirrorFlip) std::swap(*u0, *u1);
 }
+
+std::string SolidName(const SolidInfo& info);
+void BuildTris(uint8_t* solid, SolidInfo& info);
+bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, const float* matrix, int side,
+                              std::vector<float>& out);
+void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* m, const EditSet& edits);
 
 // A car listed in [VR] GameMirrorsSkip (model names such as BMWM3GTRE46, any case): its side
 // mirrors stay the game's.
@@ -1746,6 +1754,10 @@ void FindMirrors(uint8_t* solid, SolidInfo& info) {
             Log("mirrors: %s: no rear view mirror found", name);
         return;
     }
+    if (!EditsFor(name).mirror.empty()) {
+        info.mirrorKind = 4;
+        return;
+    }
     info.mirrorKind = 0;
     bool left = strstr(name, "_LEFT_SIDE_MIRROR") != nullptr, right = strstr(name, "_RIGHT_SIDE_MIRROR") != nullptr;
     if (left || right) {
@@ -1908,6 +1920,13 @@ void SideMirrorView(const SolidInfo& info, int side) {
 
 void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
     if (info.mirrorKind < 0) FindMirrors(solid, info);
+    char solidName[65] = {};
+    memcpy(solidName, info.name, 64);
+    const EditSet& edits = EditsFor(solidName);
+    if (!info.interior && !edits.mirror.empty()) {
+        NoteMarkedMirrors(solid, info, m, edits);
+        return;
+    }
     if (info.mirrorKind <= 0) return;
     for (int side = 0; side < 2; side++)
         if (!info.glassFirsts[side].empty() && info.glass[side].ok) SideMirrorView(info, side);
@@ -1934,6 +1953,26 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
         void* ib = plat ? At<void*>(plat, kPlatIndexBuffer) : nullptr;
         D3D_AddMirror(ib, verts.data(), (int)(verts.size() / 5), inner < 0.999f ? frame.data() : nullptr,
                       inner < 0.999f ? (int)(frame.size() / 5) : 0);
+    }
+}
+
+void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, const EditSet& edits) {
+    if (std::find(s_manualMirrorSolids.begin(), s_manualMirrorSolids.end(), solid) != s_manualMirrorSolids.end()) return;
+    s_manualMirrorSolids.push_back(solid);
+    if (info.trisDirty) BuildTris(solid, info);
+    void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
+    D3D_SuppressMirrorGlass(ib);
+    bool added = false;
+    for (int side = 0; side < 2; side++) {
+        std::vector<float> vertices;
+        if (!BuildMarkedMirrorVertices(info, edits, matrix, side, vertices)) continue;
+        D3D_AddMirror(ib, vertices.data(), (int)(vertices.size() / 5), nullptr, 0);
+        added = true;
+    }
+    if (!info.manualMirrorLogged) {
+        info.manualMirrorLogged = true;
+        Log("mirrors: %s: marked triangles %s the lightweight mirror overlay", SolidName(info).c_str(),
+            added ? "are using" : "could not build");
     }
 }
 
@@ -2072,6 +2111,22 @@ const DriverIK::Rig* DriverRig() {
 
 void UpdateDriverHover(float dt, double now = -1) {
     if (now < 0) now = GetTickCount64() * 0.001;
+    s_shifterHandReady = false;
+    if (!s_shifterHoverValid && !s_handbrakeGripValid) {
+        s_armHover.Reset();
+        s_armControlBlend = 0;
+        s_armControlOverride = false;
+        s_armShiftUntil = -1;
+        s_armShiftPending = false;
+        s_armShiftInitialized = false;
+        s_armShiftUp = g_cockpitShiftUp;
+        s_armShiftDown = g_cockpitShiftDown;
+        return;
+    }
+    if (!s_shifterHoverValid) {
+        s_armShiftUntil = -1;
+        s_armShiftPending = false;
+    }
     if (s_armShiftInitialized && s_head.valid &&
         (s_armShiftUp != g_cockpitShiftUp || s_armShiftDown != g_cockpitShiftDown))
     {
@@ -2085,7 +2140,6 @@ void UpdateDriverHover(float dt, double now = -1) {
     bool shift = s_shifterHoverValid && (s_armShiftPending || now < s_armShiftUntil);
     bool brake = !shift && g_cockpitHandbrake > 0.01f && s_handbrakeGripValid;
     s_armControlOverride = brake || shift;
-    s_shifterHandReady = false;
     const DriverIK::Rig* rig = DriverRig();
     int control=ControlSide();
     if (!s_head.valid || !s_driverIKWorldValid || !rig || rig->arms[control*3+2] < 0) {
@@ -2262,6 +2316,48 @@ void BuildTris(uint8_t* solid, SolidInfo& info) {
             info.tris.push_back(r);
         }
     }
+}
+
+bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, const float* matrix, int side,
+                              std::vector<float>& out) {
+    std::vector<const TriRef*> triangles;
+    V3 normalSum{}, inward{-1.0f, side == 0 ? -1.0f : 1.0f, 0};
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (const TriRef& tri : info.tris) {
+        if (!edits.mirror.count(tri.id)) continue;
+        float y = (tri.p[0].y + tri.p[1].y + tri.p[2].y) / 3.0f;
+        if ((side == 0 && y < 0) || (side == 1 && y >= 0)) continue;
+        V3 n = mirror::Cross(mirror::Sub(tri.p[1], tri.p[0]), mirror::Sub(tri.p[2], tri.p[0]));
+        if (mirror::Dot(n, inward) < 0) n = {-n.x, -n.y, -n.z};
+        normalSum = normalSum + n;
+        triangles.push_back(&tri);
+    }
+    if (triangles.empty()) return false;
+    V3 normal = mirror::Norm(normalSum);
+    if (mirror::Dot(normal, normal) < 0.5f) return false;
+    V3 u = mirror::Norm(mirror::Cross({0, 0, 1}, normal));
+    if (mirror::Dot(u, u) < 0.5f) u = mirror::Norm(mirror::Cross({0, 1, 0}, normal));
+    V3 v = mirror::Norm(mirror::Cross(normal, u));
+    for (const TriRef* tri : triangles)
+        for (const V3& p : tri->p) {
+            float pu = mirror::Dot(p, u), pv = mirror::Dot(p, v);
+            minU = std::min(minU, pu); maxU = std::max(maxU, pu);
+            minV = std::min(minV, pv); maxV = std::max(maxV, pv);
+        }
+    if (maxU - minU < 0.001f || maxV - minV < 0.001f) return false;
+    float rearU0, rearU1;
+    SideMirrorRange(side, &rearU0, &rearU1);
+    out.clear();
+    out.reserve(triangles.size() * 15);
+    for (const TriRef* tri : triangles)
+        for (const V3& p : tri->p) {
+            V3 lifted = p + normal * 0.008f;
+            V3 world = ToWorld(lifted, matrix);
+            float across = (mirror::Dot(p, u) - minU) / (maxU - minU);
+            float down = (maxV - mirror::Dot(p, v)) / (maxV - minV);
+            out.insert(out.end(), {world.x, world.y, world.z, rearU0 + (rearU1 - rearU0) * across, down});
+        }
+    return !out.empty();
 }
 
 bool WriteIndices(const SolidMesh& s, int at, const uint16_t v[3]) {
@@ -2478,6 +2574,7 @@ void ApplyEditsTo(const std::string& name, bool wheel) {
         if (SolidName(kv.second) != name) continue;
         ApplyHides(kv.first, kv.second);
         kv.second.blackDirty = true;
+        if (kv.second.mirrorKind == 4 && EditsFor(name).mirror.empty()) kv.second.mirrorKind = -1;
     }
     s_brushFor = 0;
 }
@@ -2631,6 +2728,13 @@ void RunEditCommand(int cmd) {
         return;
     }
     SolidInfo& info = it->second;
+    if (cmd == 20 || cmd == 21) {
+        if (info.interior) {
+            Log("editor: Make mirror applies to exterior mirror glass; the interior rear-view mirror is unchanged");
+            return;
+        }
+        if (info.trisDirty) BuildTris(s_pick.solid, info);
+    }
     if (cmd==19) {
         if (!info.driver || !info.driver->ok) {
             Log("editor: Merge fingers requires a driver finger submesh");
@@ -2652,11 +2756,13 @@ void RunEditCommand(int cmd) {
                 if (wound.count(id)) e.hide[id] = wound[id];
                 e.skin.erase(id);
                 e.black.erase(id);
+                e.mirror.erase(id);
                 e.show.erase(id);
                 break;
             case 2:
                 e.skin.erase(id);
                 e.black.insert(id);
+                e.mirror.erase(id);
                 e.hide.erase(id);
                 break;
             case 3:
@@ -2680,6 +2786,7 @@ void RunEditCommand(int cmd) {
                 wheel |= e.wheel.erase(id) + e.noWheel.erase(id) > 0;
                 e.hide.erase(id);
                 e.black.erase(id);
+                e.mirror.erase(id);
                 e.show.erase(id);
                 break;
             case 13:
@@ -2716,13 +2823,22 @@ void RunEditCommand(int cmd) {
                 e.black.erase(id);
                 e.hide.erase(id);
                 break;
+            case 20:
+                e.mirror.insert(id);
+                e.hide.erase(id);
+                e.black.erase(id);
+                break;
+            case 21:
+                e.mirror.erase(id);
+                break;
         }
     }
     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
     const char* what = cmd == 13 ? "marked as handbrake" : cmd == 14 ? "marked as shifter" :
                        cmd == 15 ? "control marks cleared" : cmd == 16 ? "marked as arms" :
                        cmd == 17 ? "arm marks cleared" : cmd == 18 ? "drawn as skin" :
-                       cmd == 19 ? "merged as fingers (Arms/Skin/Show)" : kWhat[cmd];
+                       cmd == 19 ? "merged as fingers (Arms/Skin/Show)" :
+                       cmd == 20 ? "marked as mirror" : cmd == 21 ? "mirror marks cleared" : kWhat[cmd];
     Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), what);
     s_editsGen++;
     SaveEdits(s_pick.name);
@@ -2998,6 +3114,8 @@ CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const flo
     const ControlMarks& picked=ControlMarksFor(solid,info);
     out.hasShifter=picked.shift; out.hasHandbrake=picked.handbrake;
     out.shift=DriverShiftAmount(); out.brake=std::max(0.0f,std::min(1.0f,g_cockpitHandbrake));
+    const EditSet& edits=EditsFor(SolidName(info));
+    CustomDriver::GateUnselectedControls(out,!edits.shifter.empty(),!edits.handbrake.empty());
     if(picked.shift) out.shifter=local(picked.shifter+V3{DriverShiftTravel(),0,0},matrix);
     if(picked.handbrake) {
         out.handbrake=local(picked.brake+V3{0,0,DriverHoverMotion::clearance},matrix);
@@ -3066,22 +3184,29 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
             s_armDraws[ib] = {solid, s_driverIKWorld};
         }
     }
-    // The marked handbrake's grip, in world space: the right hand reaches for it when pulled.
-    if (player && (playerName.find("_INTERIOR_A")!=std::string::npos ||
-        !playerEdits->handbrake.empty() || !playerEdits->shifter.empty())) {
+    // Auto-detected console geometry is not enough to animate the driver's hands.
+    // The control triangles must be selected explicitly for this car.
+    if (player && playerName.find("_INTERIOR_A")!=std::string::npos) {
+        if (playerEdits->shifter.empty()) s_shifterHoverValid = false;
+        if (playerEdits->handbrake.empty()) s_handbrakeGripValid = false;
+    }
+    if (player && (!playerEdits->handbrake.empty() || !playerEdits->shifter.empty())) {
         const ControlMarks& picked = ControlMarksFor(solid, *info);
-        if (picked.shift) {
-            float travel=playerEdits->shifter.empty()?0:DriverShiftTravel();
+        if (picked.shift && !playerEdits->shifter.empty()) {
+            float travel=DriverShiftTravel();
             s_shifterHoverWorld = ToWorld(picked.shifter + V3{travel,0,DriverHoverMotion::clearance}, m);
             s_shifterHoverValid = true;
             s_shifterVehicle=ToWorld(s_shifterHoverWorld,MInvRigid(s_curBody));
         }
-        if (picked.handbrake) {
+        if (picked.handbrake && !playerEdits->handbrake.empty()) {
             s_handbrakeGripWorld = ToWorld(picked.brake + V3{0,0,DriverHoverMotion::clearance}, m);
             s_handbrakeGripValid = true;
             s_brakeVehicle=ToWorld(s_handbrakeGripWorld,MInvRigid(s_curBody));
         }
-        if(picked.shift || picked.handbrake) { s_controlVehicleValid=true; s_controlVehicle=s_head.worldId; }
+        if((picked.shift && !playerEdits->shifter.empty()) ||
+           (picked.handbrake && !playerEdits->handbrake.empty())) {
+            s_controlVehicleValid=true; s_controlVehicle=s_head.worldId;
+        }
     }
     if (player && g_cfg.mirrors && g_cfg.disableMirrors <= 0.5f) NoteMirrors(solid, *info, m);
     if (player && info->wheel && info->wheel->dashOk && g_cfg.dash > 0.5f) {
@@ -3895,7 +4020,7 @@ void Cockpit_EndFrame() {
     int cmd = (int)lrintf(g_cfg.editCommand);
     if (cmd) {
         g_cfg.editCommand = 0;
-        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 19)) RunEditCommand(cmd);
+        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 21)) RunEditCommand(cmd);
         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
         if (cmd == 12) CopySelection();
@@ -3969,6 +4094,7 @@ void Cockpit_BeginEye() {
     s_armDraws.clear();
     s_carMatrixCount = 0;
     s_mirrorSolids.clear();
+    s_manualMirrorSolids.clear();
     s_eyeDone.clear();
     s_driverIKWorldValid = false;
     s_handbrakeGripValid = false;

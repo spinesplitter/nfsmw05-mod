@@ -66,6 +66,8 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]);
 void D3D_HideTextures(void* a, void* b, void* c);
 // Live performance-test switch: suppress the rear-view pass and registered custom mirror glass.
 void D3D_SetMirrorsDisabled(bool disabled);
+// A manually selected mirror replaces auto-mapped glass on its solid for this eye.
+void D3D_SuppressMirrorGlass(void* indexBuffer);
 void D3D_SetRearViewTarget(void* surface, float resolutionScale);
 
 // Mirrors drawn with the game's models: for the eye about to render, the view and projection it
