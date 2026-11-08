@@ -3,6 +3,8 @@ setlocal
 cd /d "%~dp0.."
 call "C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars32.bat" >nul || exit /b 1
 if not exist obj\tests mkdir obj\tests
+cl /nologo /EHsc /std:c++17 /MT /O2 /W3 /Foobj\tests\ /Feobj\tests\driver_buffer_hooks_tests.exe tests\driver_buffer_hooks_tests.cpp || exit /b 1
+obj\tests\driver_buffer_hooks_tests.exe || exit /b 1
 cl /nologo /EHsc /std:c++17 /MT /O2 /W3 /Foobj\tests\ /Feobj\tests\mirror_vertex_map_tests.exe tests\mirror_vertex_map_tests.cpp || exit /b 1
 obj\tests\mirror_vertex_map_tests.exe || exit /b 1
 call tests\marked_arm_run.cmd || exit /b 1

@@ -39,6 +39,11 @@ int main() {
         float stream[6][4]{};
         for (auto& v:stream) { v[0]=123.0f; v[1]=0.4f; v[2]=-0.93f; v[3]=456.0f; }
         edits.skin.insert(TriId(3,4,5));
+        Check(Cockpit_IsSkinDraw(&ib,3,1),"marked finger draw gets opaque two-sided state");
+        Check(!Cockpit_IsSkinDraw(&ib,0,3),"mixed driver range keeps original material state");
+        Check(!Cockpit_IsSkinDraw(&ib,0,1),"unmarked driver body retains original state");
+        Check(!Cockpit_IsSkinDraw(nullptr,3,1) && !Cockpit_IsSkinDraw(&ib,3,0) &&
+            !Cockpit_IsSkinDraw(&ib,8,1),"skin classification rejects invalid ranges");
         std::vector<uint16_t> drawIndices;
         Check(!Cockpit_DriverDrawWork(&ib,0,1,0,drawIndices) && drawIndices.empty(),
             "unaffected driver draw skips GPU stream readback");

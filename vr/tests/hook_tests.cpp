@@ -2,6 +2,7 @@
 #include "../src/game.cpp"
 #include <assert.h>
 Config g_cfg;
+unsigned char g_traceRenderBoundaries = 0;
 volatile uint8_t gameAddressPadding[0x600000];
 void Log(const char*, ...) {}
 bool D3D_EnsureXr() { return false; }
@@ -66,6 +67,18 @@ int main() {
         FlushInstructionCache(GetCurrentProcess(), (void*)0x6E2F50, 1);
         double value = 0;
         unsigned xmmValue = 0;
+        // Idle must bypass callbacks without touching the original FP state.
+        __asm {
+            fld1
+            mov eax, 0x12345678
+            movd xmm0, eax
+            call hkRenderBoundary
+            movd xmmValue, xmm0
+            fstp value
+        }
+        assert(value == 1.0 && xmmValue == 0x12345678);
+        assert(boundarySite == 0);
+        g_traceRenderBoundaries = 1;
         __asm {
             fld1
             mov eax, 0x12345678
@@ -77,6 +90,8 @@ int main() {
         assert(value == 1.0 && xmmValue == 0x12345678);
         assert(boundarySite != 0);
         puts("Render boundary x87/SSE preservation test passed");
+        g_traceRenderBoundaries = 0;
+        boundarySite = 0;
         LARGE_INTEGER frequency, begin, end;
         QueryPerformanceFrequency(&frequency);
         QueryPerformanceCounter(&begin);
@@ -86,6 +101,7 @@ int main() {
         QueryPerformanceCounter(&end);
         printf("Synthetic wrapper overhead: %.6f ms/frame (40 invocations, mock callback/target; no GPU)\n",
                double(end.QuadPart - begin.QuadPart) * 1000 / frequency.QuadPart / frames);
+        assert(boundarySite == 0);
     }
     assert(!IsSharedViewForBothEyes(0));
     assert(!IsSharedViewForBothEyes(1));
@@ -161,6 +177,60 @@ int main() {
         assert(depthAt(car, 2.0f) < depthAt(world, n));
         g_cfg = Config();
     }
+    // Stereo glow/specular passes: identical world depth, player-car variants,
+    // aliased platform storage, all-or-nothing validation and eye-to-eye reset.
+    {
+        assert(Config().worldNearZ == 0.5f);
+        uint8_t player[kViewStride] = {}, glow[kViewStride] = {};
+        uint8_t pp[0x140] = {}, gp[0x140] = {};
+        At<uint8_t*>(player, kViewPlatInfo) = pp;
+        At<uint8_t*>(glow, kViewPlatInfo) = gp;
+        M4 P = {};
+        P.m[0][0] = P.m[1][1] = 1;
+        P.m[2][2] = 3000.0f / 2999.5f;
+        P.m[2][3] = 1;
+        P.m[3][2] = -0.5f * P.m[2][2];
+        auto reset = [&]() {
+            memset(pp, 0, sizeof(pp)); memset(gp, 0, sizeof(gp));
+            for (auto plat : {pp, gp}) {
+                memcpy(plat + kPlatProjection, &P, sizeof(P));
+                memcpy(plat + kPlatViewProj, &P, sizeof(P));
+                memcpy(plat + kPlatProjAlt, &P, sizeof(P));
+                memcpy(plat + kPlatViewProjAlt, &P, sizeof(P));
+            }
+        };
+        for (int eye = 0; eye < 2; eye++) {
+            reset();
+            assert(SplitPlayerDepth(player));
+            assert(SplitPlayerDepth(glow, false));
+            assert(s_carViewProjCount == 4);
+            assert(memcmp(pp, gp, sizeof(pp)) == 0);
+            assert(memcmp(&s_carViewProj[0], &s_carViewProj[2], sizeof(M4)) == 0);
+            uint8_t before[sizeof(gp)]; memcpy(before, gp, sizeof(gp));
+            assert(SplitPlayerDepth(glow, false));
+            assert(s_carViewProjCount == 4 && memcmp(before, gp, sizeof(gp)) == 0);
+        }
+        reset();
+        *(float*)(gp + kPlatProjection) = NAN;
+        assert(!SplitPlayerDepth(glow, false, true));
+        assert(memcmp(pp + kPlatProjection, &P, sizeof(P)) == 0);
+        reset();
+        // Exercise group prevalidation with one active malformed companion.
+        void* companion = (void*)(kViews + 4 * kViewStride);
+        At<uint8_t*>(companion, kViewPlatInfo) = gp;
+        At<void*>(companion, kViewCamera) = player;
+        At<int8_t>(companion, kViewActive) = 1;
+        s_viewArgs[4].have = true;
+        *(float*)(gp + kPlatProjection + 3 * sizeof(float)) = 2;
+        assert(!SplitCameraDepth(player, player));
+        assert(memcmp(pp + kPlatProjection, &P, sizeof(P)) == 0);
+        reset();
+        assert(SplitCameraDepth(player, player));
+        assert(s_carViewProjCount == 4 && memcmp(pp, gp, sizeof(pp)) == 0);
+        memset(companion, 0, kViewStride); s_viewArgs[4].have = false;
+        s_carViewProjCount = 0; s_carProjSet = false;
+        puts("Stereo companion depth tests passed (both eyes, aliases, invalid projections)");
+    }
     // Shared shadow map guard: identical states pass, a 3 cm eye offset in a shadow matrix does not,
     // a NaN on one side only does not.
     {
@@ -184,6 +254,40 @@ int main() {
         nan = nan / nan;
         b.light[1] = nan;
         assert(ShadowStateDiff(a, b) > 1.0f);
+    }
+    // A saturated first-eye flare pool must not leak into the second eye. Exercise
+    // the actual second-eye hook, including exclusions and an empty baseline.
+    {
+        s_secondEye = true;
+        s_flareKeepCount = 2;
+        memset(s_flareKeep, 0x37, 2 * kFlareSize);
+        s_flareKeepXclude[0] = 4;
+        s_flareKeepXclude[1] = 8;
+        memset((void*)kFlarePool, 0xEE, kFlareMax * kFlareSize);
+        *(int*)kFlarePoolCount = kFlareMax;
+        hkPreDisplay();
+        assert(*(int*)kFlarePoolCount == 2);
+        assert(memcmp((void*)kFlarePool, s_flareKeep, 2 * kFlareSize) == 0);
+        assert(memcmp((void*)kFlarePoolXclude, s_flareKeepXclude, 2 * sizeof(uint32_t)) == 0);
+        s_flareKeepCount = 0;
+        hkPreDisplay();
+        assert(*(int*)kFlarePoolCount == 0);
+        s_secondEye = false;
+        puts("Stereo flare pool restoration tests passed");
+    }
+    // Quantify distant-world precision independently of the cockpit near plane.
+    // In D24, a 1 cm separation at 250 m is below one depth unit with n=0.3,
+    // but above one with n=0.5 (the stock near plane), even after the split.
+    {
+        auto depthUnits = [](double n) {
+            const double f = 3000.0, z = 250.0, dz = 0.01;
+            const double B = -n * f / (f - n);
+            return (1.0 - kCarDepth) * B * (1.0 / (z + dz) - 1.0 / z) * 16777215.0;
+        };
+        assert(depthUnits(0.3) < 1.0);
+        assert(depthUnits(0.5) > 1.0);
+        printf("D24 units for 1 cm at 250 m: world near 0.3 = %.3f, stock 0.5 = %.3f\n",
+               depthUnits(0.3), depthUnits(0.5));
     }
     uint8_t flares[3 * kFlareSize] = {};
     uint32_t exclusions[3] = {4, 5, 6};

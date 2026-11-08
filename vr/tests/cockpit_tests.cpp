@@ -226,10 +226,16 @@ static void TestReloadedDriver() {
     void* savedCam = At<void*>((void*)kPlayerView, kViewCamera);
     At<void*>((void*)kPlayerView, kViewCamera) = camera;
     g_cfg.hideHead = true;
+    Check(OnSubmit(modelData, model, entry) == entry,
+          "nearby non-player driver is never head-trimmed");
+    s_curConn = connData;
+    s_curPlayerCar = true;
     uint8_t* trimmed = OnSubmit(modelData, model, entry);
     Check(trimmed && trimmed != entry && s_driverParts == 1 && At<int>(trimmed, kEntryTris) == 1 &&
               At<uintptr_t>(trimmed, 0x54) == 0x2222,
           "head-less entry uses the live vertex buffer");
+    s_curConn = nullptr;
+    s_curPlayerCar = false;
     g_cfg.hideHead = false;
     At<void*>((void*)kPlayerView, kViewCamera) = savedCam;
 
@@ -313,6 +319,18 @@ static void TestArms() {
         g_cfg.hideArms = arms ? 1.0f : 0.0f;
         return OnSubmit(modelData, model, entry);
     };
+    size_t cachedSolids = s_solids.size();
+    Check(draw(true, true) == entry && s_solids.size() == cachedSolids,
+          "non-player submission bypasses cockpit preparation and hiding");
+    uint8_t opponentSolid[0x100] = {};
+    uint8_t opponentModel[0x10] = {};
+    strcpy((char*)opponentSolid + kSolidName, "OPPONENT_KIT00_DRIVER_A");
+    At<uint8_t*>(opponentModel, kModelSolid) = opponentSolid;
+    Check(OnSubmit(opponentModel, model, entry) == entry &&
+              s_solids.find(opponentSolid) == s_solids.end(),
+          "uncached opponent driver is not prepared or registered");
+    s_curConn = connData;
+    s_curPlayerCar = true;
     uint8_t* e = draw(true, true);
     Check(e && s_driverParts == 1 && At<int>(e, kEntryFirstIndex) == 0 && At<int>(e, kEntryTris) == 1, "body only");
     e = draw(true, false);
@@ -325,6 +343,8 @@ static void TestArms() {
     // Away from the eyes (another car's driver): drawn whole.
     At<float>(camera, kCamPosition) += 5;
     Check(draw(true, true) == entry, "other drivers keep their arms");
+    s_curConn = nullptr;
+    s_curPlayerCar = false;
     g_cfg.hideHead = false;
     g_cfg.hideArms = 1.0f;
     At<void*>((void*)kPlayerView, kViewCamera) = savedCam;

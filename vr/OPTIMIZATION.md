@@ -9,8 +9,10 @@ Based on 7441e82 (traffic solid-cache optimization), without the parallel driver
 
 No eye-buffer size, stereo policy, INI tuning, gameplay or driver pose changes are included.
 No live FPS improvement has been established. Diagnostic timings are CPU wall time,
-may include driver waits, and overlap existing phases. Even with tracing disabled,
-boundary wrappers execute FXSAVE/FXRSTOR; synthetic tests are not live overhead measurements.
+ may include driver waits, and overlap existing phases. With tracing disabled,
+ boundary wrappers tail-call the original routine without FXSAVE/FXRSTOR or timing
+ callbacks. Active traces retain full floating-state preservation. Synthetic tests
+ are not live overhead measurements; this does not establish a fix for scene-load lag.
 
 Press Delete (default KeyTrace) and drive for 30 seconds. The usual frame CSV is
 accompanied by _models.csv and _passes.csv. Before/after call IDs differ by bit

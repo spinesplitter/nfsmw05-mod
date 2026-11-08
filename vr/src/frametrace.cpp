@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+unsigned char g_traceRenderBoundaries = 0;
+
 namespace {
 
 constexpr double kTraceSeconds = 30.0;
@@ -138,6 +140,7 @@ DWORD WINAPI WriteCsv(LPVOID p) {
 }
 
 void Finish() {
+    g_traceRenderBoundaries = 0;
     s.on = false;
     ReleaseQueries();
     Row* out = (Row*)malloc(sizeof(Row) * (s.n + 1));
@@ -177,6 +180,7 @@ void Trace_KeyCheck(int vk, IDirect3DDevice9* dev) {
         Log("trace: GPU timestamps unavailable, CPU times only");
     }
     s.on = true;
+    g_traceRenderBoundaries = 1;
     s.n = 0;
     s.start = D3D_ProfNow();
     s.cur = Row{};

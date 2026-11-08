@@ -19,7 +19,10 @@ static void TestDriverStreamCache() {
         copy[0]^=255;
         Check((*source)[0]==buffer[0],"per-draw UV/pose writes never mutate cached source");
     }
-    Check(reads==1,"growing split draws cause exactly one stream readback per eye");
+    Check(reads==1,"growing split draws cause exactly one stream readback");
+    // The next eye shares unchanged source data, but never shares posed CPU copies.
+    cache.Get(buffer,0,32,sizeof(buffer),4096,read);
+    Check(reads==1,"second eye reuses unchanged source without another readback");
     Check(!cache.Get(buffer,0,32,sizeof(buffer),0,read),"empty draw never reads stream");
     Check(!cache.Get(buffer,0,32,sizeof(buffer),8192,read),"invalid draw never reads stream");
     Check(!cache.Get(buffer,0,32,sizeof(buffer),33,read),"partial vertex draw rejected");
@@ -49,5 +52,17 @@ static void TestDriverStreamCache() {
     auto shortRead=[&](std::vector<unsigned char>& bytes) { ++reads; bytes.resize(32); return true; };
     Check(!cache.Get(buffer,0,32,sizeof(buffer),32,shortRead),"partial snapshot cannot enter cache");
     Check(cache.Get(buffer,0,32,sizeof(buffer),4096,read)!=nullptr,"failed reads do not poison subsequent valid read");
+    unsigned before=reads;
+    buffer[0]=77;
+    cache.Invalidate(buffer);
+    next=cache.Get(buffer,0,32,sizeof(buffer),32,read);
+    Check(reads==before+1 && next && (*next)[0]==77,"write between eyes invalidates source at same address");
+    cache.Invalidate(&otherBuffer);
+    cache.Get(buffer,0,32,sizeof(buffer),32,read);
+    Check(reads==before+1,"unrelated buffer write preserves cached source");
+    cache.Invalidate(buffer);
+    buffer[0]=88;
+    next=cache.Get(buffer,0,32,sizeof(buffer),32,read);
+    Check(reads==before+2 && next && (*next)[0]==88,"released buffer address reuse cannot return old bytes");
     puts("PASS: full-stream snapshot, one read across growing split draws, CPU-copy isolation, invalidation and fallback");
 }

@@ -15,6 +15,7 @@
 #include "crash.h"
 #include "frametrace.h"
 #include "mirror_vertex_map.h"
+#include "mirror_stream_range.h"
 
 #include <d3d9.h>
 #include "d3d9device_gen.h"
@@ -26,6 +27,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <intrin.h>
+#include "driver_stream_cache.h"
+#include "driver_skin_state.h"
+static DriverStreamCache s_driverStreams;
+#include "driver_buffer_hooks.h"
+static unsigned s_mirrorSnapshotFallbacks;
+static unsigned long long s_mirrorUploadBytes, s_mirrorFullUploadBytes;
 
 // ---------------------------------------------------------------------------
 // Real d3d9.dll
@@ -502,7 +509,7 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]) {
 }
 
 // Map a private copy: never write to vertex storage shared with body draws.
-static void MapGlassVertices(MirrorGlassJob& j, INT base,
+static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT verts, INT* drawBase,
                              IDirect3DVertexBuffer9** original, UINT* originalOffset, UINT* originalStride) {
     TraceDetailScope timing(TRACE_MIRROR_MAP);
     if (j.parts.empty()) return;
@@ -510,13 +517,14 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base,
     UINT offset = 0, stride = 0;
     if (FAILED(s_dev->GetStreamSource(0, &vb, &offset, &stride)) || !vb) return;
     int posOfs = -1, uvOfs = -1;
+    bool singleStream = true;
     IDirect3DVertexDeclaration9* decl = nullptr;
     if (SUCCEEDED(s_dev->GetVertexDeclaration(&decl)) && decl) {
         D3DVERTEXELEMENT9 el[MAXD3DDECLLENGTH + 1];
         UINT n = MAXD3DDECLLENGTH + 1;
         if (SUCCEEDED(decl->GetDeclaration(el, &n)))
             for (UINT i = 0; i < n && el[i].Stream != 0xFF; i++) {
-                if (el[i].Stream != 0) continue;
+                if (el[i].Stream != 0) { singleStream = false; continue; }
                 if (el[i].Usage == D3DDECLUSAGE_POSITION && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT3) posOfs = el[i].Offset;
                 if (el[i].Usage == D3DDECLUSAGE_TEXCOORD && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT2) uvOfs = el[i].Offset;
             }
@@ -550,50 +558,77 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base,
         vb->Release();
         return;
     }
-    // Read the source without modifying it. DISCARD on our private dynamic
-    // stream lets the driver rename storage still consumed by an earlier draw.
-    uint8_t* buffer = nullptr;
-    if (FAILED(vb->Lock(0, 0, (void**)&buffer, D3DLOCK_READONLY)) || !buffer) {
+    MirrorStreamRange range;
+    if (!MirrorDrawRange(base, minIndex, verts, offset, stride, desc.Size, singleStream, range)) {
         vb->Release();
         return;
     }
-    std::vector<uint8_t> copy(buffer, buffer + desc.Size);
-    vb->Unlock();
-    buffer = copy.data();
+    // A registered part can span more than this particular split draw. In that
+    // case preserve the established full-buffer behavior rather than omit UVs.
+    for (const MirrorGlassPart& part : j.parts)
+        for (uint16_t v : part.vertices)
+            if (!MirrorVertexInRange(range, base, v, offset, stride)) {
+                range.begin = 0; range.bytes = desc.Size; range.base = base;
+            }
+    // Read the source without modifying it. DISCARD on our private dynamic
+    // stream lets the driver rename storage still consumed by an earlier draw.
+    // Reuse only immutable source bytes. UVs are still recomputed in a private
+    // copy for every draw; writes, release, reset and frame boundaries invalidate.
+    if (!ObserveDriverBuffer(vb)) {
+        ++s_mirrorSnapshotFallbacks;
+        s_driverStreams.Invalidate(vb);
+    }
+    const auto* source = s_driverStreams.Get(vb, 0, 1, desc.Size, desc.Size,
+        [&](std::vector<unsigned char>& bytes) {
+            void* locked = nullptr;
+            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY))) return false;
+            if (locked) bytes.assign((unsigned char*)locked, (unsigned char*)locked + desc.Size);
+            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
+        });
+    if (!source) {
+        vb->Release();
+        return;
+    }
+    std::vector<uint8_t> copy(source->begin() + range.begin, source->begin() + range.begin + range.bytes);
+    uint8_t* buffer = copy.data();
     size_t mappedVerts = 0;
     for (MirrorGlassPart& part : j.parts) {
         if (part.vertices.empty()) continue;
         mappedVerts += part.vertices.size();
         const float* b = part.basis;
         for (uint16_t v : part.vertices) {
-            UINT vertexOffset = offset + (UINT)(base + v) * stride;
+            UINT vertexOffset = (UINT)((uint64_t)offset + ((int64_t)base + v) * stride - range.begin);
             const float* pos = (const float*)(buffer + vertexOffset + posOfs);
             float* uv = (float*)(buffer + vertexOffset + uvOfs);
             MirrorVertexUV(pos, b, uv);
         }
     }
-    if (!s_glassStream || s_glassStreamBytes < desc.Size) {
+    if (!s_glassStream || s_glassStreamBytes < range.bytes) {
         if (s_glassStream) s_glassStream->Release();
         s_glassStream = nullptr;
         s_glassStreamBytes = 0;
-        if (SUCCEEDED(s_dev->CreateVertexBuffer(desc.Size, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+        if (SUCCEEDED(s_dev->CreateVertexBuffer(range.bytes, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
                                                0, D3DPOOL_DEFAULT, &s_glassStream, nullptr)))
-            s_glassStreamBytes = desc.Size;
+            s_glassStreamBytes = range.bytes;
     }
     void* upload = nullptr;
-    if (!s_glassStream || FAILED(s_glassStream->Lock(0, desc.Size, &upload, D3DLOCK_DISCARD))) {
+    if (!s_glassStream || FAILED(s_glassStream->Lock(0, range.bytes, &upload, D3DLOCK_DISCARD))) {
         vb->Release();
         return;
     }
     memcpy(upload, copy.data(), copy.size());
+    s_mirrorUploadBytes += copy.size();
+    s_mirrorFullUploadBytes += desc.Size;
     HRESULT unlocked = s_glassStream->Unlock();
-    if (FAILED(unlocked) || FAILED(s_dev->SetStreamSource(0, s_glassStream, offset, stride))) {
+    const UINT mappedOffset = range.begin ? 0 : offset;
+    if (FAILED(unlocked) || FAILED(s_dev->SetStreamSource(0, s_glassStream, mappedOffset, stride))) {
         vb->Release();
         return;
     }
     *original = vb; // GetStreamSource's reference lives through the draw.
     *originalOffset = offset;
     *originalStride = stride;
+    *drawBase = range.base;
     static int logged;
     if (logged++ < 4) Log("d3d9: side mirror glass: %u vertices given the rear view's coordinates", (unsigned)mappedVerts);
 }
@@ -613,7 +648,8 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
         TraceDetailScope timing(TRACE_MIRROR_DRAW);
         IDirect3DVertexBuffer9* original = nullptr;
         UINT originalOffset = 0, originalStride = 0;
-        MapGlassVertices(j, base, &original, &originalOffset, &originalStride);
+        INT drawBase = base;
+        MapGlassVertices(j, base, minIndex, verts, &drawBase, &original, &originalOffset, &originalStride);
         int stage = -1;
         IDirect3DBaseTexture9* t0 = nullptr;
         real->GetTexture(0, &t0);
@@ -662,7 +698,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
             real->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
             real->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         }
-        *hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+        *hr = real->DrawIndexedPrimitive(type, drawBase, minIndex, verts, start, count);
         if (original) {
             real->SetStreamSource(0, original, originalOffset, originalStride);
             original->Release();
@@ -740,9 +776,10 @@ static void DrawMirrorGlass(const PendingMirror& m, bool depth) {
     s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
     s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TFACTOR);
     if (!m.frame.empty()) {
-        // The rim: plain near-black, the housing's plastic around the glass. It only tests depth,
-        // so the picture drawn next over it can't fight it.
-        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        // The opaque rim must occlude particles drawn later, just like the glass.
+        // The picture is physically closer (see NoteMirrors), so it can still
+        // pass the rim's depth test. Keep the end-of-eye fallback depth-free.
+        s_dev->SetRenderState(D3DRS_ZWRITEENABLE, depth ? TRUE : FALSE);
         s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB(255, 10, 10, 12));
         s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
         s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TFACTOR);
@@ -2085,11 +2122,10 @@ static unsigned s_eyeDrawCalls[2];
 static unsigned s_eyeDrawsAtBegin[2];
 
 #include "driver_stream_range.h"
-#include "driver_stream_cache.h"
-static DriverStreamCache s_driverStreams;
 
 void D3D_EyePassBegin(int eye) {
-    s_driverStreams.Clear();
+    // -1 is bookkeeping between eyes, not a frame boundary.
+    s_driverStreams.BeginEye(eye);
     s_tallyEye = eye;
     if (eye >= 0 && eye < 2) {
         s_eyeDrawsAtBegin[eye] = s_eyeDrawCalls[eye];
@@ -2480,6 +2516,22 @@ static void DrawOverlayOnBackBuffer() {
 }
 
 static void OnPresent() {
+    static unsigned snapshotFrames;
+    if (++snapshotFrames == 300) {
+        const auto& stats = s_driverStreams.GetStats();
+        if (g_cfg.logPasses) {
+            Log("d3d9: source snapshots / 300 frames: hits %llu, reads %llu, bytes %llu, failures %llu, invalidated entries %llu, mirror hook fallbacks %u",
+                (unsigned long long)stats.hits, (unsigned long long)stats.reads,
+                (unsigned long long)stats.bytes, (unsigned long long)stats.failures,
+                (unsigned long long)stats.invalidations, s_mirrorSnapshotFallbacks);
+            Log("d3d9: mirror upload bytes / 300 frames: actual %llu, previous full-buffer equivalent %llu",
+                s_mirrorUploadBytes, s_mirrorFullUploadBytes);
+        }
+        s_driverStreams.ResetStats();
+        s_mirrorUploadBytes = s_mirrorFullUploadBytes = 0;
+        s_mirrorSnapshotFallbacks = 0;
+        snapshotFrames = 0;
+    }
     s_driverStreams.Clear();
     RaiseRenderPriority();
     if (KeyPressed(g_cfg.keySpectator)) {
@@ -2601,6 +2653,7 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Reset(D3DPRESENT_PARAMETERS* pp) override {
+        s_driverStreams.Clear();
         EndHudPhase();
         ReleaseEyeTargets();
         AdjustPresentParams(pp);
@@ -2709,11 +2762,21 @@ public:
         s_curIndices = ib;
         return real->SetIndices(ib);
     }
+    HRESULT STDMETHODCALLTYPE ProcessVertices(UINT source, UINT dest, UINT count, IDirect3DVertexBuffer9* vb,
+                                               IDirect3DVertexDeclaration9* decl, DWORD flags) override {
+        s_driverStreams.Invalidate(vb);
+        return real->ProcessVertices(source,dest,count,vb,decl,flags);
+    }
     HRESULT STDMETHODCALLTYPE DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts, UINT start,
                                                    UINT count) override {
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
+        // Reject city/world IBs before querying RT/depth/backbuffer state. The
+        // view query performs COM calls and AddRef/Release on every invocation;
+        // only a registered driver's skin can need the override below.
+        DriverSkinState<IDirect3DDevice9> skinState(real, type == D3DPT_TRIANGLELIST &&
+            Cockpit_IsSkinDraw(s_curIndices,start,count) && DrawingPlayerView());
         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
         bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
         // Private stream copy: keep the game's textured/shaded draw, and never mutate its VB.
@@ -2742,19 +2805,20 @@ public:
                 }
                 if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size) {
                     const size_t required=DriverStreamBytes(remapped,stride,desc.Size-offset);
-                    const auto* source=s_driverStreams.Get(vb,offset,stride,desc.Size-offset,required,
+                    // Unobservable resources retain the conservative per-draw fallback.
+                    if (!ObserveDriverBuffer(vb)) s_driverStreams.Invalidate(vb);
+                    const auto* source=required ? s_driverStreams.Get(vb,0,1,desc.Size,desc.Size,
                         [&](std::vector<unsigned char>& bytes) {
                             TraceDetailScope readbackTiming(TRACE_DRIVER_READBACK);
                             void* locked=nullptr;
                             // Preserve the original whole-buffer lock behavior. Bounded
                             // per-draw copies below touch CPU memory only, never the GPU.
                             if(FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) return false;
-                            bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+desc.Size);
-                            vb->Unlock();
-                            return true;
-                        });
+                            if (locked) bytes.assign((unsigned char*)locked,(unsigned char*)locked+desc.Size);
+                            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
+                        }) : nullptr;
                     if(required && source) {
-                        std::vector<unsigned char> copy(source->begin(),source->begin()+required);
+                        std::vector<unsigned char> copy(source->begin()+offset,source->begin()+offset+required);
                         bool repaired=uv>=0 && Cockpit_RepairSkinUV(s_curIndices,start,count,base,stride,uv,copy.data(),copy.size());
                         bool posed=Cockpit_HasMarkedArmDraw(s_curIndices) &&
                             Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size());
@@ -2805,7 +2869,10 @@ public:
     HRESULT STDMETHODCALLTYPE Present(CONST RECT* src, CONST RECT* dst, HWND wnd, CONST RGNDATA* dirty) override {
         OnPresent();
         double tp = D3D_ProfNow();
-        HRESULT hr = real->Present(src, dst, wnd, dirty);
+        // This is an Ex device. Use its native present entry point so overlays
+        // that hook D3D9Ex (including RTSS) can observe desktop frame delivery.
+        // Flags zero retains the blocking presentation policy; XR waits stay intact.
+        HRESULT hr = real->PresentEx(src, dst, wnd, dirty, 0);
         D3D_ProfAdd(PROF_PRESENT, D3D_ProfNow() - tp);
         ProfFrame();
         s_updateStart = D3D_ProfNow();

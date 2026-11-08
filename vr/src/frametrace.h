@@ -9,6 +9,8 @@
 // Render thread. Each call is a no-op unless a trace is running.
 void Trace_KeyCheck(int vk, IDirect3DDevice9* dev);   // once a frame: starts a trace on the key
 bool Trace_On();
+// Render-thread-only fast gate for the assembly boundary wrapper.
+extern unsigned char g_traceRenderBoundaries;
 // CPU wall-time partition of each scene; boundaries are verified caller addresses.
 void Trace_RenderBoundary(unsigned site);
 void Trace_RenderBegin(int eye);

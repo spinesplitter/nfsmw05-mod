@@ -1327,6 +1327,44 @@ int __cdecl hkCarCameraInside(const float* mn, const float* mx, const float* poi
     return ((int(__cdecl*)(const float*, const float*, const float*, float))kBoxIsInside)(mn, mx, point, extra);
 }
 
+// Each car model (0x6DA9A2) and each of its draw entries (0x6DAB11) is frustum-culled before it is
+// submitted. The frustum planes come from the player view, which while the depth split is on is set
+// up with WorldNearZ (0.5 m), not the car's NearZ (0.091 m). A small entry whose whole box is in
+// front of that far near plane is skipped even though the car's own draw matrices would show it: the
+// merged driver fingers vanished as soon as the eyes came within WorldNearZ of the hand. When the eye
+// is inside a box (or within a metre of it) that box counts as visible, exactly as the camera being
+// inside a car should.
+constexpr uintptr_t kPlatVisibleState = 0x6CF2B0;    // eViewPlatInterface::GetVisibleState, thiscall, 3 args
+constexpr uintptr_t kCallsPartVisible[] = {0x6DA9A2, 0x6DAB11};
+
+int __fastcall hkPartVisible(uint8_t* view, void*, const float* mn, const float* mx, const float* m) {
+    int state = ((int(__thiscall*)(void*, const float*, const float*, const float*))kPlatVisibleState)(view, mn, mx, m);
+    void* cam = view ? At<void*>(view, kViewCamera) : nullptr;
+    if (state != 0 || !cam || !mn || !mx) return state;
+    const float* eye = &At<float>(cam, kCamPosition);
+    if (!m) {   // a box in world space
+        for (int a = 0; a < 3; a++)
+            if (eye[a] < mn[a] - 1.0f || eye[a] > mx[a] + 1.0f) return state;
+    } else {
+        // The eye in the box's own space (row vectors: p = local * m; the axes may carry a scale).
+        float rel[3] = {eye[0] - m[12], eye[1] - m[13], eye[2] - m[14]};
+        for (int a = 0; a < 3; a++) {
+            const float* axis = m + a * 4;
+            float len2 = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
+            if (len2 < 1e-8f) return state;
+            float local = (rel[0] * axis[0] + rel[1] * axis[1] + rel[2] * axis[2]) / len2;
+            float margin = 1.0f / sqrtf(len2);
+            if (local < mn[a] - margin || local > mx[a] + margin) return state;
+        }
+    }
+    static int kept;
+    if (kept < 4) {
+        ++kept;
+        Log("cockpit: part kept visible with the eyes inside its box (view near plane)");
+    }
+    return 1;
+}
+
 float Dist(const float* a, const float* b) {
     float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
     return sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -2971,6 +3009,17 @@ CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const flo
 uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     TraceDetailScope submitTiming(TRACE_COCKPIT_SUBMIT);
     uint8_t* solid = model ? At<uint8_t*>(model, kModelSolid) : nullptr;
+    // Trace other cars/world geometry without preparing or editing their meshes.
+    // A shared model name (or proximity to the camera) is not vehicle ownership.
+    if (!DrawingPlayerCar()) {
+        if (solid && Trace_On()) {
+            char name[65] = {};
+            memcpy(name, solid + kSolidName, 64);
+            Trace_Model(name, s_curConn != nullptr, false,
+                        entry ? (unsigned)std::max(0, At<int>(entry, kEntryTris)) : 0);
+        }
+        return entry;
+    }
     SolidInfo* info = solid ? GetSolid(solid) : nullptr;
     if (info && Trace_On()) Trace_Model(info->name, s_curConn != nullptr, s_curConn && s_curPlayerCar,
                                       entry ? (unsigned)std::max(0, At<int>(entry, kEntryTris)) : 0);
@@ -3252,6 +3301,13 @@ void CaptureDriverSkin(uint8_t* solid, uint8_t* entry, uint32_t shader, uint32_t
 
 void __cdecl SubmitEntry(uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                          uint32_t a7, uint32_t a8, uint32_t a9) {
+    // Do not split an opponent's entries merely because its solid was previously
+    // cached for the player (two instances can share the same model resources).
+    if (!DrawingPlayerCar()) {
+        OnSubmit(s_submitModel, matrix, entry); // retain model/category tracing
+        ((SubmitEntry_t)kSubmitEntry)(entry, a2, a3, a4, a5, matrix, a7, a8, a9);
+        return;
+    }
     auto submit = [](uint8_t* entry, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, const float* matrix,
                      uint32_t a7, uint32_t a8, uint32_t a9) {
         uint8_t* solid = s_submitModel ? At<uint8_t*>(s_submitModel, kModelSolid) : nullptr;
@@ -3380,6 +3436,25 @@ bool Cockpit_HasMarkedArmDraw(void* ib) {
 
 bool Cockpit_IsRegisteredDriverDraw(void* ib) {
     return s_armDraws.count(ib) != 0;
+}
+
+bool Cockpit_IsSkinDraw(void* ib, unsigned first, unsigned triangles) {
+    auto draw = s_armDraws.find(ib);
+    if (draw == s_armDraws.end() || !triangles) return false;
+    auto info = s_solids.find(draw->second.solid);
+    SolidMesh mesh;
+    if (info == s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
+        first % 3 || first > (unsigned)mesh.numIndices ||
+        triangles > ((unsigned)mesh.numIndices-first)/3) return false;
+    const auto& edits = EditsFor(SolidName(info->second));
+    for (unsigned t=0; t<triangles; ++t) {
+        const uint16_t* v = mesh.indices+first+t*3;
+        uint64_t id = TriId(v[0],v[1],v[2]);
+        if (edits.skin.count(id)) continue;
+        if (edits.native.count(id) || edits.black.count(id) ||
+            !AutomaticDriverFingerIndex(*info->second.driver,mesh.entries,mesh.n,first+t*3)) return false;
+    }
+    return true;
 }
 
 bool Cockpit_DriverDrawWork(void* ib, unsigned first, unsigned triangles, int base,
@@ -3691,6 +3766,7 @@ void Cockpit_PerCarDefaults() {
 void Cockpit_Install() {
     if (!PatchCall(kCallSubmitEntry, kSubmitEntry, (void*)&hkSubmitEntry)) return;
     PatchCall(kCallCarCameraInside, kBoxIsInside, (void*)&hkCarCameraInside);
+    for (uintptr_t site : kCallsPartVisible) PatchCall(site, kPlatVisibleState, (void*)&hkPartVisible);
     void** slot = (void**)kCarRenderConnVtbl + kVtblOnRender;
     if (*slot == (void*)kOnRender) {
         DWORD old;

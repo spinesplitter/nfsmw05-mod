@@ -402,35 +402,49 @@ void WorldDepthRemap(M4& m) {
 // projection (for the mod's own cockpit drawing: dashboard, wheel over the HUD, mirrors), and the
 // world's matrices remapped in place. False (and nothing changed) if the matrices are not the
 // expected perspective ones.
-const void* s_carViewProjFor[2];
-M4 s_carViewProj[2], s_carProj;
+const void* s_carViewProjFor[2 * kNumViews];
+M4 s_carViewProj[2 * kNumViews], s_carProj;
+int s_carViewProjCount = 0;
 bool s_carProjSet = false;
 int s_carHits = 0, s_carMissFrames = 0;
 bool s_depthSplitFailed = false;
 
-bool SplitPlayerDepth(void* view) {
+bool SplitPlayerDepth(void* view, bool player = true, bool validateOnly = false) {
     uint8_t* plat = At<uint8_t*>(view, kViewPlatInfo);
+    if (!plat) return false;
     M4& P = *(M4*)(plat + kPlatProjection);
+    // Some views alias the same platform matrices. Never remap them twice.
+    if (!validateOnly && !player)
+        for (int i = 0; i < s_carViewProjCount; i++)
+            if (s_carViewProjFor[i] == plat + kPlatViewProj) return true;
+    M4& checkedVP = *(M4*)(plat + kPlatViewProj);
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            if (!std::isfinite(P.m[i][j]) || !std::isfinite(checkedVP.m[i][j])) return false;
     if (fabsf(P.m[0][3]) > 1e-5f || fabsf(P.m[1][3]) > 1e-5f || fabsf(P.m[2][3] - 1.0f) > 1e-5f || fabsf(P.m[3][3]) > 1e-5f)
         return false;
     float A = P.m[2][2], B = P.m[3][2];
     if (!(A > 0.0f) || !(B < 0.0f)) return false;
     M4& VP = *(M4*)(plat + kPlatViewProj);
     if (!ZColumnIs(VP, A, B)) return false;
-    s_carProj = CarDepthVariant(P);
-    s_carProjSet = true;
-    s_carViewProj[0] = CarDepthVariant(VP);
-    s_carViewProjFor[0] = &VP;
+    if (validateOnly) return true;
+    if (!player && s_carViewProjCount > 2 * kNumViews - 2) return false;
+    if (player) {
+        s_carViewProjCount = 0;
+        s_carProj = CarDepthVariant(P);
+        s_carProjSet = true;
+    }
+    s_carViewProj[s_carViewProjCount] = CarDepthVariant(VP);
+    s_carViewProjFor[s_carViewProjCount++] = &VP;
     WorldDepthRemap(P);
     WorldDepthRemap(VP);
     // The alternative pair, when it holds a perspective projection of its own.
     M4& P2 = *(M4*)(plat + kPlatProjAlt);
     M4& VP2 = *(M4*)(plat + kPlatViewProjAlt);
-    s_carViewProjFor[1] = nullptr;
     float A2 = P2.m[2][2], B2 = P2.m[3][2];
     if (fabsf(P2.m[2][3] - 1.0f) < 1e-5f && fabsf(P2.m[3][3]) < 1e-5f && A2 > 0.0f && B2 < 0.0f && ZColumnIs(VP2, A2, B2)) {
-        s_carViewProj[1] = CarDepthVariant(VP2);
-        s_carViewProjFor[1] = &VP2;
+        s_carViewProj[s_carViewProjCount] = CarDepthVariant(VP2);
+        s_carViewProjFor[s_carViewProjCount++] = &VP2;
         WorldDepthRemap(P2);
         WorldDepthRemap(VP2);
     }
@@ -439,7 +453,7 @@ bool SplitPlayerDepth(void* view) {
 
 void* __stdcall hkWorldViewProjMultiply(void* out, const void* local, const void* viewProj) {
     if (s_depthSplit && viewProj && local) {
-        for (int k = 0; k < 2; k++)
+        for (int k = 0; k < s_carViewProjCount; k++)
             if (viewProj == s_carViewProjFor[k] && Cockpit_IsPlayerCarMatrix(local)) {
                 viewProj = &s_carViewProj[k];
                 s_carHits++;
@@ -557,6 +571,23 @@ template <class Fn> void ForEachCompanion(void* cam, Fn fn) {
         if (!s_viewArgs[index].have || !At<int8_t>(view, kViewActive) || At<void*>(view, kViewCamera) != cam) continue;
         fn(view, index, s_viewArgs[index].a);
     }
+}
+
+// Glow/specular geometry must use the same depth convention as the main image,
+// whether drawing into its depth surface or an independently cleared one. Keep
+// player-car variants for those queues too. Validate the entire camera group
+// before modifying anything, so a failure can rebuild every view without a split.
+bool SplitCameraDepth(void* view, void* cam) {
+    bool valid = SplitPlayerDepth(view, true, true);
+    ForEachCompanion(cam, [&](void* v, int, const uint32_t*) {
+        if (!SplitPlayerDepth(v, false, true)) valid = false;
+    });
+    if (!valid) return false;
+    SplitPlayerDepth(view);
+    ForEachCompanion(cam, [](void* v, int, const uint32_t*) {
+        SplitPlayerDepth(v, false);
+    });
+    return true;
 }
 
 // While the eyes render: the eye's view matrix and the seat's, for WorldView.
@@ -1009,8 +1040,8 @@ void __cdecl hkRenderScene() {
             }
         }
         SetupPlayerView(view, cam, tanX, tanY);
-        if (s_depthSplit && !SplitPlayerDepth(view)) {
-            Log("game: depth split off - the player view's matrices are not the expected perspective ones");
+        if (s_depthSplit && !SplitCameraDepth(view, cam)) {
+            Log("game: depth split off - a player/companion view has unexpected projection matrices");
             s_depthSplitFailed = true;
             s_depthSplit = false;
             SetupPlayerView(view, cam, tanX, tanY);   // again with NearZ for everything
@@ -1047,7 +1078,7 @@ void __cdecl hkRenderScene() {
         double tScene = D3D_ProfNow();
         Trace_RenderBegin(eye);
         oRenderScene();
-        Trace_RenderEnd();
+            Trace_RenderEnd();
         D3D_EyeRenderProfile(eye, D3D_ProfNow() - tScene);
         carHitsFrame += s_carHits;
         carMatricesFrame += Cockpit_PlayerCarMatrices();
@@ -1362,6 +1393,15 @@ void __cdecl RenderBoundaryAfterReturn(unsigned ret) { Trace_RenderBoundary((ret
 uintptr_t s_renderBoundaryTarget = 0x6E2F50;
 __declspec(naked) void hkRenderBoundary() {
     __asm {
+        // Preserve incoming flags on both paths. No C++ call, FXSAVE or FXRSTOR
+        // when tracing is idle; tail-call the original with its original stack.
+        pushfd
+        cmp byte ptr [g_traceRenderBoundaries], 0
+        jne traceActive
+        popfd
+        jmp dword ptr [s_renderBoundaryTarget]
+    traceActive:
+        popfd
         pushfd
         pushad
         mov ebx, esp

@@ -41,6 +41,8 @@ bool Cockpit_PoseMarkedArms(void* indexBuffer, unsigned first, unsigned triangle
 bool Cockpit_HasMarkedArmDraw(void* indexBuffer);
 // Cheap draw-hook rejection before any D3D surface queries. Includes UV-only driver draws.
 bool Cockpit_IsRegisteredDriverDraw(void* indexBuffer);
+// True only for wholly skin-selected ranges; never changes mixed/body draws.
+bool Cockpit_IsSkinDraw(void* indexBuffer, unsigned first, unsigned triangles);
 // Reject unaffected ranges before touching GPU buffers; copy indices from the live CPU mesh.
 bool Cockpit_DriverDrawWork(void* indexBuffer, unsigned first, unsigned triangles, int base,
                             std::vector<uint16_t>& indices);
