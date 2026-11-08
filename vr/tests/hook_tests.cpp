@@ -180,7 +180,7 @@ int main() {
     // Stereo glow/specular passes: identical world depth, player-car variants,
     // aliased platform storage, all-or-nothing validation and eye-to-eye reset.
     {
-        assert(Config().worldNearZ == 0.5f);
+        assert(Config().worldNearZ == 0.8f);
         uint8_t player[kViewStride] = {}, glow[kViewStride] = {};
         uint8_t pp[0x140] = {}, gp[0x140] = {};
         At<uint8_t*>(player, kViewPlatInfo) = pp;
@@ -277,7 +277,7 @@ int main() {
     }
     // Quantify distant-world precision independently of the cockpit near plane.
     // In D24, a 1 cm separation at 250 m is below one depth unit with n=0.3,
-    // but above one with n=0.5 (the stock near plane), even after the split.
+    // but resolves above two depth units with the 0.8 m world near plane.
     {
         auto depthUnits = [](double n) {
             const double f = 3000.0, z = 250.0, dz = 0.01;
@@ -286,8 +286,9 @@ int main() {
         };
         assert(depthUnits(0.3) < 1.0);
         assert(depthUnits(0.5) > 1.0);
-        printf("D24 units for 1 cm at 250 m: world near 0.3 = %.3f, stock 0.5 = %.3f\n",
-               depthUnits(0.3), depthUnits(0.5));
+        assert(depthUnits(0.8) > 2.0);
+        printf("D24 units for 1 cm at 250 m: world near 0.3 = %.3f, 0.5 = %.3f, 0.8 = %.3f\n",
+               depthUnits(0.3), depthUnits(0.5), depthUnits(0.8));
     }
     uint8_t flares[3 * kFlareSize] = {};
     uint32_t exclusions[3] = {4, 5, 6};

@@ -125,7 +125,7 @@ Everything is in `nfsmw_vr.ini`. The useful ones:
 - **`LevelRoll` / `LevelPitch`:** how much of the car's body roll and pitch to remove from your view. By default roll is removed and pitch is kept.
 - **`HudDistance` / `HudWidth`:** placement of the floating HUD panel.
 - **`SteeringWheel`:** the car's steering wheel turns with your wheel, by the same angle (needs the gameplay mod with a bound steering axis and `[Controls] WheelRotation` set to your wheel's rotation). The wheel is found in each car's interior model; the log says `steering wheel at ...` or why not.
-- **`NearZ`:** near clip plane in metres (default 0.05; the game's own is 0.5). Lower it if the dashboard or wheel close to your eyes is cut off; raise it if distant surfaces flicker. 0 = the game's own.
+- **`NearZ` / `WorldNearZ`:** with `DepthSplit=1` while seated, `NearZ` (default 0.05 m) clips the player car and cockpit, while `WorldNearZ` (default 0.8 m) is used for the rest of the world to improve distant depth precision. Lower `NearZ` if the dashboard or wheel is cut off; lower `WorldNearZ` if nearby traffic or scenery disappears. The player car remains in front of the world. Set `DepthSplit=0` to use one near plane.
 
 ## Recording
 
