@@ -134,8 +134,8 @@
 // light brake drag for the flat tire's rolling resistance, both scaled by Handicap. Other cars
 // get the game's values.
 //
-// Per car: a [Car.<vehicle name>] section in the ini holds a car's own slider values; the
-// [Physics] values apply to every car without one.
+// Physics values live in Shared ([Physics]) or group ([Group.<name>]) presets. Legacy
+// [Car.<vehicle name>] physics sections are intentionally ignored.
 #include "common.h"
 #include "physics.h"
 #include "telemetry.h"
@@ -1097,13 +1097,13 @@ void AidToggles() {
     if (in.absToggles != abs) {
         abs = in.absToggles;
         g_cfg.abs = !g_cfg.abs;
-        IniSave_Queue({{IniPath(), "Physics", "ABS", g_cfg.abs ? "1" : "0"}});
+        IniSave_Queue({{IniPath(), Physics_Section(), "ABS", g_cfg.abs ? "1" : "0"}});
         Log("physics: ABS %s (binding)", g_cfg.abs ? "on" : "off");
     }
     if (in.tcToggles != tc) {
         tc = in.tcToggles;
         g_cfg.tc = !g_cfg.tc;
-        IniSave_Queue({{IniPath(), "Physics", "TC", g_cfg.tc ? "1" : "0"}});
+        IniSave_Queue({{IniPath(), Physics_Section(), "TC", g_cfg.tc ? "1" : "0"}});
         Log("physics: traction control %s (binding)", g_cfg.tc ? "on (with launch control)" : "off");
     }
 }
@@ -1235,71 +1235,122 @@ void InstallBlownTire() {
     Log("physics: popped tires %s (handicap %.2f)", g_cfg.poppedTires ? "drivable" : "as in the game", g_cfg.tireHandicap);
 }
 
-// --- per car ---------------------------------------------------------------------------------
+// --- per preset -------------------------------------------------------------------------------
 struct PerCar {
-    float Config::*field;
+    float Config::*number;
+    bool Config::*toggle;
+    int Config::*integer;
     const char* key;
     float lo, hi;
 };
+#define PRESET_NUMBER(field, key, lo, hi) {&Config::field, nullptr, nullptr, key, lo, hi}
+#define PRESET_TOGGLE(field, key) {nullptr, &Config::field, nullptr, key, 0.0f, 1.0f}
+#define PRESET_INTEGER(field, key, lo, hi) {nullptr, nullptr, &Config::field, key, lo, hi}
 const PerCar kPerCar[] = {
-    {&Config::tractionControl, "TractionControl", 0.0f, 1.0f},
-    {&Config::stability, "Stability", 0.0f, 1.0f},
-    {&Config::driftAssist, "DriftAssist", 0.0f, 1.0f},
-    {&Config::grip, "Grip", 0.3f, 2.0f},
-    {&Config::gravity, "Gravity", 0.1f, 3.0f},
-    {&Config::gripBalance, "GripBalance", -0.5f, 0.5f},
-    {&Config::offroadGrip, "OffroadGrip", 0.2f, 1.0f},
-    {&Config::tyreSlideGrip, "TyreSlideGrip", 0.5f, 1.0f},
-    {&Config::rainGrip, "RainGrip", 0.5f, 1.0f},
-    {&Config::maxSpin, "MaxSpin", 0.0f, 30.0f},
-    {&Config::downforce, "Downforce", -0.25f, 2.0f},
-    {&Config::suspFirmness, "SuspensionFirmness", 0.5f, 2.0f},
-    {&Config::rollBalance, "RollBalance", -0.5f, 0.5f},
+    PRESET_TOGGLE(physics, "Physics"),
+    PRESET_NUMBER(character, "Character", 0.0f, 1.0f),
+    PRESET_TOGGLE(realWeight, "RealWeight"),
+    PRESET_NUMBER(tractionControl, "TractionControl", 0.0f, 1.0f),
+    PRESET_TOGGLE(tc, "TC"),
+    PRESET_TOGGLE(abs, "ABS"),
+    PRESET_NUMBER(stability, "Stability", 0.0f, 1.0f),
+    PRESET_NUMBER(driftAssist, "DriftAssist", 0.0f, 1.0f),
+    PRESET_NUMBER(grip, "Grip", 0.3f, 2.0f),
+    PRESET_NUMBER(rainGrip, "RainGrip", 0.5f, 1.0f),
+    PRESET_NUMBER(offroadGrip, "OffroadGrip", 0.2f, 1.0f),
+    PRESET_NUMBER(rollBalance, "RollBalance", -0.5f, 0.5f),
+    PRESET_NUMBER(suspFirmness, "SuspensionFirmness", 0.5f, 2.0f),
+    PRESET_NUMBER(gripBalance, "GripBalance", -0.5f, 0.5f),
+    PRESET_NUMBER(tyreSlideGrip, "TyreSlideGrip", 0.5f, 1.0f),
+    PRESET_NUMBER(tyrePeakAngle, "TyrePeakAngle", 3.0f, 20.0f),
+    PRESET_NUMBER(slideWheelspin, "WheelspinInSlides", 0.0f, 1.0f),
+    PRESET_NUMBER(frictionCircle, "FrictionCircle", 0.0f, 3.0f),
+    PRESET_NUMBER(downforce, "Downforce", -0.25f, 2.0f),
+    PRESET_TOGGLE(downforceSquared, "DownforceSquared"),
+    PRESET_NUMBER(downforceMatch, "DownforceMatchSpeed", 50.0f, 400.0f),
+    PRESET_NUMBER(wallBounce, "WallBounce", 0.0f, 1.0f),
+    PRESET_NUMBER(gravity, "Gravity", 0.1f, 3.0f),
+    PRESET_TOGGLE(gravityAll, "GravityAllCars"),
+    PRESET_TOGGLE(gameTuning, "GameTuning"),
+    PRESET_NUMBER(loadSensitivity, "LoadSensitivity", 0.0f, 0.5f),
+    PRESET_NUMBER(maxSpin, "MaxSpin", 0.0f, 30.0f),
+    PRESET_INTEGER(logPhysics, "LogPhysics", 0.0f, 1.0f),
 };
+#undef PRESET_INTEGER
+#undef PRESET_TOGGLE
+#undef PRESET_NUMBER
 constexpr int kNumPerCar = sizeof(kPerCar) / sizeof(kPerCar[0]);
 // Keys of settings that are gone or were replaced (FrontGrip and RearGrip by GripBalance, SlideGrip
 // by TyreSlideGrip; DownforceAt300 was in test builds only): taken out of a section when it is written.
 const char* const kOldPerCarKeys[] = {"FrontGrip", "RearGrip", "SmokeBack", "Aero", "PowerOversteer", "SlideOversteer",
                                       "SlideGrip", "SpeedGripLoss", "DownforceAt300"};
 
-int PerCarIndex(float Config::*field) {
+float PresetValue(const PerCar& p) {
+    if (p.number) return g_cfg.*p.number;
+    if (p.toggle) return g_cfg.*p.toggle ? 1.0f : 0.0f;
+    return (float)(g_cfg.*p.integer);
+}
+
+void SetPresetValue(const PerCar& p, float value) {
+    value = Clamp(value, p.lo, p.hi);
+    if (p.number) g_cfg.*p.number = value;
+    else if (p.toggle) g_cfg.*p.toggle = value >= 0.5f;
+    else g_cfg.*p.integer = (int)lrintf(value);
+}
+
+float ReadPresetValue(const PerCar& p, const char* text) {
+    if (p.toggle) return atoi(text) != 0 ? 1.0f : 0.0f;
+    if (p.integer) return Clamp((float)atoi(text), p.lo, p.hi);
+    float value = (float)atof(text);
+    return Clamp(value, p.lo, p.hi);
+}
+
+int PerCarIndex(const void* field) {
     for (int i = 0; i < kNumPerCar; i++)
-        if (kPerCar[i].field == field) return i;
+        if ((kPerCar[i].number && field == &(g_cfg.*kPerCar[i].number)) ||
+            (kPerCar[i].toggle && field == &(g_cfg.*kPerCar[i].toggle)) ||
+            (kPerCar[i].integer && field == &(g_cfg.*kPerCar[i].integer))) return i;
     return -1;
 }
-// The driving aids' switches (ABS, TC) are the same for every car: always [Physics], never a car's
-// own section (ABS / TC keys left in [Car.<name>] are ignored).
 
 struct {
     std::string car;            // the player's vehicle name, empty = none yet
-    bool own = false;           // it has its own [Car.<name>] section
-    std::string group;          // else the group it is in ([Group.<name>]), empty = none
-    float global[kNumPerCar];   // the [Physics] values while a car has its own or a group's
+    std::string group;          // the car's [Group.<name>], empty = Shared
+    float global[kNumPerCar];   // the [Physics] values while a group is active
 } pc;
 
 void StoreGlobal() {
-    for (int i = 0; i < kNumPerCar; i++) pc.global[i] = g_cfg.*kPerCar[i].field;
+    for (int i = 0; i < kNumPerCar; i++) pc.global[i] = PresetValue(kPerCar[i]);
 }
 
 void LoadGlobal() {
-    for (int i = 0; i < kNumPerCar; i++) g_cfg.*kPerCar[i].field = pc.global[i];
+    for (int i = 0; i < kNumPerCar; i++) SetPresetValue(kPerCar[i], pc.global[i]);
 }
 
-bool Shared() { return !pc.own && pc.group.empty(); }
+bool Shared() { return pc.group.empty(); }
 
-// Groups: named sets of the per-car values that several cars share, one [Group.<name>] section
+float SharedPresetValue(int i) {
+    return Shared() ? PresetValue(kPerCar[i]) : pc.global[i];
+}
+
+void FormatPresetValue(const PerCar& p, float value, char* text, size_t size) {
+    if (p.integer) snprintf(text, size, "%d", (int)lrintf(value));
+    else if (p.toggle) snprintf(text, size, "%d", value >= 0.5f ? 1 : 0);
+    else snprintf(text, size, "%g", value);
+}
+
+// Groups: named sets of the preset values that several cars share, one [Group.<name>] section
 // each in the gameplay ini: the values, and Cars= the cars in it (CARS folder names, comma
 // separated). Driving a car in a group gives it the group's values; changing one in the menu
-// changes them for every car in it. A car is in one group at most; its own [Car.<name>] section
-// goes before any group. Read once, kept here, written through inisave's thread.
+// changes them for every car in it. A car is in one group at most. Read once, kept here, written
+// through inisave's thread.
 struct Group {
     std::string name;
     std::vector<std::string> cars;
     float value[kNumPerCar];        // its values, as the ini has them (kept up to date here)
-    bool has[kNumPerCar] = {};      // false: the key is missing, the shared value applies
+    bool has[kNumPerCar] = {};
 };
 std::vector<Group> s_groups;
-std::vector<std::string> s_ownCars;     // the cars with their own [Car.<name>] section (not an old preset link)
 
 std::string Lower(std::string s) {
     for (auto& c : s) c = (char)tolower((unsigned char)c);
@@ -1312,20 +1363,9 @@ void ReadGroups() {
     read = true;
     IniSave_Flush();
     std::vector<char> names(65536), cars(8192);
-    std::vector<IniWrite> stale;   // [Car.<name>] sections that only followed a preset
+    std::vector<IniWrite> missingValues;
     DWORD n = GetPrivateProfileSectionNamesA(names.data(), (DWORD)names.size(), IniPath());
     for (const char* sec = names.data(); sec < names.data() + n && *sec; sec += strlen(sec) + 1) {
-        if (_strnicmp(sec, "Car.", 4) == 0 && sec[4]) {
-            // A section with a Preset= link is from before groups: its values were a copy the preset
-            // replaced, never the car's own (the car drives on its group or the shared settings), and
-            // the links named the wrong drive for some cars. Removed; a car's own section has no link.
-            char preset[8];
-            if (GetPrivateProfileStringA(sec, "Preset", "", preset, sizeof(preset), IniPath()) == 0)
-                s_ownCars.push_back(Lower(sec + 4));
-            else
-                stale.push_back({IniPath(), sec, "", ""});
-            continue;
-        }
         if (_strnicmp(sec, "Group.", 6) != 0 || !sec[6]) continue;
         Group g;
         g.name = sec + 6;
@@ -1341,14 +1381,22 @@ void ReadGroups() {
             a = b + 1;
         }
         char buf[64];
-        for (int i = 0; i < kNumPerCar; i++)
+        for (int i = 0; i < kNumPerCar; i++) {
             if (GetPrivateProfileStringA(sec, kPerCar[i].key, "", buf, sizeof(buf), IniPath()) > 0)
-                g.value[i] = Clamp((float)atof(buf), kPerCar[i].lo, kPerCar[i].hi), g.has[i] = true;
+                g.value[i] = ReadPresetValue(kPerCar[i], buf), g.has[i] = true;
+            else {
+                // Older groups inherited Shared implicitly. Materialize that value once so later
+                // Shared edits cannot silently change this group's tuning.
+                g.value[i] = SharedPresetValue(i);
+                g.has[i] = true;
+                FormatPresetValue(kPerCar[i], g.value[i], buf, sizeof(buf));
+                missingValues.push_back({IniPath(), sec, kPerCar[i].key, buf});
+            }
+        }
         s_groups.push_back(g);
     }
-    // An ini from before groups (an update keeps the player's ini): the premade ones are added,
-    // once ([Physics] PremadeGroups marks it, so groups deleted later stay deleted). A car with its
-    // own settings in one keeps them: its own section goes first.
+    // An ini from before groups (an update keeps the player's ini): the premade ones are added
+    // once ([Physics] PremadeGroups marks it, so groups deleted later stay deleted).
     if (s_groups.empty() && GetPrivateProfileIntA("Physics", "PremadeGroups", 0, IniPath()) == 0) {
         static const struct { const char* name; const char* cars; } kPremade[] = {
             {"Muscle", "camaro,corvette,cts,gto,monaro,mustanggt,viper"},
@@ -1370,6 +1418,13 @@ void ReadGroups() {
                 g.cars.push_back(list.substr(a, b - a));
                 a = b + 1;
             }
+            for (int i = 0; i < kNumPerCar; i++) {
+                g.value[i] = SharedPresetValue(i);
+                g.has[i] = true;
+                char value[32];
+                FormatPresetValue(kPerCar[i], g.value[i], value, sizeof(value));
+                missingValues.push_back({IniPath(), "Group." + g.name, kPerCar[i].key, value});
+            }
             s_groups.push_back(g);
             w.push_back({IniPath(), "Group." + g.name, "Cars", list});
         }
@@ -1377,10 +1432,7 @@ void ReadGroups() {
         IniSave_Queue(w);
         Log("physics: premade groups added (Muscle, Tuner FWD / AWD / RWD, Exotic RWD / AWD, FWD, RWD, AWD)");
     }
-    if (!stale.empty()) {
-        IniSave_Queue(stale);
-        Log("physics: %u car sections from the old presets removed (not the cars' own settings)", (unsigned)stale.size());
-    }
+    if (!missingValues.empty()) IniSave_Queue(missingValues);
     Log("physics: %u groups", (unsigned)s_groups.size());
 }
 
@@ -1414,12 +1466,14 @@ void LeaveGroups(const std::string& car) {
             }
 }
 
-// The per-car values in use into `section`.
+// The preset values in use into `section`.
 void WriteValues(const std::string& section) {
     std::vector<IniWrite> w;
     char buf[32];
     for (const PerCar& p : kPerCar) {
-        snprintf(buf, sizeof(buf), "%g", g_cfg.*p.field);
+        if (p.integer) snprintf(buf, sizeof(buf), "%d", (int)PresetValue(p));
+        else if (p.toggle) snprintf(buf, sizeof(buf), "%d", PresetValue(p) >= 0.5f ? 1 : 0);
+        else snprintf(buf, sizeof(buf), "%g", PresetValue(p));
         w.push_back({IniPath(), section, p.key, buf});
     }
     IniSave_Queue(w);
@@ -1428,24 +1482,15 @@ void WriteValues(const std::string& section) {
 // The current car's group keeps the values in use (the menu changes them in g_cfg): copied into
 // its entry before the car leaves it.
 void SyncGroup() {
-    if (pc.own || pc.group.empty()) return;
+    if (pc.group.empty()) return;
     if (Group* g = FindGroup(pc.group))
-        for (int i = 0; i < kNumPerCar; i++) g->value[i] = g_cfg.*kPerCar[i].field, g->has[i] = true;
+        for (int i = 0; i < kNumPerCar; i++) g->value[i] = PresetValue(kPerCar[i]), g->has[i] = true;
 }
 
 // A group's values into g_cfg (on top of the shared ones, already there).
 void ApplyGroup(const Group& g) {
     for (int i = 0; i < kNumPerCar; i++)
-        if (g.has[i]) g_cfg.*kPerCar[i].field = g.value[i];
-}
-
-// The per-car values from `section` into g_cfg (keys it lacks keep the values there now).
-void ReadValues(const std::string& section) {
-    IniSave_Flush();
-    char buf[64];
-    for (const PerCar& p : kPerCar)
-        if (GetPrivateProfileStringA(section.c_str(), p.key, "", buf, sizeof(buf), IniPath()) > 0)
-            g_cfg.*p.field = Clamp((float)atof(buf), p.lo, p.hi);
+        if (g.has[i]) SetPresetValue(kPerCar[i], g.value[i]);
 }
 
 void Character() {
@@ -1469,7 +1514,7 @@ void Character() {
 
 }  // namespace
 
-std::string Physics_Section() { return pc.own ? "Car." + pc.car : !pc.group.empty() ? "Group." + pc.group : "Physics"; }
+std::string Physics_Section() { return pc.group.empty() ? "Physics" : "Group." + pc.group; }
 const char* Physics_Car() { return pc.car.c_str(); }
 const CarCharacter& Physics_Character() { return s_char; }
 
@@ -1493,10 +1538,8 @@ float Physics_DefaultEngineSmokeBack() {
     return 0.0f;
 }
 
-bool Physics_IsPerCar(const void* value) {
-    for (const PerCar& p : kPerCar)
-        if (value == &(g_cfg.*p.field)) return true;
-    return false;
+bool Physics_IsPresetValue(const void* value) {
+    return PerCarIndex(value) >= 0;
 }
 
 void Physics_SetCar(const char* name) {
@@ -1517,27 +1560,16 @@ void Physics_SetCar(const char* name) {
     g_cfg.engineSmokeBack = smoke[0] ? Clamp((float)atof(smoke), -5.0f, 5.0f) : Physics_DefaultEngineSmokeBack();
     loadedSmoke = g_cfg.engineSmokeBack;
     pc.group.clear();
-    std::string section = "Car." + car;
-    char buf[64];
-    pc.own = !car.empty() && GetPrivateProfileSectionA(section.c_str(), buf, sizeof(buf), IniPath()) > 0;
-    // A section that only followed a preset (from before groups: its values were a copy the
-    // preset replaced) isn't the car's own: it drives on its group or the shared settings
-    // (ReadGroups removes such sections; until the removal is written they may still be there).
-    if (pc.own && GetPrivateProfileStringA(section.c_str(), "Preset", "", buf, sizeof(buf), IniPath()) > 0) pc.own = false;
-    if (!pc.own && !car.empty())
+    if (!car.empty())
         if (Group* g = GroupOf(car)) pc.group = g->name;
     LoadGlobal();
-    if (pc.own) {
-        ReadValues(section);
-        LegacyGripBalance(section.c_str(), IniPath(), &g_cfg.grip, &g_cfg.gripBalance);
-    } else if (Group* g = pc.group.empty() ? nullptr : FindGroup(pc.group)) {
+    if (Group* g = pc.group.empty() ? nullptr : FindGroup(pc.group)) {
         ApplyGroup(*g);
     }
-    std::string from = pc.own ? "own settings" : !pc.group.empty() ? "group " + pc.group : "[Physics] settings";
+    std::string from = !pc.group.empty() ? "group " + pc.group : "[Physics] settings";
     Log("physics: car %s (%s)", car.empty() ? "?" : car.c_str(), from.c_str());
 }
 
-bool Physics_OwnSettings() { return pc.own; }
 const char* Physics_CarGroup() { return pc.group.c_str(); }
 
 std::vector<std::string> Physics_Groups() {
@@ -1553,56 +1585,24 @@ std::vector<std::string> Physics_GroupCars(const std::string& name) {
     return g ? g->cars : std::vector<std::string>();
 }
 
-void SetOwnCar(const std::string& car, bool own) {
-    std::string c = Lower(car);
-    auto at = std::find(s_ownCars.begin(), s_ownCars.end(), c);
-    if (own && at == s_ownCars.end()) s_ownCars.push_back(c);
-    if (!own && at != s_ownCars.end()) s_ownCars.erase(at);
-}
-
-bool Physics_CarHasOwn(const std::string& car) {
-    ReadGroups();
-    return std::find(s_ownCars.begin(), s_ownCars.end(), Lower(car)) != s_ownCars.end();
-}
-
 void Physics_UseShared() {
     if (pc.car.empty() || Shared()) return;
     SyncGroup();
-    SetOwnCar(pc.car, false);
-    if (pc.own) IniSave_Queue({{IniPath(), "Car." + pc.car, "", ""}});
-    else LeaveGroups(pc.car);
-    pc.own = false;
+    LeaveGroups(pc.car);
     pc.group.clear();
     LoadGlobal();
     Log("physics: %s back to [Physics] settings", pc.car.c_str());
 }
 
-void Physics_UseOwn() {
-    if (pc.car.empty() || pc.own) return;
-    SyncGroup();
-    if (Shared()) StoreGlobal();
-    else LeaveGroups(pc.car);
-    pc.group.clear();
-    pc.own = true;
-    SetOwnCar(pc.car, true);
-    // From the values in use (an old preset link in the section goes).
-    IniSave_Queue({IniErase(IniPath(), "Car." + pc.car, "Preset")});
-    WriteValues("Car." + pc.car);
-    Log("physics: %s has its own settings", pc.car.c_str());
-}
-
 void Physics_UseGroup(const std::string& name) {
     ReadGroups();
     Group* g = FindGroup(name);
-    if (pc.car.empty() || !g || (!pc.own && _stricmp(pc.group.c_str(), g->name.c_str()) == 0)) return;
+    if (pc.car.empty() || !g || _stricmp(pc.group.c_str(), g->name.c_str()) == 0) return;
     if (Shared()) StoreGlobal();
     SyncGroup();
-    if (pc.own) IniSave_Queue({{IniPath(), "Car." + pc.car, "", ""}});
-    SetOwnCar(pc.car, false);
     LeaveGroups(pc.car);
     g->cars.push_back(Lower(pc.car));
     WriteCars(*g);
-    pc.own = false;
     pc.group = g->name;
     LoadGlobal();
     ApplyGroup(*g);
@@ -1618,7 +1618,7 @@ std::string Physics_NewGroup() {
         if (!FindGroup(g.name)) break;
     }
     // The values in use (the car being driven), no cars yet.
-    for (int i = 0; i < kNumPerCar; i++) g.value[i] = g_cfg.*kPerCar[i].field, g.has[i] = true;
+    for (int i = 0; i < kNumPerCar; i++) g.value[i] = PresetValue(kPerCar[i]), g.has[i] = true;
     s_groups.push_back(g);
     WriteValues("Group." + g.name);
     WriteCars(g);
@@ -1627,35 +1627,48 @@ std::string Physics_NewGroup() {
 }
 
 namespace {
-int PerCarOf(const float* value) {
-    for (int i = 0; i < kNumPerCar; i++)
-        if (value == &(g_cfg.*kPerCar[i].field)) return i;
-    return -1;
+int PerCarOf(const void* value) { return PerCarIndex(value); }
+
+float GroupValue(const Group& g, int i) {
+    if (_stricmp(pc.group.c_str(), g.name.c_str()) == 0) return PresetValue(kPerCar[i]);
+    return g.value[i];
 }
 }  // namespace
 
-float Physics_GroupValue(const std::string& name, const float* value) {
+float Physics_GroupValue(const std::string& name, const void* value) {
     ReadGroups();
     int i = PerCarOf(value);
     Group* g = FindGroup(name);
-    if (i < 0 || !g) return value ? *value : 0.0f;
-    // The current car's group: what it drives on now.
-    if (!pc.own && _stricmp(pc.group.c_str(), g->name.c_str()) == 0) return *value;
-    if (g->has[i]) return g->value[i];
-    return Shared() ? *value : pc.global[i];
+    if (i < 0 || !g) return 0.0f;
+    return GroupValue(*g, i);
 }
 
-void Physics_SetGroupValue(const std::string& name, const float* value, float v) {
+void Physics_SetGroupValue(const std::string& name, const void* value, float v) {
     ReadGroups();
     int i = PerCarOf(value);
     Group* g = FindGroup(name);
     if (i < 0 || !g) return;
     v = Clamp(v, kPerCar[i].lo, kPerCar[i].hi);
     g->value[i] = v, g->has[i] = true;
-    if (!pc.own && _stricmp(pc.group.c_str(), g->name.c_str()) == 0) g_cfg.*kPerCar[i].field = v;
+    if (_stricmp(pc.group.c_str(), g->name.c_str()) == 0) SetPresetValue(kPerCar[i], v);
     char buf[32];
-    snprintf(buf, sizeof(buf), "%g", v);
+    FormatPresetValue(kPerCar[i], v, buf, sizeof(buf));
     IniSave_Queue({{IniPath(), "Group." + g->name, kPerCar[i].key, buf}});
+}
+
+float Physics_GroupTcMode(const std::string& name) {
+    float strength = Physics_GroupValue(name, &g_cfg.tractionControl);
+    bool enabled = Physics_GroupValue(name, &g_cfg.tc) >= 0.5f;
+    return enabled ? 2.0f : strength > 0.0f ? 1.0f : 0.0f;
+}
+
+void Physics_SetGroupTcMode(const std::string& name, float mode) {
+    mode = Clamp(roundf(mode), 0.0f, 2.0f);
+    float strength = Physics_GroupValue(name, &g_cfg.tractionControl);
+    Physics_SetGroupValue(name, &g_cfg.tc, mode == 2.0f ? 1.0f : 0.0f);
+    if (mode == 0.0f) strength = 0.0f;
+    else if (strength <= 0.0f) strength = 1.0f;
+    Physics_SetGroupValue(name, &g_cfg.tractionControl, strength);
 }
 
 const char* Physics_RenameGroup(const std::string& from, const std::string& to) {
@@ -1727,11 +1740,9 @@ void Physics_SetInGroup(const std::string& group, const std::string& car, bool i
     Log("physics: %s %s group %s", car.c_str(), in ? "added to" : "taken out of", g->name.c_str());
 }
 
-// --- profiles: a group or a car's own settings in a file of their own, to share ----------------
-// scripts\profiles\<Group|Car> - <name>.ini: [Profile] Kind=Group|Car, Name= the group's name or
-// the car (CARS folder name); [Values] every per-car value (missing ones in the group or section
-// filled in from the settings they fell back to, so the file drives the same anywhere); Cars= the
-// group's cars.
+// --- group profiles: a group's settings in a file of their own, to share ------------------------
+// scripts\profiles\Group - <name>.ini: [Profile] Kind=Group, Name= the group's name; [Values]
+// every preset value; Cars= the group's cars.
 namespace {
 
 std::string ProfileDir() {
@@ -1748,9 +1759,6 @@ std::string FileSafe(std::string name) {
         if (strchr("<>:\"/\\|?*", c) || (unsigned char)c < 32) c = '_';
     return name;
 }
-
-// The value a car on Shared has now.
-float SharedValue(int i) { return Shared() ? g_cfg.*kPerCar[i].field : pc.global[i]; }
 
 std::string WriteProfile(const std::string& kind, const std::string& name, const float* values, const std::string* cars) {
     std::string path = ProfileDir() + kind + " - " + FileSafe(name) + ".ini";
@@ -1775,30 +1783,13 @@ std::string Physics_ExportGroup(const std::string& name) {
     ReadGroups();
     Group* g = FindGroup(name);
     if (!g) return "";
-    bool current = !pc.own && _stricmp(pc.group.c_str(), g->name.c_str()) == 0;
+    bool current = _stricmp(pc.group.c_str(), g->name.c_str()) == 0;
     float v[kNumPerCar];
     for (int i = 0; i < kNumPerCar; i++)
-        v[i] = current ? g_cfg.*kPerCar[i].field : g->has[i] ? g->value[i] : SharedValue(i);
+        v[i] = current ? PresetValue(kPerCar[i]) : GroupValue(*g, i);
     std::string cars;
     for (const std::string& c : g->cars) cars += (cars.empty() ? "" : ",") + c;
     return WriteProfile("Group", g->name, v, &cars);
-}
-
-std::string Physics_ExportCar(const std::string& car) {
-    ReadGroups();
-    if (!Physics_CarHasOwn(car)) return "";
-    float v[kNumPerCar];
-    if (pc.own && _stricmp(pc.car.c_str(), car.c_str()) == 0) {
-        for (int i = 0; i < kNumPerCar; i++) v[i] = g_cfg.*kPerCar[i].field;
-    } else {
-        IniSave_Flush();
-        char buf[64];
-        std::string section = "Car." + car;
-        for (int i = 0; i < kNumPerCar; i++)
-            v[i] = GetPrivateProfileStringA(section.c_str(), kPerCar[i].key, "", buf, sizeof(buf), IniPath()) > 0
-                       ? Clamp((float)atof(buf), kPerCar[i].lo, kPerCar[i].hi) : SharedValue(i);
-    }
-    return WriteProfile("Car", Lower(car), v, nullptr);
 }
 
 std::vector<PhysicsProfile> Physics_Profiles() {
@@ -1816,9 +1807,8 @@ std::vector<PhysicsProfile> Physics_Profiles() {
         GetPrivateProfileStringA("Values", "Cars", "", cars, sizeof(cars), path.c_str());
         PhysicsProfile pr;
         pr.file = fd.cFileName;
-        pr.car = _stricmp(kind, "Car") == 0;
         pr.name = name;
-        if (pr.name.empty() || (!pr.car && _stricmp(kind, "Group") != 0)) continue;
+        if (pr.name.empty() || _stricmp(kind, "Group") != 0) continue;
         std::string list2 = cars;
         for (size_t a = 0; a < list2.size();) {
             size_t b = list2.find(',', a);
@@ -1832,7 +1822,7 @@ std::vector<PhysicsProfile> Physics_Profiles() {
     } while (FindNextFileA(h, &fd));
     FindClose(h);
     std::sort(list.begin(), list.end(), [](const PhysicsProfile& a, const PhysicsProfile& b) {
-        return a.car != b.car ? !a.car : _stricmp(a.name.c_str(), b.name.c_str()) < 0;
+        return _stricmp(a.name.c_str(), b.name.c_str()) < 0;
     });
     return list;
 }
@@ -1843,37 +1833,15 @@ std::string Physics_ImportProfile(const std::string& file) {
     char kind[16], name[128], buf[64];
     GetPrivateProfileStringA("Profile", "Kind", "", kind, sizeof(kind), path.c_str());
     GetPrivateProfileStringA("Profile", "Name", "", name, sizeof(name), path.c_str());
-    if (!name[0]) return "Not a profile: " + file;
-    // Its values (one missing in the file keeps the value it falls back to here).
+    if (!name[0] || _stricmp(kind, "Group") != 0) return "Not a group profile: " + file;
+    // Older profiles may lack newer settings; snapshot Shared for those values on import.
     float v[kNumPerCar];
-    bool has[kNumPerCar] = {};
-    for (int i = 0; i < kNumPerCar; i++)
+    for (int i = 0; i < kNumPerCar; i++) {
         if (GetPrivateProfileStringA("Values", kPerCar[i].key, "", buf, sizeof(buf), path.c_str()) > 0)
-            v[i] = Clamp((float)atof(buf), kPerCar[i].lo, kPerCar[i].hi), has[i] = true;
-    if (_stricmp(kind, "Car") == 0) {
-        // The car's own settings, as its [Car.<name>] section.
-        std::string car = Lower(name), section = "Car." + car;
-        std::vector<IniWrite> w = {{IniPath(), section, "", ""}};
-        for (int i = 0; i < kNumPerCar; i++) {
-            if (!has[i]) continue;
-            snprintf(buf, sizeof(buf), "%g", v[i]);
-            w.push_back({IniPath(), section, kPerCar[i].key, buf});
-        }
-        IniSave_Queue(w);
-        SetOwnCar(car, true);
-        if (_stricmp(car.c_str(), pc.car.c_str()) == 0) {
-            if (Shared()) StoreGlobal();
-            SyncGroup();
-            pc.group.clear();
-            pc.own = true;
-            LoadGlobal();
-            for (int i = 0; i < kNumPerCar; i++)
-                if (has[i]) g_cfg.*kPerCar[i].field = v[i];
-        }
-        Log("physics: profile %s imported: %s's own settings", file.c_str(), car.c_str());
-        return "Imported: " + car + "'s own settings";
+            v[i] = ReadPresetValue(kPerCar[i], buf);
+        else
+            v[i] = SharedPresetValue(i);
     }
-    if (_stricmp(kind, "Group") != 0) return "Not a profile: " + file;
     // A group: made, or the one with its name replaced; its cars move into it.
     SyncGroup();
     Group* g = FindGroup(name);
@@ -1885,10 +1853,9 @@ std::string Physics_ImportProfile(const std::string& file) {
     }
     std::vector<IniWrite> w = {{IniPath(), "Group." + g->name, "", ""}};
     for (int i = 0; i < kNumPerCar; i++) {
-        g->has[i] = has[i];
-        if (!has[i]) continue;
+        g->has[i] = true;
         g->value[i] = v[i];
-        snprintf(buf, sizeof(buf), "%g", v[i]);
+        FormatPresetValue(kPerCar[i], v[i], buf, sizeof(buf));
         w.push_back({IniPath(), "Group." + g->name, kPerCar[i].key, buf});
     }
     IniSave_Queue(w);
@@ -1910,7 +1877,7 @@ std::string Physics_ImportProfile(const std::string& file) {
     g->cars = cars;
     WriteCars(*g);
     // The car being driven, if it is in the group (and has no settings of its own), drives on it now.
-    if (!pc.own && !pc.car.empty()) {
+    if (!pc.car.empty()) {
         bool in = std::find(cars.begin(), cars.end(), Lower(pc.car)) != cars.end();
         if (in || _stricmp(pc.group.c_str(), groupName.c_str()) == 0) {
             if (Shared()) StoreGlobal();

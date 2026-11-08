@@ -79,9 +79,8 @@ void DrawGauge(const EngineStatus& st, int W, int H, float k) {
 // the items after it, up to the next PAGE. A LINK opens the page whose title is in its `section`.
 // RESET puts the page's settings (not its bindings) back to their defaults, after a second press:
 // the mod's defaults (Config), or with BF_GAME what the unmodded game does (kGameDefaults).
-// CAR switches the current car between its own physics values and the [Physics] ones; the
-// per-car sliders (Physics_IsPerCar) are saved to the car's section while it has its own.
-enum Kind { HEADER, TOGGLE, NUMBER, BIND, LINK, CAR, ACTION, SOUND, PAGE, RESET };
+// Physics preset values (Physics_IsPresetValue) are saved to Shared or the active group.
+enum Kind { HEADER, TOGGLE, NUMBER, BIND, LINK, ACTION, SOUND, PAGE, RESET };
 
 enum { BF_REQUIRED = 1, BF_CLUTCH = 2, BF_STEER = 8, BF_PEDAL = 16, BF_GAME = 32, BF_ONOFF = 64 };
 
@@ -1055,10 +1054,9 @@ bool InGroup(const std::string& group, const std::string& car) {
     return false;
 }
 
-// Where the current car's per-car sliders come from.
+// Where the current car's physics values come from.
 std::string SourceText() {
     if (!*Physics_Car()) return "No car yet";
-    if (Physics_OwnSettings()) return "This car's own";
     if (*Physics_CarGroup()) return std::string("Group: ") + Physics_CarGroup();
     return "Shared";
 }
@@ -1067,11 +1065,10 @@ std::string ValueText(const Item& it, int index) {
     char buf[64];
     if (it.value == &g_cfg.sequential) return g_cfg.sequential ? "Sequential" : "H-pattern";
     if (it.kind == TOGGLE) return *(bool*)it.value ? "On" : "Off";
-    if (it.kind == CAR) return *Physics_Car() ? (Physics_OwnSettings() ? "On" : "Off") : "No car";
     if (it.kind == LINK) return it.section == kMainPage ? "" : LinkSummary(it.section) + "  >";
     if (it.kind == ACTION && strcmp(it.key, "FfbStatus") == 0) return FfbStatus();
     if (it.kind == ACTION && strcmp(it.key, "CarInfo") == 0) return CarInfo();
-    if (it.kind == ACTION && strcmp(it.key, "CarSource") == 0) return Armed(index) ? "Sure? Its own values go" : SourceText();
+    if (it.kind == ACTION && strcmp(it.key, "CarSource") == 0) return SourceText();
     if (it.kind == ACTION && strcmp(it.key, "GroupPick") == 0) {
         std::string g = PickedGroup();
         return g.empty() ? "None yet (New group from this car, on the Physics page)" : g;
@@ -1479,22 +1476,18 @@ void UpdateRename(int toggles) {
     }
 }
 
-// Settings from, as an option: 0 shared, 1..n the groups, n + 1 the car's own.
+// Settings from, as an option: 0 Shared, 1..n the groups.
 int SourceIndex(const std::vector<std::string>& groups) {
-    int n = (int)groups.size();
-    if (Physics_OwnSettings()) return n + 1;
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < (int)groups.size(); i++)
         if (_stricmp(groups[i].c_str(), Physics_CarGroup()) == 0) return i + 1;
     return 0;
 }
 
 std::string SourceOption(const std::vector<std::string>& groups, int option) {
-    int n = (int)groups.size();
-    return option == 0 ? "Shared" : option == n + 1 ? "This car's own" : "Group: " + groups[option - 1];
+    return option == 0 ? "Shared" : "Group: " + groups[option - 1];
 }
 
-// The current car onto option `next`; leaving its own settings wants a second go (its own values
-// are deleted).
+// The current car onto option `next`.
 void SetSource(int index, int next) {
     if (!*Physics_Car()) {
         Note("Drive a car first");
@@ -1502,28 +1495,22 @@ void SetSource(int index, int next) {
     }
     std::vector<std::string> groups = Physics_Groups();
     int n = (int)groups.size(), cur = SourceIndex(groups);
-    if (next == cur || next < 0 || next > n + 1) return;
-    if (cur == n + 1 && !Armed(index)) {
-        s_menu.armed = index;
-        s_menu.armedTime = Now();
-        Note("Again to leave this car's own settings for " + SourceOption(groups, next) + " (its own values are deleted)");
-        return;
-    }
+    if (next == cur || next < 0 || next > n) return;
     s_menu.armed = -1;
     if (next == 0) Physics_UseShared();
-    else if (next == n + 1) Physics_UseOwn();
     else Physics_UseGroup(groups[next - 1]);
+    s_tcMode = g_cfg.tc ? 2.0f : g_cfg.tractionControl > 0.0f ? 1.0f : 0.0f;
     Note(std::string(Physics_Car()) + ": " + SourceText());
 }
 
-// Settings from (left / right: shared, each group, this car's own; leaving its own wants a second
-// press), New group from this car, and the Groups page: Group and Car pick (left / right), In this
+// Settings from (left / right: Shared or a group), New group from this car, and the Groups page:
+// Group and Car pick (left / right), In this
 // group switches the picked car in or out, Rename types a name, Delete wants a second press.
 void ChangeGroup(int index, const char* key, int dir) {
     std::vector<std::string> groups = Physics_Groups();
     if (strcmp(key, "CarSource") == 0) {
         int n = (int)groups.size();
-        SetSource(index, (SourceIndex(groups) + dir + n + 2) % (n + 2));
+        SetSource(index, (SourceIndex(groups) + dir + n + 1) % (n + 1));
         return;
     }
     if (strcmp(key, "GroupNew") == 0) {
@@ -1567,10 +1554,6 @@ void ChangeGroup(int index, const char* key, int dir) {
         std::string c = PickedCar();
         if (c.empty()) return;
         bool in = !InGroup(g, c);
-        if (in && Physics_OwnSettings() && _stricmp(c.c_str(), Physics_Car()) == 0) {
-            Note("This car has its own settings: switch it to the group in Settings from, on the Physics page");
-            return;
-        }
         Physics_SetInGroup(g, c, in);
         Note(Cars_DisplayName(c) + (in ? " added to " : " taken out of ") + g);
         return;
@@ -1728,11 +1711,6 @@ void Change(int index, int dir) {
                : "Already at the defaults");
         Log("ui: page reset to %s defaults, %d settings", game ? "game" : "mod", n);
         return;
-    } else if (it.kind == CAR) {
-        if (!*Physics_Car()) return;
-        if (Physics_OwnSettings()) Physics_UseShared();
-        else Physics_UseOwn();
-        Note(std::string(Physics_Car()) + (Physics_OwnSettings() ? ": own physics settings" : ": back to the shared physics settings"));
     } else if (it.kind == BIND) {
         if (dir > 0) StartCapture(index);
         else Unbind(it);
@@ -1748,7 +1726,7 @@ void Change(int index, int dir) {
 void Save() {
     std::vector<IniWrite> writes;
     for (const Item& it : kItems) {
-        if (it.kind == HEADER || it.kind == LINK || it.kind == CAR || it.kind == ACTION || it.kind == PAGE || it.kind == RESET) continue;
+        if (it.kind == HEADER || it.kind == LINK || it.kind == ACTION || it.kind == PAGE || it.kind == RESET) continue;
         char buf[32];
         std::string text;
         if (it.kind == TOGGLE) snprintf(buf, sizeof(buf), "%d", *(bool*)it.value ? 1 : 0), text = buf;
@@ -1762,17 +1740,17 @@ void Save() {
             continue;
         }
         if (it.value == &s_tcMode) {
-            // Two settings: the game's own strength (per car) and the throttle trim (every car).
+            // Traction-control strength and mode are both saved with the selected preset.
             snprintf(buf, sizeof(buf), "%g", g_cfg.tractionControl);
             writes.push_back({IniPath(), Physics_Section(), "TractionControl", buf});
-            writes.push_back({IniPath(), "Physics", "TC", g_cfg.tc ? "1" : "0"});
+            writes.push_back({IniPath(), Physics_Section(), "TC", g_cfg.tc ? "1" : "0"});
             continue;
         }
         if (it.value == &g_cfg.engineSmokeBack) {
             if (*Physics_Car()) writes.push_back({IniPath(), std::string("Smoke.") + Physics_Car(), "Back", text});
             continue;
         }
-        std::string section = Physics_IsPerCar(it.value) ? Physics_Section() : it.section;
+        std::string section = Physics_IsPresetValue(it.value) ? Physics_Section() : it.section;
         writes.push_back({IniPath(), section, it.key, text});
     }
     // Settings that are gone or became part of another.
@@ -2156,7 +2134,7 @@ const struct {
     {&s_tcMode, "Off. Game's: the game's own traction control, which cuts power to a spinning wheel. Game's + launch control: that, plus the throttle trimmed while the driven wheels spin, and a tighter limit from a standstill so launches hook up without wheelspin; icon above the map, and on a button (Controls > TC on / off)."},
     {&g_cfg.stability, "The game's stability aid: grip added to the rear while the car rotates, and a damper on slides. 0% = off: you catch slides yourself, as in a real car without ESC. 100% = the game's."},
     {&g_cfg.driftAssist, "The game's drift aid: rear grip taken away once a slide starts, so slides start easily and last. 0% = off. 100% = the game's."},
-    {&g_cfg.grip, "Grip of all four tyres. Lower: the car slides at lower speeds in every corner; higher: it holds on harder everywhere. It doesn't change the balance between front and rear. 1.000x = the game's. Per car."},
+    {&g_cfg.grip, "Grip of all four tyres. Lower: the car slides at lower speeds in every corner; higher: it holds on harder everywhere. It doesn't change the balance between front and rear. 1.000x = the game's. Per preset."},
     {&g_cfg.abs, "ABS: a wheel that locks under braking has its brake eased off and reapplied, so full braking stops the car straight instead of spinning it. Icon above the map (flashes while it works). Also on a button: Controls > ABS on / off."},
     {&g_cfg.toggleAbs, "Switches ABS on or off while driving (saved)."},
     {&g_cfg.toggleTc, "Switches traction control (and launch control) on or off while driving (saved)."},
@@ -2172,21 +2150,21 @@ const struct {
     {&g_cfg.telOpacity, "How solid the panel is."},
     {&g_cfg.telSmooth, "How quickly the needles follow the car: the time they take to cover most of a change. 0 = every physics step as it is (jittery)."},
     {&g_cfg.telTrail, "How long the G-force dot's trail is. 0 = no trail."},
-    {&g_cfg.character, "How much each car is itself. The game gives every car its own springs, anti-roll bars, grip and torque, but keeps them close together; this spreads them apart. Soft cars (the muscle cars) roll and dive more, stiff ones (the race cars) get flatter and sharper; cars with less grip than most lose some more, and none gets more grip than the game gives it; cars with a lot of torque for their weight and grip step out more under power. 0% = the game's values; 50% = the default. Every car (each by its own data)."},
-    {&g_cfg.realWeight, "The game puts 51-55% of every car's weight on the front wheels, the 911 and the mid-engined cars too. On: each car gets its real car's weight distribution (a 911 38% front, a Lamborghini 42%, a front drive hatchback 62%), so rear-engined cars are tail-happy and get traction out of corners, and front-heavy ones push wide. Every car."},
-    {&g_cfg.gripBalance, "Moves grip between the front and rear tyres, all the time, also under braking and in a straight line. + : the rear lets go first (oversteer), - : the front does (understeer). Best left at 0: use Roll balance to change how the car corners, as setups in real cars do. Above 0 it also makes the car spin under hard braking. Per car."},
-    {&g_cfg.tyreSlideGrip, "How much grip a tyre keeps once it slides well past its limit, compared with its best. Lower (75-80%): a slide grows unless you catch it with countersteer, a car that needs care. Higher (90-95%): forgiving, slides stay small and the car hangs on. 100% = the game's tyres (no drop past the limit). Not on grass and dirt. Per car."},
-    {&g_cfg.tyrePeakAngle, "How far a tyre slips sideways before it gives its best grip. Lower (5-6 deg): sharp and quick to respond, but it lets go suddenly. Higher (10-12 deg): softer, more warning before it slides. Road tyres are about 6 to 10 deg. Every car."},
-    {&g_cfg.rainGrip, "Tyre grip in the rain (90% = 10% less), from a light rain on."},
-    {&g_cfg.downforce, "This car's own aerodynamic downforce, in % of what the game gives it, so each car keeps its own aero (and the pause menu's aero tuning). It pushes the car down harder the faster it goes, so it matters in fast corners: more, the car grips harder at speed; less, it gets lighter and looser the faster you go; nothing changes in slow corners. Below 0 it turns into lift. The log shows how much it is for each car. Per car."},
-    {&g_cfg.downforceSquared, "On: the downforce grows with the square of the speed, as real aero does: the same as the game's (times Downforce) at 250 km/h, a fifth of it at 50 km/h, so the car is no longer glued down in town. Off: the game's straight line, already strong at low speed. Every car."},
-    {&g_cfg.slideWheelspin, "How freely the driven wheels spin up once their tyres slide under power. The game keeps a sliding wheel turning nearly at road speed, so in a drift the revs stay flat and the throttle hardly changes the slide. Higher: the wheels spin up past the limit and the revs climb, and the throttle steers the slide (more throttle, more angle). 0% = the game's. Every car."},
-    {&g_cfg.frictionCircle, "A tyre's grip is shared between driving and cornering. At 100%, flooring it in a low gear takes side grip away from the driven tyres: a rear drive car steps out, a front drive car pushes wide, and easing off tightens the line again. At speed in a high gear it changes little. 0% = the game's (the throttle hardly affects cornering). Above 100% exaggerates it, for testing. Every car."},
-    {&g_cfg.suspFirmness, "Springs, anti-roll bars and dampers together, in % of this car's own. Softer: more body roll, the nose dives under braking and lifts under throttle, a lazier car with more warning. Firmer: flatter and sharper, a little less grip at the limit. Per car."},
-    {&g_cfg.rollBalance, "The main way to change how the car corners. If it pushes wide (understeer), go below 0: the rear anti-roll bar gets stiffer and the front grips better. If the rear steps out in corners (oversteer), go above 0. Start with steps of 10%. It only acts while cornering, so braking and straights stay stable. 0 = the car's own. Per car."},
-    {&g_cfg.wallBounce, "How much your car springs back off walls and barriers, as a share of the game's bounce. 0% = none: it stops at the wall or slides along it (the game already does that for head-on hits). The friction along the wall, the spin from the hit, force feedback jolts and damage stay as they were. Every car."},
-    {&g_cfg.offroadGrip, "Tyre grip on grass, dirt, mud, gravel and sand (each tyre by the surface under it). 100% = as on the road."},
-    {&g_cfg.gravity, "Gravity in g. Grip scales with it."},
+    {&g_cfg.character, "How much each car is itself. The game gives every car its own springs, anti-roll bars, grip and torque, but keeps them close together; this spreads them apart. Soft cars (the muscle cars) roll and dive more, stiff ones (the race cars) get flatter and sharper; cars with less grip than most lose some more, and none gets more grip than the game gives it; cars with a lot of torque for their weight and grip step out more under power. 0% = the game's values; 50% = the default. Saved per preset and applied using each car's data."},
+    {&g_cfg.realWeight, "The game puts 51-55% of every car's weight on the front wheels, the 911 and the mid-engined cars too. On: each car gets its real car's weight distribution (a 911 38% front, a Lamborghini 42%, a front drive hatchback 62%), so rear-engined cars are tail-happy and get traction out of corners, and front-heavy ones push wide. Saved per preset."},
+    {&g_cfg.gripBalance, "Moves grip between the front and rear tyres, all the time, also under braking and in a straight line. + : the rear lets go first (oversteer), - : the front does (understeer). Best left at 0: use Roll balance to change how the car corners, as setups in real cars do. Above 0 it also makes the car spin under hard braking. Per preset."},
+    {&g_cfg.tyreSlideGrip, "How much grip a tyre keeps once it slides well past its limit, compared with its best. Lower (75-80%): a slide grows unless you catch it with countersteer, a car that needs care. Higher (90-95%): forgiving, slides stay small and the car hangs on. 100% = the game's tyres (no drop past the limit). Not on grass and dirt. Per preset."},
+    {&g_cfg.tyrePeakAngle, "How far a tyre slips sideways before it gives its best grip. Lower (5-6 deg): sharp and quick to respond, but it lets go suddenly. Higher (10-12 deg): softer, more warning before it slides. Road tyres are about 6 to 10 deg. Per preset."},
+    {&g_cfg.rainGrip, "Tyre grip in the rain (90% = 10% less), from a light rain on. Per preset."},
+    {&g_cfg.downforce, "A share of this car's aerodynamic downforce, in % of what the game gives it, while retaining the pause menu's aero tuning. It pushes the car down harder the faster it goes, so it matters in fast corners: more, the car grips harder at speed; less, it gets lighter and looser the faster you go; nothing changes in slow corners. Below 0 it turns into lift. The log shows how much it is for each car. Per preset."},
+    {&g_cfg.downforceSquared, "On: the downforce grows with the square of the speed, as real aero does: the same as the game's (times Downforce) at 250 km/h, a fifth of it at 50 km/h, so the car is no longer glued down in town. Off: the game's straight line, already strong at low speed. Per preset."},
+    {&g_cfg.slideWheelspin, "How freely the driven wheels spin up once their tyres slide under power. The game keeps a sliding wheel turning nearly at road speed, so in a drift the revs stay flat and the throttle hardly changes the slide. Higher: the wheels spin up past the limit and the revs climb, and the throttle steers the slide (more throttle, more angle). 0% = the game's. Per preset."},
+    {&g_cfg.frictionCircle, "A tyre's grip is shared between driving and cornering. At 100%, flooring it in a low gear takes side grip away from the driven tyres: a rear drive car steps out, a front drive car pushes wide, and easing off tightens the line again. At speed in a high gear it changes little. 0% = the game's (the throttle hardly affects cornering). Above 100% exaggerates it, for testing. Per preset."},
+    {&g_cfg.suspFirmness, "Springs, anti-roll bars and dampers together, in % of this car's own. Softer: more body roll, the nose dives under braking and lifts under throttle, a lazier car with more warning. Firmer: flatter and sharper, a little less grip at the limit. Per preset."},
+    {&g_cfg.rollBalance, "The main way to change how the car corners. If it pushes wide (understeer), go below 0: the rear anti-roll bar gets stiffer and the front grips better. If the rear steps out in corners (oversteer), go above 0. Start with steps of 10%. It only acts while cornering, so braking and straights stay stable. 0 = the car's own. Per preset."},
+    {&g_cfg.wallBounce, "How much your car springs back off walls and barriers, as a share of the game's bounce. 0% = none: it stops at the wall or slides along it (the game already does that for head-on hits). The friction along the wall, the spin from the hit, force feedback jolts and damage stay as they were. Per preset."},
+    {&g_cfg.offroadGrip, "Tyre grip on grass, dirt, mud, gravel and sand (each tyre by the surface under it). 100% = as on the road. Per preset."},
+    {&g_cfg.gravity, "Gravity in g. Grip scales with it. Per preset."},
     {&g_cfg.opponentSpeed, "Career race opponents only; applies live. 100% = the game's speed, 90% = slower opponents. Range: 25-200%, in 5% steps. Does not change traffic density, opponent counts, police or other race modes."},
     {&g_cfg.gravityAll, "Gravity applies to AI and traffic too."},
     {&g_cfg.noHeavySupport, "No heavy support: the SUVs a pursuit sends to ram you head-on out of oncoming traffic don't come. SUV patrols and SUVs in roadblocks still do."},
@@ -2201,22 +2179,21 @@ const struct {
     {&g_cfg.classicMenu, "The old flat menu (no textures), in case this one gives trouble."},
 };
 
-const char* HelpText(const Item& it) {
-    if (it.kind == CAR) return "On: this car keeps its own values for the sliders on this page marked per car (grip, roll balance, suspension firmness, downforce, ...), saved in its [Car.<name>] section; other cars keep the shared ones. Off: it goes back to the shared values. Character and real weight act on either.";
+std::string HelpText(const Item& it) {
     if (it.kind == ACTION && strcmp(it.key, "RecenterVr") == 0)
         return "Makes the way you are facing now straight ahead, at the driver's seat (same as the VR mod's key, F8).";
     if (it.kind == ACTION && strcmp(it.key, "CarSource") == 0)
-        return "Where this car's per-car sliders come from, and are saved. Shared: the same values as every other car on Shared. A group: the group's values, shared by the cars in it, so changing a slider changes it for all of them. This car's own: values for this car alone. Left / right to switch. Car character and real weight act on top of each.";
+        return "Where this car's physics values come from, and are saved. Shared: the same values as every other car on Shared. A group: the group's values, shared by the cars in it, so changing a value changes it for all of them. Left / right to switch.";
     if (it.kind == ACTION && strcmp(it.key, "GroupNew") == 0)
         return "Makes a new group (Group 1, Group 2, ...) from the values the car you're driving has now, with no cars in it yet: add cars to it and rename it here.";
     if (it.kind == ACTION && strcmp(it.key, "GroupPick") == 0)
         return "The group this page is about. Left / right to pick another.";
     if (it.kind == ACTION && strcmp(it.key, "GroupMembers") == 0)
-        return "The cars in this group: they all drive on its values (each still its own with Car character and real weight).";
+        return "The cars in this group: they share its physics settings, while car character and real weight still reflect each model's data.";
     if (it.kind == ACTION && strcmp(it.key, "GroupCar") == 0)
         return "Any player car, not only the one you're driving: left / right to pick one, then In this group to add it to the group or take it out.";
     if (it.kind == ACTION && strcmp(it.key, "GroupCarIn") == 0)
-        return "Adds the picked car to this group (out of any other) or takes it out (back to the shared settings). A car with its own settings keeps them until you switch it to the group in its own Settings from.";
+        return "Adds the picked car to this group (out of any other) or takes it out (back to the shared settings).";
     if (it.kind == ACTION && strcmp(it.key, "GroupRename") == 0)
         return "Type a new name for this group on the keyboard: Enter keeps it, Escape cancels.";
     if (it.kind == ACTION && strcmp(it.key, "GroupDelete") == 0)
@@ -2237,7 +2214,11 @@ const char* HelpText(const Item& it) {
     if (it.kind == RESET) return "Every setting on this page back to the mod's default. Bindings and your wheel setup are kept: wheel rotation, steering lock, deadzones, the game's controller input switches, and the force feedback wheel, direction and strength.";
     if (it.kind == LINK) return it.section == kMainPage ? "Back to the categories." : "";
     for (auto& h : kHelp)
-        if (h.value == it.value) return h.text;
+        if (h.value == it.value) {
+            std::string text = h.text;
+            if (Physics_IsPresetValue(it.value) || it.value == &s_tcMode) text += " Saved with the selected Shared or group preset.";
+            return text;
+        }
     if (it.kind == BIND) return "Right: add a key, button or pedal. Left: unbind.";
     return "";
 }
@@ -2547,9 +2528,8 @@ void ValueWidget(int i, float w, float k) {
     float x0 = ImGui::GetCursorPosX();
     std::string v = ValueText(it, i);
     switch (it.kind) {
-        case TOGGLE:
-        case CAR: {
-            bool on = it.kind == TOGGLE ? *(bool*)it.value : (*Physics_Car() && Physics_OwnSettings());
+        case TOGGLE: {
+            bool on = *(bool*)it.value;
             if (Switch("sw", on, k)) {
                 s_menu.sel = i;
                 Change(i, +1);
@@ -2622,12 +2602,12 @@ void ValueWidget(int i, float w, float k) {
         }
         case ACTION:
             if (strcmp(it.key, "CarSource") == 0 && *Physics_Car()) {
-                // A drop-down: Shared, each group, this car's own (left / right still step through them).
+                // A drop-down: Shared or a group (left / right still step through them).
                 std::vector<std::string> groups = Physics_Groups();
                 int cur = SourceIndex(groups);
                 ImGui::SetNextItemWidth(w);
                 if (ImGui::BeginCombo("##source", v.c_str())) {
-                    for (int o = 0; o < (int)groups.size() + 2; o++)
+                    for (int o = 0; o < (int)groups.size() + 1; o++)
                         if (ImGui::Selectable(SourceOption(groups, o).c_str(), o == cur)) {
                             s_menu.sel = i;
                             SetSource(i, o);
@@ -2915,7 +2895,7 @@ void DrawGroupsPage(float k) {
             NavStopHere([del](int dir) { if (dir > 0) del(); else GoBack(); },
                         "Deletes " + picked + " (press twice). Its cars go back to the shared settings.", k);
         }
-        // Sharing: a group or this car's own settings to a file in scripts\profiles, and back.
+        // Sharing a group's values and its car list to a profile, and back.
         ImGui::Dummy(ImVec2(0, 6 * k));
         SectionTitle("SHARE", k);
         auto fileOf = [](const std::string& path) { size_t at = path.find_last_of('\\'); return path.substr(at + 1); };
@@ -2928,16 +2908,6 @@ void DrawGroupsPage(float k) {
             NavStopHere([exportGroup](int dir) { if (dir > 0) exportGroup(); else GoBack(); },
                         "Saves " + picked + " (all its values and its cars) as a file in scripts\\profiles, to send to someone: "
                         "they put it in their profiles folder and import it here.", k);
-        }
-        if (*Physics_Car() && Physics_OwnSettings()) {
-            std::string car = Physics_Car();
-            auto exportCar = [car, fileOf]() {
-                std::string path = Physics_ExportCar(car);
-                Note(path.empty() ? "Nothing to export" : "Saved as profiles\\" + fileOf(path) + " (send it as it is)");
-            };
-            if (ImGui::Button("Export this car", ImVec2(w, 0))) exportCar();
-            NavStopHere([exportCar](int dir) { if (dir > 0) exportCar(); else GoBack(); },
-                        "Saves this car's own settings (" + Cars_DisplayName(car) + ") as a file in scripts\\profiles, to send to someone.", k);
         }
         auto toggleImport = []() {
             s_menu.importing = !s_menu.importing;
@@ -2957,7 +2927,7 @@ void DrawGroupsPage(float k) {
         if (s_menu.profiles.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextUnformatted("No profiles yet.");
-            ImGui::TextDisabled("Export a group or a car's own settings, or put the profile files you were sent in %s.",
+            ImGui::TextDisabled("Export a group, or put the group profile files you were sent in %s.",
                                 Physics_ProfileDir().c_str());
             ImGui::PopTextWrapPos();
         }
@@ -2969,15 +2939,9 @@ void DrawGroupsPage(float k) {
             // What it is, and what importing it does here.
             std::string what, effect;
             bool replaces = false;
-            if (pr.car) {
-                what = "Car: " + Cars_DisplayName(pr.name);
-                replaces = Physics_CarHasOwn(pr.name);
-                effect = replaces ? "replaces its own settings" : "becomes its own settings";
-            } else {
-                what = "Group: " + pr.name + "  (" + std::to_string(pr.cars.size()) + (pr.cars.size() == 1 ? " car)" : " cars)");
-                for (const std::string& g : groups) replaces |= _stricmp(g.c_str(), pr.name.c_str()) == 0;
-                effect = replaces ? "replaces your " + pr.name : "a new group";
-            }
+            what = "Group: " + pr.name + "  (" + std::to_string(pr.cars.size()) + (pr.cars.size() == 1 ? " car)" : " cars)");
+            for (const std::string& g : groups) replaces |= _stricmp(g.c_str(), pr.name.c_str()) == 0;
+            effect = replaces ? "replaces your " + pr.name : "a new group";
             int arm = kArmImport + (int)n;
             auto import = [pr, replaces, arm]() {
                 if (replaces && !Armed(arm)) {
@@ -2988,13 +2952,13 @@ void DrawGroupsPage(float k) {
                 }
                 s_menu.armed = -1;
                 Note(Physics_ImportProfile(pr.file));
-                if (!pr.car) s_menu.group = pr.name;
+                s_menu.group = pr.name;
                 s_menu.profiles = Physics_Profiles();
             };
             std::string label = FitText(what, w * 0.62f, ImGui::GetFont(), ImGui::GetFontSize());
             if (ImGui::Button(Armed(arm) ? "Click again" : label.c_str(), ImVec2(w * 0.64f, 0))) import();
             std::string help = pr.file + ": " + what + ". Importing it " + effect + ".";
-            if (!pr.car) help += " Its cars move into it (out of any other group); a car with its own settings keeps them.";
+            help += " Its cars move into it (out of any other group).";
             NavStopHere([import](int dir) { if (dir > 0) import(); else GoBack(); }, help, k);
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
@@ -3028,19 +2992,13 @@ void DrawGroupsPage(float k) {
             std::string other;
             for (const std::string& g : groups)
                 if (_stricmp(g.c_str(), picked.c_str()) != 0 && InGroup(g, car)) other = g;
-            bool own = Physics_CarHasOwn(car) || (_stricmp(car.c_str(), Physics_Car()) == 0 && Physics_OwnSettings());
             std::string name = Cars_DisplayName(car);
-            auto toggle = [picked, car, in, own]() {
-                if (!in && own && _stricmp(car.c_str(), Physics_Car()) == 0) {
-                    Note("This car has its own settings: switch it to the group in Settings from, on the Physics page");
-                    return;
-                }
+            auto toggle = [picked, car, in]() {
                 Physics_SetInGroup(picked, car, !in);
                 Note(Cars_DisplayName(car) + (in ? " taken out of " : " added to ") + picked);
             };
-            // The tag (another group's name, or "own") in the small font, at the cell's right end; the
-            // name gets the rest, and both are cut with an ellipsis when they don't fit.
-            std::string tag = own ? "own" : other;
+            // The other group's name in the small font, at the cell's right end.
+            std::string tag = other;
             float boxW = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x, gap = 6 * k;
             float tagW = tag.empty() ? 0.0f : std::min(s_im.small->CalcTextSizeA(s_im.small->FontSize, FLT_MAX, 0, tag.c_str()).x,
                                                         cellW * 0.35f);
@@ -3049,7 +3007,6 @@ void DrawGroupsPage(float k) {
             if (ImGui::Checkbox((shown + "##box").c_str(), &box)) toggle();
             std::string help = name + (in ? ": in " + picked + ". Right takes it out." : ": not in " + picked + ". Right adds it.");
             if (!other.empty()) help += " It's in " + other + " now: adding it moves it.";
-            if (own) help += " It has its own settings, which go before any group (Settings from, in that car, switches it).";
             NavStopHere([toggle](int dir) { if (dir > 0) toggle(); else GoBack(); }, help, k);
             if (!tag.empty()) {
                 std::string t = FitText(tag, tagW, s_im.small, s_im.small->FontSize);
@@ -3071,22 +3028,44 @@ void DrawGroupsPage(float k) {
             if (kItems[i].kind == PAGE && strcmp(kItems[i].label, "PHYSICS") == 0) physics = i;
         for (int i = physics + 1; i < kNumItems && kItems[i].kind != PAGE; i++) {
             const Item& it = kItems[i];
-            if (it.kind != NUMBER || !Physics_IsPerCar(it.value)) continue;
-            const float* field = (const float*)it.value;
+            bool tcMode = it.value == &s_tcMode;
+            if ((it.kind != NUMBER && it.kind != TOGGLE) || (!tcMode && !Physics_IsPresetValue(it.value))) continue;
             ImGui::PushID(i);
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(it.label);
             ImGui::SameLine(labelW);
-            float v = Physics_GroupValue(picked, field);
-            float shown = v * it.show;
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            if (ImGui::SliderFloat("##v", &shown, it.lo * it.show, it.hi * it.show, it.fmt, ImGuiSliderFlags_NoInput))
-                Physics_SetGroupValue(picked, field, Clamp(roundf(shown / it.show / it.step) * it.step, it.lo, it.hi));
-            NavStopHere([picked, field, i](int dir) {
-                const Item& row = kItems[i];
-                float now = Physics_GroupValue(picked, field);
-                Physics_SetGroupValue(picked, field, Clamp(roundf((now + dir * row.step) / row.step) * row.step, row.lo, row.hi));
-            }, std::string(HelpText(it)) + " For every car in " + picked + ".", k);
+            if (it.kind == TOGGLE) {
+                bool enabled = Physics_GroupValue(picked, it.value) >= 0.5f;
+                if (ImGui::Checkbox("##v", &enabled)) Physics_SetGroupValue(picked, it.value, enabled ? 1.0f : 0.0f);
+                NavStopHere([picked, value = it.value](int) {
+                    bool enabled = Physics_GroupValue(picked, value) < 0.5f;
+                    Physics_SetGroupValue(picked, value, enabled ? 1.0f : 0.0f);
+                }, std::string(HelpText(it)) + " For every car in " + picked + ".", k);
+            } else {
+                float v = tcMode ? Physics_GroupTcMode(picked) : Physics_GroupValue(picked, it.value);
+                float shown = v * it.show;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                if (ImGui::SliderFloat("##v", &shown, it.lo * it.show, it.hi * it.show, it.fmt, ImGuiSliderFlags_NoInput)) {
+                    float changed = Clamp(roundf(shown / it.show / it.step) * it.step, it.lo, it.hi);
+                    if (tcMode) {
+                        Physics_SetGroupTcMode(picked, changed);
+                        if (_stricmp(Physics_CarGroup(), picked.c_str()) == 0) s_tcMode = changed;
+                    } else {
+                        Physics_SetGroupValue(picked, it.value, changed);
+                    }
+                }
+                NavStopHere([picked, i, tcMode](int dir) {
+                    const Item& row = kItems[i];
+                    float now = tcMode ? Physics_GroupTcMode(picked) : Physics_GroupValue(picked, row.value);
+                    float changed = Clamp(roundf((now + dir * row.step) / row.step) * row.step, row.lo, row.hi);
+                    if (tcMode) {
+                        Physics_SetGroupTcMode(picked, changed);
+                        if (_stricmp(Physics_CarGroup(), picked.c_str()) == 0) s_tcMode = changed;
+                    } else {
+                        Physics_SetGroupValue(picked, row.value, changed);
+                    }
+                }, std::string(HelpText(it)) + " For every car in " + picked + ".", k);
+            }
             ImGui::PopID();
         }
     }
@@ -3304,7 +3283,7 @@ void Ui_Frame() {
     IDirect3DDevice9* dev = *(IDirect3DDevice9**)kDevice;
     if (!dev) return;
     Physics_Frame();
-    // The traction control row follows the settings (the TC binding, a car's own values).
+    // The traction control row follows the selected preset and the TC binding.
     s_tcMode = g_cfg.tc ? 2.0f : g_cfg.tractionControl > 0.0f ? 1.0f : 0.0f;
     // The FFB mod's soft lock sits at the steering lock.
     if (float* at = ExtSetting(FFB_SOFTLOCKAT))

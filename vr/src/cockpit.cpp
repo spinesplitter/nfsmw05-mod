@@ -3591,6 +3591,27 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     if (info == s_solids.end()) return false;
     const auto& edits = EditsFor(SolidName(info->second));
     const auto& marks = edits.arms;
+    auto point = [](const float* p) { return CustomDriver::Point{p[0], p[1], p[2]}; };
+    int candidates[2][4];
+    for(int side=0;side<2;++side) {
+        for(int j=0;j<3;++j) candidates[side][j]=rig->arms[side*3+j];
+        candidates[side][3]=rig->Find(side ? "JNT_hand_tip.R" : "JNT_hand_tip.L");
+    }
+    auto buildBinding = [&](CustomDriver::Point p) {
+        DriverBindingCache::Binding result;
+        result.weight=NativeArmWeight(*rig,p);
+        float best=1e9f;
+        for(int side=0;side<2;++side) for(int b:candidates[side]) if(b>=0) {
+            auto a=point(rig->bones[b].head), d=point(rig->bones[b].tail)-a;
+            float t=std::max(0.0f,std::min(1.0f,CustomDriver::Dot(p-a,d)/
+                std::max(1e-10f,CustomDriver::Dot(d,d))));
+            float distance=CustomDriver::Length(p-(a+d*t));
+            if(distance<best) { best=distance; result.bone=b; result.side=side; }
+        }
+        return result;
+    };
+    static DriverBindingCache bindings;
+    bindings.Prepare(*rig);
     DriverPoseSelection selection((unsigned)std::max(0,mesh.numVerts));
     for (unsigned t = 0; t < triangles; ++t) {
         const uint16_t* v = mesh.indices + first + t * 3;
@@ -3601,6 +3622,36 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
             for (int j = 0; j < 3; ++j) if ((int)v[j] + base >= 0) {
                 selection.Add(v[j],manual);
             }
+        if(manual && info->second.driver && info->second.driver->rig.ok) {
+            auto p0=point(mesh.pos(v[0])), p1=point(mesh.pos(v[1])), p2=point(mesh.pos(v[2]));
+            auto binding=buildBinding((p0+p1+p2)*(1.0f/3.0f));
+            if(binding.side>=0 &&
+               (binding.bone==rig->arms[binding.side*3+2] ||
+                binding.bone==candidates[binding.side][3])) {
+                for(int j=0;j<3;++j)
+                    selection.SetBoneOverride(v[j],binding.bone,binding.side,2);
+            } else if(binding.side>=0 &&
+               (binding.bone==rig->arms[binding.side*3] ||
+                binding.bone==rig->arms[binding.side*3+1])) {
+                int upper=rig->arms[binding.side*3], fore=rig->arms[binding.side*3+1];
+                int hand=rig->arms[binding.side*3+2], tip=candidates[binding.side][3];
+                for(int j=0;j<3;++j) {
+                    auto p=point(mesh.pos(v[j]));
+                    auto vertexBinding=bindings.Get(v[j],p,[&]() { return buildBinding(p); });
+                    if(vertexBinding.bone!=hand && vertexBinding.bone!=tip) continue;
+                    float best=1e9f;
+                    int sleeveBone=-1;
+                    for(int b:{upper,fore}) if(b>=0) {
+                        auto a=point(rig->bones[b].head), d=point(rig->bones[b].tail)-a;
+                        float t=std::max(0.0f,std::min(1.0f,CustomDriver::Dot(p-a,d)/
+                            std::max(1e-10f,CustomDriver::Dot(d,d))));
+                        float distance=CustomDriver::Length(p-(a+d*t));
+                        if(distance<best) { best=distance; sleeveBone=b; }
+                    }
+                    if(sleeveBone>=0) selection.SetBoneOverride(v[j],sleeveBone,binding.side,1);
+                }
+            }
+        }
     }
     // Manual priority is recorded during selection, independent of triangle order.
     // Shared sleeve/body seam vertices must not drag adjacent torso triangles.
@@ -3638,10 +3689,8 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     std::vector<V3> head, tail;
     DriverArmPose(draw->second.world, head, tail);
     if (head.empty()) return false;
-    auto point = [](const float* p) { return CustomDriver::Point{p[0], p[1], p[2]}; };
     const bool steering = NativeSteeringActive();
     const int control = ControlSide();
-    int candidates[2][4];
     DriverSteering::Grip grips[2]{};
     float forearmRoll[2]{};
     CustomDriver::Point wheelAxis{};
@@ -3662,7 +3711,8 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         CustomDriver::Point posedDir{tail[fore].x-head[fore].x,tail[fore].y-head[fore].y,tail[fore].z-head[fore].z};
         auto restHand=point(rig->bones[hand].tail)-point(rig->bones[hand].head);
         CustomDriver::Point posedHand{tail[hand].x-head[hand].x,tail[hand].y-head[hand].y,tail[hand].z-head[hand].z};
-        forearmRoll[side]=DriverSteering::CuffRoll(restDir,posedDir,restHand,posedHand,wheelAxis,grips[side].roll);
+        forearmRoll[side]=DriverSteering::SleeveCuffRoll(
+            side,restDir,posedDir,restHand,posedHand,wheelAxis,grips[side].roll);
     }
     std::vector<CustomDriver::PreparedRotation> rotations;
     rotations.reserve(rig->bones.size());
@@ -3691,8 +3741,6 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     }
     // Rest-space classification is independent of animation and editor marks.
     // Exact rig/point comparisons also handle same-address asset reloads.
-    static DriverBindingCache bindings;
-    bindings.Prepare(*rig);
     bool changed = false;
     for (unsigned local : selection.Ordered()) {
         if (!selection.IsSelected(local)) continue;
@@ -3700,20 +3748,12 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         int localVertex = (int)local;
         if ((size_t)v * stride + positionOffset + 12 > bytes || localVertex < 0 || localVertex >= mesh.numVerts) continue;
         auto p = point(mesh.pos(localVertex));
-        const auto binding=bindings.Get(local,p,[&]() {
-            DriverBindingCache::Binding result;
-            result.weight=NativeArmWeight(*rig,p);
-            float best=1e9f;
-            for (int side=0;side<2;++side) {
-                for (int b:candidates[side]) if (b>=0) {
-                    auto a=point(rig->bones[b].head), d=point(rig->bones[b].tail)-a;
-                    float t=std::max(0.0f,std::min(1.0f,CustomDriver::Dot(p-a,d)/std::max(1e-10f,CustomDriver::Dot(d,d))));
-                    float distance=CustomDriver::Length(p-(a+d*t));
-                    if (distance<best) { best=distance; result.bone=b; result.side=side; }
-                }
-            }
-            return result;
-        });
+        auto binding=bindings.Get(local,p,[&]() { return buildBinding(p); });
+        DriverPoseSelection::BoneOverride sleeveBinding;
+        if(selection.GetBoneOverride(local,sleeveBinding)) {
+            binding.bone=sleeveBinding.bone;
+            binding.side=sleeveBinding.side;
+        }
         float automaticWeight=selection.IsAutomatic(local) && info->second.driver && info->second.driver->rig.ok ?
             binding.weight : 1.0f;
         if(automaticWeight<=0) continue;

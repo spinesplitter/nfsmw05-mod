@@ -181,9 +181,8 @@ void Start() {
 void IniSave_Queue(const std::vector<IniWrite>& writes) {
     Start();
     EnterCriticalSection(&s_lock);
-    // Every value, changed or not: other code edits these files too (a car's own physics section
-    // is removed when it goes back to the global values), so "unchanged since the last save" says
-    // nothing about the file.
+    // Every value, changed or not: other code edits these files too (for example, group membership
+    // changes), so "unchanged since the last save" says nothing about the file.
     for (const IniWrite& w : writes) s_queue.push_back(w);
     if (!writes.empty()) WakeConditionVariable(&s_wake);
     LeaveCriticalSection(&s_lock);

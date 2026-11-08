@@ -26,7 +26,10 @@ int main(int argc, char** argv) {
             Point posedFore=Rotate(fore,hand,grip.direction);
             float roll=DriverSteering::CuffRoll(fore,posedFore,hand,grip.direction,axis,grip.roll);
             Check(std::isfinite(roll) && fabsf(roll)<=0.349066f,"cuff correction finite and at most 20 degrees across 900 degrees");
-            if(step>-22500) Check(fabsf(roll-previous)<0.003f,"cuff rotation continuous through both regrips");
+            if(step>-22500) {
+                float limit=side==1 && angle<=-100.0f && angle>=-155.0f ? 0.01f : 0.003f;
+                Check(fabsf(roll-previous)<limit,"cuff rotation continuous through both regrips");
+            }
             previous=roll;
             Near(Length(Twist(posedFore,posedFore,roll)-posedFore),0,"cuff roll preserves wrist and elbow endpoints");
             Point radial=Unit(Cross(posedFore,{0,0,1}))*0.035f;
@@ -38,6 +41,13 @@ int main(int argc, char** argv) {
     Near(DriverSteering::CuffWeight(1),1,"full orientation correction only at cuff");
     Near(DriverSteering::CuffRoll({1,0,0},{1,0,0},{1,0,0},{1,0,0},{1,0,0},0),0,
         "neutral cuff has no correction even with collinear hand and forearm");
+    Point cuffFore{0.22f,0.06f,0.10f}, cuffHand{0.075f,0,0.025f};
+    Near(DriverSteering::SleeveCuffRoll(1,cuffFore,Rotate(cuffFore,cuffHand,{0,1,0}),
+        cuffHand,{0,1,0},axis,0.4f),0,"right sleeve receives no additional cuff twist");
+    Near(DriverSteering::SleeveCuffRoll(0,cuffFore,Rotate(cuffFore,cuffHand,{0,1,0}),
+        cuffHand,{0,1,0},axis,0.4f),
+        DriverSteering::CuffRoll(cuffFore,Rotate(cuffFore,cuffHand,{0,1,0}),
+            cuffHand,{0,1,0},axis,0.4f),"left sleeve cuff correction is unchanged");
     for(Point wheelAxis:{axis,axis*-1,Point{0.9701f,0,-0.2425f},Point{-0.9701f,0,0.2425f}}) {
         Point normal=Unit(wheelAxis);
         Point up=Unit(Point{0,0,1}-normal*Dot({0,0,1},normal));
@@ -58,8 +68,8 @@ int main(int argc, char** argv) {
                 if(side==0 || (a>=-100 && a<=90))
                     Check(Length(g.wrist-Twist(neutral.wrist,wheelAxis,a*0.01745329252f))<1e-6f,
                         "hand fix tracks adjusted neutral grip without changing steering angle");
-                if(side==1 && ((a>=165 && a<=270) || (a>=-270 && a<=-180))) {
-                    auto waiting=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,a>0 ? 180.f : -180.f,side,fix);
+                if(side==1 && ((a>=165 && a<=270) || (a>=-270 && a<=-155))) {
+                    auto waiting=DriverSteering::Evaluate(rest,direction,pivot,wheelAxis,a>0 ? 180.f : -155.f,side,fix);
                     Check(Length(g.wrist-waiting.wrist)<1e-6f,"hand fix preserves stationary waiting");
                     Check(Dot(g.wrist,up)<0,"hand fix keeps transfer wait bottom-right");
                 }
@@ -85,7 +95,7 @@ int main(int argc, char** argv) {
 
         }
     }
-    for(float a:{90.f,100.f,145.f,165.f,180.f,190.f,210.f,220.f,240.f,270.f,305.f,310.f,320.f,325.f,340.f}) for(float sign:{-1.f,1.f}) {
+    for(float a:{90.f,95.f,100.f,145.f,155.f,165.f,180.f,190.f,210.f,220.f,240.f,270.f,305.f,310.f,320.f,325.f,340.f}) for(float sign:{-1.f,1.f}) {
         auto before=DriverSteering::Evaluate(right,direction,pivot,axis,sign*(a-0.01f),1);
         auto at=DriverSteering::Evaluate(right,direction,pivot,axis,sign*a,1);
         auto after=DriverSteering::Evaluate(right,direction,pivot,axis,sign*(a+0.01f),1);
@@ -121,13 +131,15 @@ int main(int argc, char** argv) {
         Check(Length(g.wrist-Twist(contact.wrist,axis,(a-325)*0.01745329252f))<1e-6f,
             "regripped hand resumes wheel tracking only after 325");
     }
-    auto negativeWait=DriverSteering::Evaluate(right,direction,pivot,axis,-180,1);
+    auto negativeWait=DriverSteering::Evaluate(right,direction,pivot,axis,-155,1);
     auto negativeContact=DriverSteering::Evaluate(right,direction,pivot,axis,-310,1);
     Check(negativeWait.release==1 && negativeContact.release==0,
-        "negative hand fully waits at 180 and completes contact at 310");
-    for(int a=101;a<180;++a) {
+        "negative hand fully waits at 155 and completes contact at 310");
+    Check(DriverSteering::Evaluate(right,direction,pivot,axis,-100,1).release==0,
+        "negative hand begins lift-off at minus 100");
+    for(int a=101;a<155;++a) {
         auto g=DriverSteering::Evaluate(right,direction,pivot,axis,float(-a),1);
-        float depart=DriverSteering::Phase(float(a),100,180);
+        float depart=DriverSteering::Phase(float(a),100,155);
         Point tracked=Twist(right,axis,-a*0.01745329252f);
         Point expected=Mix(tracked,negativeWait.wrist,depart)
             -axis*(0.2f*0.60f*depart*(1-depart));
@@ -138,7 +150,7 @@ int main(int argc, char** argv) {
         auto normal=Unit(wheelAxis);
         auto up=Unit(Point{0,0,1}-normal*Dot({0,0,1},normal));
         auto fittedRight=Unit(right-normal*Dot(right,normal)-up*Dot(right,up));
-        for(float angle:{-180.f,-270.f,-295.f,-310.f}) {
+        for(float angle:{-155.f,-180.f,-270.f,-295.f,-310.f}) {
             auto g=DriverSteering::Evaluate(right,direction,pivot,wheelAxis,angle,1);
             Check(Dot(g.wrist,fittedRight)>0,
                 "negative wait and regrip stay driver-right for either wheel-axis sign");
@@ -150,9 +162,9 @@ int main(int argc, char** argv) {
         "negative wait and regrip are bottom right");
     for(int a=100;a<=450;++a) {
         auto g=DriverSteering::Evaluate(right,direction,pivot,axis,float(-a),1);
-        Near(g.release,DriverSteering::Phase(float(a),100,180)*
+        Near(g.release,DriverSteering::Phase(float(a),100,155)*
             (1-DriverSteering::Phase(float(a),270,310)),"negative release and contact timing");
-        if(a>=180 && a<=270)
+        if(a>=155 && a<=270)
             Check(Length(g.wrist-negativeWait.wrist)<1e-6f,"negative hand waits independently of wheel rotation");
         if(a>=310)
             Check(Length(g.wrist-Twist(negativeContact.wrist,axis,(310-a)*0.01745329252f))<1e-6f,
@@ -350,7 +362,7 @@ int main(int argc, char** argv) {
                 Point restHand=p(s_driverIK.bones[h].tail)-p(s_driverIK.bones[h].head);
                 Point posedFore{tails[f].x-heads[f].x,tails[f].y-heads[f].y,tails[f].z-heads[f].z};
                 Point posedHand{tails[h].x-heads[h].x,tails[h].y-heads[h].y,tails[h].z-heads[h].z};
-                float cuff=DriverSteering::CuffRoll(restFore,posedFore,restHand,posedHand,
+                float cuff=DriverSteering::SleeveCuffRoll(side,restFore,posedFore,restHand,posedHand,
                     {s_nativeWheelAxis.x,s_nativeWheelAxis.y,s_nativeWheelAxis.z},NativeGrip(s_driverIK,side,moved).roll);
                 Check(std::isfinite(cuff) && fabsf(cuff)<=0.349066f,"installed rig cuff correction bounded across full sweep");
                 if(step>-22500) {

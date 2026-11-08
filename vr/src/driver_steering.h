@@ -27,6 +27,10 @@ inline float CuffRoll(Point restFore, Point posedFore, Point restHand, Point pos
     // sin avoids a discontinuity at the +/-pi frame seam.
     return 0.34906585f*std::tanh(std::sin(angle)/0.34906585f);
 }
+inline float SleeveCuffRoll(int side, Point restFore, Point posedFore, Point restHand,
+                            Point posedHand, Point wheelAxis, float handRoll) {
+    return side==1 ? 0 : CuffRoll(restFore,posedFore,restHand,posedHand,wheelAxis,handRoll);
+}
 inline float CuffWeight(float along) {
     float t=std::max(0.0f,std::min(1.0f,(along-0.70f)/0.30f));
     return t*t*t*(t*(t*6-15)+10);
@@ -108,7 +112,7 @@ inline Grip Evaluate(Point wrist, Point direction, Point pivot, Point axis,
     Point rim = Unit(right-up)*radius + normal*Dot(radial,normal);
     float rimRoll = std::atan2(Dot(normal,Cross(radial,rim)),
         Dot(radial-normal*Dot(radial,normal),rim-normal*Dot(rim,normal)));
-    float depart = Phase(-degrees,100,180);
+    float depart = Phase(-degrees,100,155);
     float contact = TransferSettle(degrees);
     Point waiting = pivot+rim-normal*(radius*0.75f)+right*(radius*0.50f);
     Point released = Mix(target,waiting,depart)

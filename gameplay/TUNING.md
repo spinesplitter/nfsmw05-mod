@@ -101,17 +101,16 @@ Most problems are one of these. Start with the left column.
 | feels lazy, rolls a lot | Suspension firmness higher | Car character lower |
 | a 911 or mid-engined car is undriveable | Real weight distribution off, to compare | Car character lower |
 
-**Every car, a group of cars, or one car?** The sliders marked "per car" can come from three
-places. **Settings from**, near the top of the Physics page, says which one the car you're driving
-uses; pick another from its drop-down (or step through them with left / right):
+**Every car or a group of cars?** All Physics settings are saved with a preset. **Settings from**,
+near the top of the Physics page, selects the current car's source; choose Shared or a named group
+(or step through them with left / right):
 
 - **Shared**: the same values as every other car on Shared. Where every car starts.
 - **A group**: a named set of values shared by the cars in it, for example all the muscle cars.
   Changing a slider in any car of the group changes it for all of them.
-- **This car's own**: values for this car alone.
 
-Character and real weight act on top of all three, so two cars in the same group still drive
-differently.
+Every car loads its assigned group's values, or Shared if it isn't in a group. Character and real
+weight use the selected preset too; the game's car data still makes each model behave differently.
 
 Six groups come premade, with every player car in one, by class and drive:
 
@@ -125,9 +124,10 @@ Six groups come premade, with every player car in one, by class and drive:
 | Exotic AWD | 911 Turbo S, Gallardo, Murcielago |
 | FWD, RWD, AWD | empty: for tuning by drive alone, tick cars into them (each leaves its class group) |
 
-They start without values of their own, so they drive exactly as Shared until you change a value
-in one: then it applies to that group's cars only. Move cars between them, rename or delete them
-as you like.
+Each group has its own complete copy of the settings when it is created. Premade groups start as
+copies of Shared; existing groups missing values are filled from Shared the first time they load.
+After that, changing Shared does not change a group's values. Move cars between groups, rename or
+delete them as you like.
 
 Groups are made and edited on the **Groups** page (Physics > Groups):
 
@@ -137,27 +137,26 @@ Groups are made and edited on the **Groups** page (Physics > Groups):
   picked group.
 - **On the right, its cars**: every player car with a checkbox. Tick one to add it, untick to take
   it out. A car is in one group at most: a car marked with another group's name moves when you
-  tick it. A car marked **own** has its own settings, which go before any group.
-- **Below them, its values**: the group's per-car sliders. You can tune a group from any car,
+  tick it. A car outside a group uses Shared.
+- **Below them, its values**: the group's settings. You can tune a group from any car,
   without driving one of its cars; a car in it gets the change straight away.
 
 With the mouse, click the controls. With the menu keys or a wheel's d-pad (in VR): Up/Down moves
 between them, Right ticks, presses or raises, Left lowers or goes back.
 
-**Sharing a group or a car's setup.** Under **Share** on the Groups page:
+**Sharing a group's setup.** Under **Share** on the Groups page:
 
 - **Export group** saves the picked group (all its values and its cars) as
-  `scripts\profiles\Group - <name>.ini`; **Export this car** saves the car you're driving's own
-  settings as `scripts\profiles\Car - <car>.ini`. Send the file as it is.
+  `scripts\profiles\Group - <name>.ini`. Send the file as it is.
 - Whoever gets it puts it in their own `scripts\profiles` folder and picks **Import...**: the list
   shows every profile there and what importing it does. A group becomes a new group, or replaces
-  theirs of the same name (press twice); its cars move into it. A car's file becomes that car's own
-  settings.
-- A profile holds every value, so it drives the same anywhere. Car character, real weight, the tyre
-  settings and the steering feel are each player's own (they're for every car).
+  theirs of the same name (press twice); its cars move into it. Only group profiles are imported;
+  legacy car profiles are not applied.
+- A group profile holds every physics value, so its cars get the same settings anywhere.
 
 In the ini a group is a `[Group.<name>]` section with the values and `Cars=` its cars
-(`Cars=camaro,gto,mustanggt`), and a car's own values are a `[Car.<name>]` section.
+(`Cars=camaro,gto,mustanggt`). Old `[Car.<name>]` physics sections are ignored and left untouched;
+cars use their group's settings or Shared.
 
 ## What each setting does
 
@@ -227,17 +226,17 @@ has far more of it than a road car.
 
 ## All settings
 
-**Physics page** (`[Physics]` in `nfsmw_gameplay.ini`)
+**Physics page** (`[Physics]` or `[Group.<name>]` in `nfsmw_gameplay.ini`)
 
-| Setting | ini key | Range | Default | Per car | The game's |
+| Setting | ini key | Range | Default | Per preset | The game's |
 |---|---|---|---|---|---|
-| Traction control | `TractionControl`, `TC` | off / game's / + launch control | off | strength | game's |
-| ABS | `ABS` | on / off | on | | off |
+| Physics sliders | `Physics` | on / off | on | yes | off |
+| Traction control | `TractionControl`, `TC` | off / game's / + launch control | off | yes | game's |
+| ABS | `ABS` | on / off | on | yes | off |
 | Stability control | `Stability` | 0–100% | 0% | yes | 100% |
 | Drift assist | `DriftAssist` | 0–100% | 0% | yes | 100% |
-| Car character | `Character` | 0–100% | 50% | | 0% |
-| Real weight distribution | `RealWeight` | on / off | on | | off |
-| Settings from | `[Group.<name>]` `Cars=`, or a `[Car.<name>]` section | Shared / a group / this car's own | Shared | | |
+| Car character | `Character` | 0–100% | 50% | yes | 0% |
+| Real weight distribution | `RealWeight` | on / off | on | yes | off |
 | Grip | `Grip` | 0.3–2.0x | 0.75x | yes | 1.0x |
 | Rain grip | `RainGrip` | 50–100% | 90% | yes | 100% |
 | Offroad grip | `OffroadGrip` | 20–100% | 95% | yes | 100% |
@@ -245,17 +244,25 @@ has far more of it than a road car.
 | Suspension firmness | `SuspensionFirmness` | 50–200% | 100% | yes | 100% |
 | Grip balance | `GripBalance` | −50–+50% | 0% | yes | 0% |
 | Grip when sliding | `TyreSlideGrip` | 50–100% | 85% | yes | 100% |
-| Tyre grip peaks at | `TyrePeakAngle` | 3–20° | 8° | | (none) |
-| Wheelspin in slides | `WheelspinInSlides` | 0–100% | 50% | | 0% |
-| Throttle takes side grip | `FrictionCircle` | 0–300% | 100% | | 0% |
+| Tyre grip peaks at | `TyrePeakAngle` | 3–20° | 8° | yes | (none) |
+| Wheelspin in slides | `WheelspinInSlides` | 0–100% | 50% | yes | 0% |
+| Throttle takes side grip | `FrictionCircle` | 0–300% | 100% | yes | 0% |
 | Downforce | `Downforce` | −25–200% | 70% | yes | 100% |
-| Downforce grows with speed squared | `DownforceSquared` | on / off | on | | off |
-| Wall bounce | `WallBounce` | 0–100% | 0% | | 100% |
+| Downforce grows with speed squared | `DownforceSquared` | on / off | on | yes | off |
+| Wall bounce | `WallBounce` | 0–100% | 0% | yes | 100% |
 | Gravity | `Gravity` | 0.1–3 g | 1 g | yes | 1 g |
+| Gravity for all cars | `GravityAllCars` | on / off | off | yes | off |
+| Game's performance tuning | `GameTuning` | on / off | on | yes | on |
 
-In the ini only: `LoadSensitivity` (0.2: a more loaded tyre gains less than its share of grip, so
-weight transfer, roll balance and downforce act as in a real car; 0 = the game's),
-`DownforceMatchSpeed` (250 km/h: where the squared downforce equals the game's) and `MaxSpin`.
+In the ini only, and saved per preset: `LoadSensitivity` (0.2: a more loaded tyre gains less than
+its share of grip, so weight transfer, roll balance and downforce act as in a real car; 0 = the
+game's), `DownforceMatchSpeed` (250 km/h: where the squared downforce equals the game's), `MaxSpin`
+and `LogPhysics`.
+
+**Settings from** selects the source for every Physics-page value: Shared (`[Physics]`) or a group
+(`[Group.<name>]` and its `Cars=` list). Switching sources saves and restores floats, toggles, and
+the traction-control mode together. Group values can be edited on the Groups page; group profiles
+include all preset values.
 
 **Reset page to game defaults** sets everything on the page to the unmodded game's values, the last
 column above.

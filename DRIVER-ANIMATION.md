@@ -9,6 +9,8 @@ arm triangles and a model-space rig. Keep `ShowCustomDriverModel=0` and
 
 - Native marked-arm deformation and optional IK visualization, with safe static
   fallback for unsupported vertex layouts or unavailable buffers.
+- Marked sleeve cuff vertices remain bound to the upper-arm/forearm instead of
+  inheriting the palm's wheel rotation.
 - Corrected handbrake wrist and elbow poses and constant-speed transitions.
 - Raw sequential/H-gate shift triggers, including failed shifts, without delaying
   actual gear input. Lever motion waits until wrist arrival within 5 mm.

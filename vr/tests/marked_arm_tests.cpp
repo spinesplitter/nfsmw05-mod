@@ -84,6 +84,17 @@ int main() {
         Check(selection.IsSelected(2) && selection.IsSelected(5),"manual priority survives either triangle order and seam exclusion");
         Check(!selection.IsAutomatic(2) && !selection.IsAutomatic(5),"shared manual vertices retain full deformation weight");
         Check(!selection.IsSelected(7),"automatic torso seam vertex stays fixed");
+        DriverPoseSelection::BoneOverride sleeve;
+        Check(!selection.GetBoneOverride(2,sleeve),"unmarked vertex has no sleeve binding override");
+        selection.SetBoneOverride(2,4,1);
+        Check(selection.GetBoneOverride(2,sleeve) && sleeve.bone==4 && sleeve.side==1,
+            "marked sleeve cuff vertex can stay bound to its forearm instead of hand");
+        selection.SetBoneOverride(2,5,1,2);
+        selection.SetBoneOverride(2,6,0,1);
+        Check(selection.GetBoneOverride(2,sleeve) && sleeve.bone==5 && sleeve.side==1,
+            "hand-triangle binding takes priority over a shared sleeve cuff binding");
+        Check(selection.IsSelected(2) && !selection.IsAutomatic(2),
+            "sleeve binding override preserves manual hand-mark priority");
         DriverPoseSelection empty(0); empty.Add(0,true); empty.ExcludeAutomatic(0);
         Check(empty.Ordered().empty(),"empty mesh rejects all vertices");
         DriverPoseSelection full(70000); full.Add(65535,false); full.Add(65536,true);

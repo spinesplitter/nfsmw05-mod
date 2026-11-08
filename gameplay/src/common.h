@@ -163,8 +163,8 @@ struct Config {
     float hudAidRight = 0, hudAidUp = 0; // the ABS and TC icons moved right / up from their place (HUD units, 640 wide)
     float hudDepth = -1.0f;         // overlay z offset from the arc; - is nearer (in front)
 
-    // [Physics] the player car's driving aids, grip and gravity (1 = the game's own). A car with
-    // its own [Car.<name>] section uses the values there (see physics.h).
+    // Physics tuning (1 = the game's own). A car uses values from its selected Shared or group
+    // preset (see physics.h).
     bool  physics = true;
     float tractionControl = 0.0f;  // traction control strength
     float stability = 0.0f;        // yaw control and drift stabiliser strength

@@ -89,8 +89,9 @@ bool ReferencePoseMarkedArms(void* ib, unsigned first, unsigned triangles, int b
             M4 inv=MInvRigid(draw->second.world);
             V3 axis=ToWorld(ToWorld(s_nativeWheelPivot+s_nativeWheelAxis,s_nativeDriverBody),inv)-
                 ToWorld(ToWorld(s_nativeWheelPivot,s_nativeDriverBody),inv);
-            cuffRoll=DriverSteering::CuffRoll(restDir,posedDir,restHand,posedHand,
-                {axis.x,axis.y,axis.z},NativeGrip(*rig,side,draw->second.world).roll)*DriverSteering::CuffWeight(along);
+            cuffRoll=DriverSteering::SleeveCuffRoll(side,restDir,posedDir,restHand,posedHand,
+                {axis.x,axis.y,axis.z},NativeGrip(*rig,side,draw->second.world).roll)*
+                DriverSteering::CuffWeight(along);
         }
         auto deformDirection = [&](CustomDriver::Point value) {
             if (NativeSteeringActive()) for (int side=0;side<2;++side) {
