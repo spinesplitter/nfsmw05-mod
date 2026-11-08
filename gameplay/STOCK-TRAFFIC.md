@@ -6,8 +6,9 @@ The gameplay module no longer reads or writes ExtraOptions settings, and the
 package script no longer bundles ExtraOptions or its installer.
 
 Old `Traffic.RaceDensityFloor`, `Traffic.CareerMultiplier` and `Traffic.Multiplier` keys are ignored
-by the rebuilt plugin and removed by the restoration installer. Obsolete
-`Races.DisableRubberband` is removed as well; no catch-up override is installed.
+by the rebuilt plugin and removed by the restoration installer. `Races.DisableRubberband` is
+available for race opponents only; its hook does not alter police
+catch-up, civilian traffic, or the game's traffic/roster defaults.
 Unrelated opponent-speed, pursuit, drag driving/HUD, tollbooth bonus, physics,
 wheel, VR and cockpit preferences are retained.
 

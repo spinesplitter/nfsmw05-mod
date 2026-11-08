@@ -15,6 +15,7 @@
 #include "crash.h"
 #include "frametrace.h"
 #include "mirror_vertex_map.h"
+#include "mirror_resolution.h"
 #include "mirror_stream_range.h"
 #include "mirror_policy.h"
 
@@ -140,6 +141,43 @@ static IDirect3DTexture9* s_mirrorRaw;        // the rear view copied as rendere
 static IDirect3DSurface9* s_mirrorRawSurf;
 static UINT s_mirrorW, s_mirrorH;
 static bool s_mirrorsDisabled;
+static IDirect3DSurface9* s_rearViewTarget;
+static float s_rearViewScale = 1.0f;
+static RECT s_rearViewRect = {};
+
+void D3D_SetRearViewTarget(void* surface, float resolutionScale) {
+    IDirect3DSurface9* target = (IDirect3DSurface9*)surface;
+    float scale = resolutionScale < 0.25f ? 0.25f : resolutionScale > 1.0f ? 1.0f : resolutionScale;
+    if (target != s_rearViewTarget || scale != s_rearViewScale) s_rearViewRect = {};
+    s_rearViewTarget = target;
+    s_rearViewScale = scale;
+}
+
+static bool ScaleRearViewViewport(IDirect3DDevice9Ex* real, const D3DVIEWPORT9* input, D3DVIEWPORT9* output) {
+    if (!input || !s_rearViewTarget || s_rearViewScale >= 0.9999f) return false;
+    IDirect3DSurface9* target = nullptr;
+    if (FAILED(real->GetRenderTarget(0, &target)) || !target) return false;
+    bool rearView = target == s_rearViewTarget;
+    target->Release();
+    if (!rearView) return false;
+
+    D3DSURFACE_DESC desc = {};
+    if (FAILED(s_rearViewTarget->GetDesc(&desc))) return false;
+    MirrorResolutionRect rect;
+    if (!ScaleMirrorResolutionRect(desc.Width, desc.Height, input->X, input->Y, input->Width, input->Height,
+                                   s_rearViewScale, rect))
+        return false;
+    *output = *input;
+    output->X = rect.x;
+    output->Y = rect.y;
+    output->Width = rect.width;
+    output->Height = rect.height;
+    s_rearViewRect.left = output->X;
+    s_rearViewRect.top = output->Y;
+    s_rearViewRect.right = output->X + output->Width;
+    s_rearViewRect.bottom = output->Y + output->Height;
+    return true;
+}
 
 static void ReleaseDash();
 static void ReleaseCustomDriver();
@@ -353,24 +391,30 @@ static IDirect3DTexture9* MirrorTexture(IDirect3DSurface9* source) {
     gradedSource = source;
     D3DSURFACE_DESC d;
     if (FAILED(source->GetDesc(&d)) || d.Width == 0 || d.Height == 0) return nullptr;
-    if (!s_mirrorTex || d.Width != s_mirrorW || d.Height != s_mirrorH) {
+    RECT sourceRect = s_rearViewRect;
+    if (sourceRect.right <= sourceRect.left || sourceRect.bottom <= sourceRect.top ||
+        (UINT)sourceRect.right > d.Width || (UINT)sourceRect.bottom > d.Height)
+        sourceRect = {0, 0, (LONG)d.Width, (LONG)d.Height};
+    UINT mirrorW = (UINT)(sourceRect.right - sourceRect.left);
+    UINT mirrorH = (UINT)(sourceRect.bottom - sourceRect.top);
+    if (!s_mirrorTex || mirrorW != s_mirrorW || mirrorH != s_mirrorH) {
         for (IUnknown** p : {(IUnknown**)&s_mirrorSurf, (IUnknown**)&s_mirrorTex, (IUnknown**)&s_mirrorRawSurf, (IUnknown**)&s_mirrorRaw})
             if (*p) { (*p)->Release(); *p = nullptr; }
-        if (FAILED(s_dev->CreateTexture(d.Width, d.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+        if (FAILED(s_dev->CreateTexture(mirrorW, mirrorH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
                                         &s_mirrorTex, nullptr)) ||
-            FAILED(s_dev->CreateTexture(d.Width, d.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+            FAILED(s_dev->CreateTexture(mirrorW, mirrorH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
                                         &s_mirrorRaw, nullptr))) {
-            Log("d3d9: mirror textures %ux%u could not be created", d.Width, d.Height);
+            Log("d3d9: mirror textures %ux%u could not be created", mirrorW, mirrorH);
             if (s_mirrorTex) { s_mirrorTex->Release(); s_mirrorTex = nullptr; }
             return nullptr;
         }
         s_mirrorTex->GetSurfaceLevel(0, &s_mirrorSurf);
         s_mirrorRaw->GetSurfaceLevel(0, &s_mirrorRawSurf);
-        s_mirrorW = d.Width;
-        s_mirrorH = d.Height;
+        s_mirrorW = mirrorW;
+        s_mirrorH = mirrorH;
         Log("d3d9: rear view %ux%u (format %d, msaa %d) copied for the mirrors", d.Width, d.Height, d.Format, d.MultiSampleType);
     }
-    HRESULT hr = s_dev->StretchRect(source, nullptr, s_mirrorRawSurf, nullptr, D3DTEXF_LINEAR);
+    HRESULT hr = s_dev->StretchRect(source, &sourceRect, s_mirrorRawSurf, nullptr, D3DTEXF_LINEAR);
     static bool warned;
     if (FAILED(hr)) {
         if (!warned) {
@@ -622,12 +666,12 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
     for (MirrorGlassPart& part : j.parts) {
         if (part.vertices.empty()) continue;
         mappedVerts += part.vertices.size();
-        const float* b = part.basis;
+        MirrorVertexMapper mapper(part.basis);
         for (uint16_t v : part.vertices) {
             UINT vertexOffset = (UINT)((uint64_t)offset + ((int64_t)base + v) * stride - range.begin);
             const float* pos = (const float*)(buffer + vertexOffset + posOfs);
             float* uv = (float*)(buffer + vertexOffset + uvOfs);
-            MirrorVertexUV(pos, b, uv);
+            mapper.Map(pos, uv);
         }
     }
     s_mirrorUploadBytes += range.bytes;
@@ -659,6 +703,7 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
         TraceDetailScope timing(TRACE_MIRROR_DRAW);
+        if (!DrawingPlayerView()) return false;
         int stage = -1;
         IDirect3DBaseTexture9* t0 = nullptr;
         real->GetTexture(0, &t0);
@@ -689,9 +734,8 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
         IDirect3DBaseTexture9* orig = nullptr;
         real->GetTexture(stage, &orig);
         real->SetTexture(stage, s_mirrorTex);
-        bool player = stage == 0 && DrawingPlayerView();
-        IDirect3DPixelShader9* map = player && j.haveCorners ? Shader(s_mirrorMapShader) : nullptr;
-        IDirect3DPixelShader9* glass = map ? map : player ? Shader(s_glassShader) : nullptr;
+        IDirect3DPixelShader9* map = j.haveCorners ? Shader(s_mirrorMapShader) : nullptr;
+        IDirect3DPixelShader9* glass = map ? map : Shader(s_glassShader);
         IDirect3DPixelShader9* oldPs = nullptr;
         float oldC[8];
         DWORD oldAddr[2];
@@ -742,8 +786,17 @@ struct PendingMirror {
 static std::vector<PendingMirror> s_pendingMirrors;
 static D3DMATRIX s_mirrorView, s_mirrorProj;
 static bool s_mirrorEye;
+static IDirect3DSurface9* s_checkedRenderTarget;
+static bool s_checkedPlayerView;
+
+static void ClearPlayerViewCache() {
+    if (s_checkedRenderTarget) s_checkedRenderTarget->Release();
+    s_checkedRenderTarget = nullptr;
+    s_checkedPlayerView = false;
+}
 
 void D3D_BeginMirrorEye(const float* view, const float* proj) {
+    ClearPlayerViewCache();
     s_pendingMirrors.clear();
     memcpy(&s_mirrorView, view, sizeof(s_mirrorView));
     memcpy(&s_mirrorProj, proj, sizeof(s_mirrorProj));
@@ -970,17 +1023,25 @@ void D3D_EndWheelEye() {
 // The car is also drawn into shadow maps, the environment map and the rear view: only the player
 // view's draw counts, the one into a target the size of the back buffer, with a depth buffer.
 static bool DrawingPlayerView() {
-    IDirect3DSurface9 *rt = nullptr, *ds = nullptr, *bb = nullptr;
+    IDirect3DSurface9* rt = nullptr;
+    if (FAILED(s_dev->GetRenderTarget(0, &rt)) || !rt) return false;
+    if (rt == s_checkedRenderTarget) {
+        rt->Release();
+        return s_checkedPlayerView;
+    }
+    ClearPlayerViewCache();
+    s_checkedRenderTarget = rt;
+    IDirect3DSurface9 *ds = nullptr, *bb = nullptr;
     bool ok = false;
-    if (SUCCEEDED(s_dev->GetRenderTarget(0, &rt)) && rt && SUCCEEDED(s_dev->GetDepthStencilSurface(&ds)) && ds &&
+    if (SUCCEEDED(s_dev->GetDepthStencilSurface(&ds)) && ds &&
         SUCCEEDED(s_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
         D3DSURFACE_DESC r, b;
         ok = SUCCEEDED(rt->GetDesc(&r)) && SUCCEEDED(bb->GetDesc(&b)) && r.Width == b.Width && r.Height == b.Height;
     }
-    if (rt) rt->Release();
     if (ds) ds->Release();
     if (bb) bb->Release();
-    return ok;
+    s_checkedPlayerView = ok;
+    return s_checkedPlayerView;
 }
 
 static void AfterModelDraw() {
@@ -1017,6 +1078,7 @@ void D3D_EndMirrorEye(void* rearViewSurface) {
     }
     s_pendingMirrors.clear();
     if (rearViewSurface) MirrorTexture((IDirect3DSurface9*)rearViewSurface);
+    ClearPlayerViewCache();
 }
 
 // --- the in-car dashboard ---------------------------------------------------------------------------
@@ -2689,6 +2751,12 @@ public:
         return real->SetRenderTarget(index, surf);
     }
 
+    HRESULT STDMETHODCALLTYPE SetViewport(CONST D3DVIEWPORT9* vp) override {
+        D3DVIEWPORT9 scaled;
+        if (ScaleRearViewViewport(real, vp, &scaled)) vp = &scaled;
+        return real->SetViewport(vp);
+    }
+
     // A shadow map can be depth-only: the pass then binds only its depth buffer.
     HRESULT STDMETHODCALLTYPE SetDepthStencilSurface(IDirect3DSurface9* surf) override {
         TallySurface(surf, true);
@@ -3131,6 +3199,9 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "Dash")) return &g_cfg.dash;
     if (!strcmp(name, "RearViewEvery")) return &g_cfg.rearViewEvery;
     if (!strcmp(name, "DisableMirrors")) return &g_cfg.disableMirrors;
+    if (!strcmp(name, "MirrorResolution")) return &g_cfg.mirrorResolution;
+    if (!strcmp(name, "MirrorDistance")) return &g_cfg.mirrorDistance;
+    if (!strcmp(name, "ResolutionScale")) return &g_cfg.resolutionScale;
     if (!strcmp(name, "DepthSplit")) return &g_cfg.depthSplit;
     if (!strcmp(name, "SharedShadows")) return &g_cfg.sharedShadows;
     if (!strcmp(name, "Anisotropic")) return &g_cfg.anisotropic;

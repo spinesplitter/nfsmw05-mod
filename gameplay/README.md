@@ -13,7 +13,8 @@ H-shifter mod (`nfsmw_hshifter.ini`, which is renamed to `nfsmw_gameplay.ini` on
 - **Clutch required to shift** (optional): moving the stick into a gate without the clutch leaves
   the box in neutral and grinds; that gear only goes in once the stick has been back to neutral
   and in again with the clutch pressed. Optional rev-matched clutchless shifts.
-- Reverse is refused while rolling forward (and forward gears while rolling backward).
+- Wrong-direction shifts are blocked above low speed: first gear is allowed while rolling backward
+  up to 25 km/h, and reverse is allowed while rolling forward up to 20 km/h.
 - **Engine wear** (optional): no rev limiter. Above the redline the engine heats up, loses power
   when hot, and blows at full heat. A blown engine totals the car in a race; in free roam, use
   *Jump to Safe House* from the pause menu. Manual shifting only.

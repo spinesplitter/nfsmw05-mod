@@ -165,6 +165,9 @@ constexpr struct {
     {MOD_VR, "AnimatedDriverSave", 0.0f},
     {MOD_VR, "AnimatedDriverHandFix", 0.0f},
     {MOD_VR, "DisableMirrors", 0.0f},
+    {MOD_VR, "MirrorResolution", 1.0f},
+    {MOD_VR, "MirrorDistance", 0.0f},
+    {MOD_VR, "ResolutionScale", 1.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -202,14 +205,20 @@ enum {
     VR_ANIMATEDDRIVERSPREAD, VR_ANIMATEDDRIVERSAVE,
     VR_ANIMATEDDRIVERHANDFIX,
     VR_DISABLEMIRRORS,
+    VR_MIRRORRESOLUTION,
+    VR_MIRRORDISTANCE,
+    VR_RENDERSCALE,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
-static_assert(VR_DISABLEMIRRORS == EXT_COUNT - 1, "mirror setting must match its bridge entry");
+static_assert(VR_RENDERSCALE == EXT_COUNT - 1, "render-scale setting must match its bridge entry");
 // Each block of the EXT enum names the kExt entry at its index (a row pointing at its neighbour
 // made every dashboard setting move another element).
 constexpr bool KeyIs(const char* a, const char* b) { return *a == *b && (!*a || KeyIs(a + 1, b + 1)); }
 static_assert(KeyIs(kExt[VR_DISABLEMIRRORS].key, "DisableMirrors"), "kExt out of order at VR_DISABLEMIRRORS");
+static_assert(KeyIs(kExt[VR_MIRRORRESOLUTION].key, "MirrorResolution"), "kExt out of order at VR_MIRRORRESOLUTION");
+static_assert(KeyIs(kExt[VR_MIRRORDISTANCE].key, "MirrorDistance"), "kExt out of order at VR_MIRRORDISTANCE");
+static_assert(KeyIs(kExt[VR_RENDERSCALE].key, "ResolutionScale"), "kExt out of order at VR_RENDERSCALE");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
 static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
@@ -651,6 +660,7 @@ const Item kItems[] = {
     {TOGGLE, "No head-on ramming SUVs", "Traffic", "NoHeavySupport", &g_cfg.noHeavySupport, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Drive drag races normally", "Races", "NormalDragRaces", &g_cfg.normalDragRaces, 0, 0, 0, 0, nullptr, 0},
     {TOGGLE, "Normal HUD in drag races", "Races", "NormalDragHud", &g_cfg.normalDragHud, 0, 0, 0, 0, nullptr, 0},
+    {TOGGLE, "Disable racer rubberband", "Races", "DisableRubberband", &g_cfg.disableRubberband, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Tollbooth starting time bonus", "Races", "TollboothTimeBonus", &g_cfg.tollboothTimeBonus, 0, 300, 5, 1, "+%.0f s", 0},
     {NUMBER, "Opponent speed (Races)", "Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100, "%.0f%%", 0},
     HEADER_("RACE OPPONENTS ONLY; 100% IS STOCK"),
@@ -705,6 +715,7 @@ const Item kItems[] = {
     LINK_("Adjust dashboard (each element, live)", "ADJUST DASHBOARD"),
     LINK_("Triangle editor (hide, black, steering wheel)", "TRIANGLE EDITOR"),
     HEADER_("VIEW"),
+    {NUMBER, "VR render scale (next start)", "VR", "ResolutionScale", &s_ext[VR_RENDERSCALE], 0.5f, 2.0f, 0.1f, 1, "x%.1f", 0},
     {NUMBER, "Hide the driver's arms and hands", "VR", "HideArms", &s_ext[VR_HIDEARMS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     {NUMBER, "Steering wheel rendered in front of HUD", "VR", "WheelOverHud", &s_ext[VR_WHEELOVERHUD], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     {NUMBER, "Mirror brightness", "VR", "MirrorBrightness", &s_ext[VR_MIRRORBRIGHTNESS], 0.5f, 3.0f, 0.05f, 100, "%.0f%%", 0},
@@ -800,6 +811,8 @@ const Item kItems[] = {
     {ACTION, "Hide Animated Driver Model", nullptr, "HideAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
     HEADER_("TESTING"),
     {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
+    {NUMBER, "Mirror render resolution", "VR", "MirrorResolution", &s_ext[VR_MIRRORRESOLUTION], 0.25f, 1.0f, 0.05f, 100, "%.0f%%", 0},
+    {NUMBER, "Mirror distance (0 = stock)", "VR", "MirrorDistance", &s_ext[VR_MIRRORDISTANCE], 0.0f, 3000.0f, 100.0f, 1, "%.0f m", 0},
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
     {NUMBER, "Drop height", "Tires", "DropHeight", &g_cfg.dropHeight, 0.5f, 50.0f, 0.5f, 1, "%.1f m", 0},
@@ -1294,6 +1307,7 @@ const struct {
     {&g_cfg.grip, 1}, {&g_cfg.character, 0}, {&g_cfg.realWeight, 0}, {&g_cfg.gripBalance, 0}, {&g_cfg.suspFirmness, 1}, {&g_cfg.rollBalance, 0}, {&g_cfg.abs, 0}, {&g_cfg.offroadGrip, 1},
     {&g_cfg.tyreSlideGrip, 1}, {&g_cfg.rainGrip, 1}, {&g_cfg.downforce, 1}, {&g_cfg.downforceSquared, 0}, {&g_cfg.wallBounce, 1}, {&g_cfg.frictionCircle, 0}, {&g_cfg.slideWheelspin, 0}, {&g_cfg.gravity, 1}, {&g_cfg.gravityAll, 0},
     {&g_cfg.noHeavySupport, 0}, {&g_cfg.normalDragRaces, 0}, {&g_cfg.normalDragHud, 0},
+    {&g_cfg.disableRubberband, 0},
     {&g_cfg.tollboothTimeBonus, 0},
     {&g_cfg.hudMeter, 0}, {&g_cfg.speedbreaker, 1},
 };
@@ -2166,6 +2180,7 @@ const struct {
     {&g_cfg.offroadGrip, "Tyre grip on grass, dirt, mud, gravel and sand (each tyre by the surface under it). 100% = as on the road. Per preset."},
     {&g_cfg.gravity, "Gravity in g. Grip scales with it. Per preset."},
     {&g_cfg.opponentSpeed, "Offline race opponents only; applies live in Career and Quick Race. 100% = the game's speed, 90% = slower opponents. Range: 25-200%, in 5% steps. Does not change your car, online races, traffic or police."},
+    {&g_cfg.disableRubberband, "Disables the game's catch-up bonus for race opponents only. Police behavior is unchanged. Opponent speed remains independently adjustable."},
     {&g_cfg.gravityAll, "Gravity applies to AI and traffic too."},
     {&g_cfg.noHeavySupport, "No heavy support: the SUVs a pursuit sends to ram you head-on out of oncoming traffic don't come. SUV patrols and SUVs in roadblocks still do."},
     {&g_cfg.normalDragHud, "Drag races show the normal race HUD (tachometer, speedometer, minimap, damage meter) instead of the drag HUD. Applies from the next race."},

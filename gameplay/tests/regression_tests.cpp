@@ -308,14 +308,19 @@ int main() {
     TestSteeringLock();
     static_assert(sizeof(void*) == 4, "test the game layout");
     TestBindings(); TestSteeringWheelAngle(); TestSmoke(); TestMigration();
-    assert(FirstGearRollbackAllowed(2, 0.0f));
-    assert(FirstGearRollbackAllowed(2, 11.9f / 3.6f));
-    assert(FirstGearRollbackAllowed(2, 12.0f / 3.6f));
-    assert(FirstGearRollbackAllowed(2, -12.0f / 3.6f));
-    assert(!FirstGearRollbackAllowed(2, 12.01f / 3.6f));
-    assert(!FirstGearRollbackAllowed(2, -12.01f / 3.6f));
-    assert(!FirstGearRollbackAllowed(0, 1.0f));
-    assert(!FirstGearRollbackAllowed(3, 1.0f));
+    assert(WrongDirectionShiftAllowed(2, 0.0f, -4.0f));
+    assert(WrongDirectionShiftAllowed(2, 24.9f / 3.6f, -4.0f));
+    assert(WrongDirectionShiftAllowed(2, 25.0f / 3.6f, -4.0f));
+    assert(!WrongDirectionShiftAllowed(2, 25.01f / 3.6f, -4.0f));
+    assert(!WrongDirectionShiftAllowed(2, 25.0f / 3.6f, 4.0f));
+    assert(WrongDirectionShiftAllowed(0, 19.9f / 3.6f, 4.0f));
+    assert(WrongDirectionShiftAllowed(0, 20.0f / 3.6f, 4.0f));
+    assert(!WrongDirectionShiftAllowed(0, 20.01f / 3.6f, 4.0f));
+    assert(!WrongDirectionShiftAllowed(0, 20.0f / 3.6f, -4.0f));
+    assert(!WrongDirectionShiftAllowed(3, 1.0f, -4.0f));
+    g_cfg.disableRubberband = true;
+    assert(RacerCatchup(nullptr, nullptr) == 0.0f);
+    g_cfg.disableRubberband = false;
     TestRaceControls();
     puts("gameplay regression tests passed");
 }

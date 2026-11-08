@@ -21,6 +21,7 @@
 #include "cockpit.h"
 #include "frametrace.h"
 #include "mirror_policy.h"
+#include "mirror_projection.h"
 #include <string.h>
 #include <algorithm>
 #include <stdio.h>
@@ -492,6 +493,19 @@ void __fastcall hkViewSetup(void* platInfo, void* edx, void* view, uint32_t a2, 
         s_haveSetupArgs = true;
     }
     oViewSetup(platInfo, edx, view, a2, a3, a4, a5);
+    if (index == kRearView && platInfo && g_cfg.mirrorDistance > 0.0f) {
+        M4& viewMatrix = *(M4*)platInfo;
+        M4& projection = *(M4*)((char*)platInfo + kPlatProjection);
+        if (LimitMirrorFarPlane(projection, g_cfg.mirrorDistance)) {
+            M4 viewProjection = MMul(viewMatrix, projection);
+            memcpy((char*)platInfo + kPlatViewProj, &viewProjection, sizeof(viewProjection));
+        }
+        M4& alternateProjection = *(M4*)((char*)platInfo + kPlatProjAlt);
+        if (LimitMirrorFarPlane(alternateProjection, g_cfg.mirrorDistance)) {
+            M4 viewProjection = MMul(viewMatrix, alternateProjection);
+            memcpy((char*)platInfo + kPlatViewProjAlt, &viewProjection, sizeof(viewProjection));
+        }
+    }
 }
 
 // Moves the camera to an eye: V_eye = V_game * inverse(eyePoseInCameraSpace).
@@ -847,6 +861,7 @@ void* TextureOf(uintptr_t slot) {
 // The HUD's mirror textures, for the d3d9 wrapper to leave out while the mirrors are on.
 void UpdateHiddenTextures() {
     D3D_SetMirrorsDisabled(g_cfg.disableMirrors > 0.5f && Xr_Available());
+    D3D_SetRearViewTarget(*(void**)(kRvmTarget + kTargetSurface), s_mirrorPatched ? g_cfg.mirrorResolution : 1.0f);
     if (s_mirrorPatched || (g_cfg.disableMirrors > 0.5f && Xr_Available())) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
     else D3D_HideTextures(nullptr, nullptr, nullptr);
 }

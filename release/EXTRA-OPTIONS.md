@@ -89,11 +89,11 @@ For other settings, edit `scripts/NFSMWExtraOptionsSettings.ini` with the game c
   physics-related settings retain upstream defaults. ExOpts has other patches;
   this is not a traffic-only build and full runtime compatibility is unverified.
 
-Our live traffic multiplier, opponent-speed controller and racer-catch-up toggle
-have been removed from source, defaults and F4. Old keys in installed gameplay
-INIs are ignored. Normal drag handling/HUD, heavy-support suppression and the
-tollbooth starting bonus remain ours. ExOpts' NoCatchUp is broader than our old
-racer-only toggle: it also patches the police/perp catch-up slot.
+The gameplay mod retains the offline opponent-speed controller and racer-only
+catch-up toggle. It does not install a traffic-density multiplier or expanded
+rosters. ExOpts' NoCatchUp is broader than the gameplay mod's racer-only toggle:
+it also patches the police/perp catch-up slot. Normal drag handling/HUD,
+heavy-support suppression and the tollbooth starting bonus remain ours.
 
 These menu extensions are **not verified** to increase career/free-roam traffic,
 expand active-car pools, or permit stable 15-opponent races on every track.

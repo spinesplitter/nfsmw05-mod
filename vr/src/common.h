@@ -121,6 +121,8 @@ struct Config {
     bool  sharedViewsOnce = true;    // rear view and environment map rendered once a frame, not per eye
     int   envMapFacesPerFrame = 2;   // environment map cube faces refreshed per VR frame (1..6, 6 = every face every frame)
     float rearViewEvery = 1.0f;      // the rear view is rendered every Nth VR frame (1 = every frame; live)
+    float mirrorResolution = 1.0f;   // render rear view at this fraction of its native width and height
+    float mirrorDistance = 0.0f;     // rear-view far plane in metres (0 = game's original distance)
     float disableMirrors = 0.0f;    // live F4 diagnostic: stop rear view and all VR mirror work
     float sharedShadows = 1.0f;      // the sun shadow map drawn for the first eye only; the second eye reuses it (0/1, live)
     float anisotropic = 4.0f;        // anisotropic filtering: 0 off, 1 2x, 2 4x, 3 8x, 4 16x (live from F4)

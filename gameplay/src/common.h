@@ -133,6 +133,7 @@ struct Config {
     bool  normalDragRaces = true;   // the player drives drag races normally (no auto lane steering, normal engine and damage)
     bool  gameTuning = true;        // the pause menu's Performance Tuning acts on the player's car (as in the game)
     bool  normalDragHud = true;     // drag races show the normal race HUD, not the drag HUD (from the next race)
+    bool  disableRubberband = false; // disable catch-up for race opponents only
     float heatSmokeFrom = 0.5f;     // engine smoke from this much engine heat (1 = never)
     float smokeTrail = 0.8f;        // fraction of the car's velocity its smoke particles keep
     float damageLossStart = 0.3f;   // damage where the engine starts losing power

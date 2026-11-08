@@ -1,4 +1,4 @@
-"""Guard the removal of extra-traffic hooks and the external settings adapter."""
+"""Guard stock traffic behavior and the racer-only catch-up setting."""
 from pathlib import Path
 import re
 
@@ -19,5 +19,10 @@ traffic_page = ui.split('PAGE_("TRAFFIC AND HUD"),', 1)[1].split('PAGE_(', 1)[0]
 assert traffic_page.index('"TollboothTimeBonus"') < traffic_page.index('"OpponentSpeed"')
 assert ui.count('"OpponentSpeed", &g_cfg.opponentSpeed') == 1
 assert '{&g_cfg.opponentSpeed, "Offline race opponents only;' in ui
+assert '"DisableRubberband", &g_cfg.disableRubberband' in traffic_page
+assert 'SetSlot(0x8925C8, 0x409390, (void*)&RacerCatchup)' in traffic
+assert 'if (g_cfg.disableRubberband) return 0.0f;' in traffic
+assert 'police catch-up unchanged' in traffic
 print('PASS: offline race opponent-speed slider and help remain in Traffic and HUD')
+print('PASS: racer-only catch-up toggle is restored without changing police behavior')
 print('PASS: no traffic increases, expanded rosters, ExtraOptions adapter or package integration')

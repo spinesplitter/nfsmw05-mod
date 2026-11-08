@@ -1,5 +1,7 @@
 #include "../src/mirror_vertex_map.h"
 #include "../src/mirror_stream_range.h"
+#include "../src/mirror_resolution.h"
+#include "../src/mirror_projection.h"
 #include <assert.h>
 #include <math.h>
 #include <random>
@@ -8,6 +10,24 @@
 #include <vector>
 
 int main() {
+    M4 projection = {};
+    const float nearDistance = 0.1f, originalFar = 2000.0f;
+    projection.m[0][0] = projection.m[1][1] = 1.0f;
+    projection.m[2][2] = originalFar / (originalFar - nearDistance);
+    projection.m[2][3] = 1.0f;
+    projection.m[3][2] = -nearDistance * originalFar / (originalFar - nearDistance);
+    assert(LimitMirrorFarPlane(projection, 500.0f));
+    assert(fabsf(-projection.m[3][2] / projection.m[2][2] - nearDistance) < 1e-5f);
+    assert(fabsf(-projection.m[3][2] / (projection.m[2][2] - 1.0f) - 500.0f) < 0.25f);
+    assert(!LimitMirrorFarPlane(projection, 500.0f));
+    assert(!LimitMirrorFarPlane(projection, 0.0f));
+    MirrorResolutionRect resolutionRect;
+    assert(ScaleMirrorResolutionRect(1920,1080,0,0,1920,1080,0.5f,resolutionRect));
+    assert(resolutionRect.x==0 && resolutionRect.y==0 && resolutionRect.width==960 && resolutionRect.height==540);
+    assert(ScaleMirrorResolutionRect(1920,1080,100,20,1820,1060,0.5f,resolutionRect));
+    assert(resolutionRect.x==50 && resolutionRect.y==10 && resolutionRect.width==910 && resolutionRect.height==530);
+    assert(!ScaleMirrorResolutionRect(1920,1080,0,0,1920,1080,1.0f,resolutionRect));
+    assert(!ScaleMirrorResolutionRect(1920,1080,1920,0,1,1,0.5f,resolutionRect));
     MirrorStreamRange range;
     assert(MirrorDrawRange(100,20,4,16,32,8192,true,range));
     assert(range.begin==3856 && range.bytes==128 && range.base==-20);
@@ -53,7 +73,8 @@ int main() {
         float s=b[9]>0 ? (pu-(cu-b[9]))/(2*b[9]) : 0.5f;
         float t=b[10]>0 ? ((cv+b[10])-pv)/(2*b[10]) : 0.5f;
         s=s<0 ? 0 : s>1 ? 1 : s; t=t<0 ? 0 : t>1 ? 1 : t;
-        MirrorVertexUV(copy,b,copy+6);
+        MirrorVertexMapper mapper(b);
+        mapper.Map(copy,copy+6);
         assert(fabsf(copy[6]-(b[11]+(b[12]-b[11])*s))<1e-6f);
         assert(fabsf(copy[7]-t)<1e-6f);
         assert(!memcmp(copy,vertex,6*sizeof(float)));

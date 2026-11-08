@@ -233,9 +233,8 @@ float Engagement(float pedal) {
 
 // Driven wheels turning against the requested direction (e.g. reverse while rolling forward)?
 bool WrongDirection(uint8_t* eng, int gear) {
-    // Allow engaging first while rolling back slowly. Clutch/rev-match checks still apply.
-    if (FirstGearRollbackAllowed(gear, Physics_PlayerSpeed())) return false;
     float w = ((GetDiffAngVel_t)kGetDiffAngVel)(eng, false);   // rad/s, + forward
+    if (WrongDirectionShiftAllowed(gear, Physics_PlayerSpeed(), w)) return false;
     if (gear == G_REVERSE) return w > 3.0f;
     return w < -3.0f;
 }

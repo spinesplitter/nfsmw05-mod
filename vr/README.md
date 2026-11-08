@@ -122,6 +122,9 @@ levelling still changes the view's roll/pitch relative to the body: F7 toggles i
 Everything is in `nfsmw_vr.ini`. The useful ones:
 
 - **`Resolution` / `ResolutionScale`:** each eye renders at the headset's recommended size by default. Lower `ResolutionScale` for more fps.
+- **`MirrorResolution`:** F4 > Menu and testing > Testing scales the rear-view render target from 25% to 100% of native width and height. Lower values reduce mirror pixel workload without skipping updates; 50% means one quarter as many pixels. Default is 100%.
+- **`MirrorDistance`:** F4 > Menu and testing > Testing limits the far clipping distance of the rear-view scene in metres. `0` keeps the game's original distance. All car mirrors still share the same rear-view image.
+- **VR render scale:** F4 > VR sets `ResolutionScale` in 0.1x steps (0.5x-2.0x); values above 1.0 supersample the headset's recommended per-eye resolution. Applies at the next game start and is used with `Resolution=auto`.
 - **`LevelRoll` / `LevelPitch`:** how much of the car's body roll and pitch to remove from your view. By default roll is removed and pitch is kept.
 - **`HudDistance` / `HudWidth`:** placement of the floating HUD panel.
 - **`SteeringWheel`:** the car's steering wheel turns with your wheel, by the same angle (needs the gameplay mod with a bound steering axis and `[Controls] WheelRotation` set to your wheel's rotation). The wheel is found in each car's interior model; the log says `steering wheel at ...` or why not.

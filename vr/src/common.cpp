@@ -114,6 +114,8 @@ void LoadConfig() {
     c.fovScale = ReadFloat(ini, "FovScale", c.fovScale);
     GetPrivateProfileStringA("VR", "Resolution", c.resolution, c.resolution, sizeof(c.resolution), ini);
     c.resolutionScale = ReadFloat(ini, "ResolutionScale", c.resolutionScale);
+    if (!(c.resolutionScale >= 0.5f)) c.resolutionScale = 0.5f;
+    if (c.resolutionScale > 2.0f) c.resolutionScale = 2.0f;
     c.levelRoll = ReadFloat(ini, "LevelRoll", c.levelRoll);
     c.levelPitch = ReadFloat(ini, "LevelPitch", c.levelPitch);
     c.screenDistance = ReadFloat(ini, "ScreenDistance", c.screenDistance);
@@ -214,6 +216,12 @@ void LoadConfig() {
     c.asyncSubmit = ReadInt(ini, "AsyncSubmit", c.asyncSubmit) != 0;
     int every = ReadInt(ini, "RearViewEvery", 1);
     c.rearViewEvery = (float)(every < 1 ? 1 : every > 4 ? 4 : every);
+    c.mirrorResolution = ReadFloat(ini, "MirrorResolution", c.mirrorResolution);
+    if (!(c.mirrorResolution >= 0.25f)) c.mirrorResolution = 0.25f;
+    if (c.mirrorResolution > 1.0f) c.mirrorResolution = 1.0f;
+    c.mirrorDistance = ReadFloat(ini, "MirrorDistance", c.mirrorDistance);
+    if (!(c.mirrorDistance >= 0.0f)) c.mirrorDistance = 0.0f;
+    if (c.mirrorDistance > 3000.0f) c.mirrorDistance = 3000.0f;
     c.disableMirrors = ReadInt(ini, "DisableMirrors", 0) ? 1.0f : 0.0f;
     c.logPasses = ReadInt(ini, "LogPasses", c.logPasses) != 0;
     c.stableReflections = ReadInt(ini, "StableReflections", c.stableReflections) != 0;

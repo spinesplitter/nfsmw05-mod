@@ -162,6 +162,13 @@ static void __fastcall RacerGasBrake(uint8_t* ai, void* edx, float dt) {
     RacerGasBrakeTarget(ai, edx, dt, player, mode);
 }
 
+static float(__fastcall* s_racerCatchup)(void*, void*) = (float(__fastcall*)(void*, void*))0x409390;
+
+static float __fastcall RacerCatchup(void* racer, void* edx) {
+    if (g_cfg.disableRubberband) return 0.0f;
+    return s_racerCatchup(racer, edx);
+}
+
 void Traffic_Install() {
     // Validate both racer slots before changing either. Police/traffic tables are untouched.
     if (ExpectPtr(0x892760, 0x42A0B0) && ExpectPtr(0x892B10, 0x42A0B0)) {
@@ -171,6 +178,10 @@ void Traffic_Install() {
     } else Log("races: opponent speed unavailable (unexpected racer controller slots)");
     if (!RetargetCall(0x60DBF9, 0x602010, (void*)&RaceStart))
         Log("races: tollbooth starting bonus unavailable (unexpected race-start call)");
+    if (!SetSlot(0x8925C8, 0x409390, (void*)&RacerCatchup))
+        Log("races: racer catch-up toggle unavailable (unexpected vehicle code)");
+    else
+        Log("races: racer catch-up %s; police catch-up unchanged", g_cfg.disableRubberband ? "disabled" : "enabled");
     if (!SetSlot(kSlotGetTunings, kGetTunings, (void*)&HkGetTunings))
         Log("traffic: unexpected vehicle code, the game's performance tuning left as it is");
     if (!RetargetCall(kCallTurboRaceType, kGetRaceType, (void*)&HkTurboRaceType))
