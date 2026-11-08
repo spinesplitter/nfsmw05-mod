@@ -1923,6 +1923,11 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
     char solidName[65] = {};
     memcpy(solidName, info.name, 64);
     const EditSet& edits = EditsFor(solidName);
+    if (!info.interior && edits.mirror.empty()) {
+        // Mirror marks cleared: stop hiding the glass in the player's private draw copy.
+        void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
+        D3D_SetManualMirrorTriangles(ib, nullptr, 0, 0);
+    }
     if (!info.interior && !edits.mirror.empty()) {
         NoteMarkedMirrors(solid, info, m, edits);
         return;
@@ -1962,6 +1967,13 @@ void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, con
     if (info.trisDirty) BuildTris(solid, info);
     void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
     D3D_SuppressMirrorGlass(ib);
+    std::vector<uint16_t> replacing;
+    for (const TriRef& tri : info.tris)
+        if (edits.mirror.count(tri.id))
+            replacing.insert(replacing.end(), {tri.v[0], tri.v[1], tri.v[2]});
+    // The index copy changes with hides/black marks and model reloads too, not just edit generation.
+    int version = (int)(CurrentHash(info) ^ (uint32_t)s_editsGen);
+    D3D_SetManualMirrorTriangles(ib, replacing.data(), (int)(replacing.size() / 3), version);
     bool added = false;
     for (int side = 0; side < 2; side++) {
         std::vector<float> vertices;
@@ -2351,8 +2363,9 @@ bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, cons
     out.reserve(triangles.size() * 15);
     for (const TriRef* tri : triangles)
         for (const V3& p : tri->p) {
-            V3 lifted = p + normal * 0.008f;
-            V3 world = ToWorld(lifted, matrix);
+            // In the surface being replaced: the opaque, depth-biased picture covers the original
+            // texture from the same vertices instead of floating 8 mm ahead of the housing.
+            V3 world = ToWorld(p, matrix);
             float across = (mirror::Dot(p, u) - minU) / (maxU - minU);
             float down = (maxV - mirror::Dot(p, v)) / (maxV - minV);
             out.insert(out.end(), {world.x, world.y, world.z, rearU0 + (rearU1 - rearU0) * across, down});

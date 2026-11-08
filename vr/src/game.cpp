@@ -454,6 +454,8 @@ bool SplitPlayerDepth(void* view, bool player = true, bool validateOnly = false)
 }
 
 void* __stdcall hkWorldViewProjMultiply(void* out, const void* local, const void* viewProj) {
+    // This runs for each queued draw before it is drawn; opponents have their own matrices.
+    D3D_SetPlayerCarDraw(local && Cockpit_IsPlayerCarMatrix(local));
     if (s_depthSplit && viewProj && local) {
         for (int k = 0; k < s_carViewProjCount; k++)
             if (viewProj == s_carViewProjFor[k] && Cockpit_IsPlayerCarMatrix(local)) {
