@@ -24,7 +24,7 @@ static float observedTarget;
 static void __fastcall ObserveRacerTarget(void* ai, void*, float) {
     observedTarget = *(float*)((uint8_t*)ai + 0x84);
 }
-static void TestCareerOpponentSpeed() {
+static void TestRaceOpponentSpeed() {
     uint8_t ai[0x100] = {};
     auto originalController = s_racerGasBrake;
     s_racerGasBrake = &ObserveRacerTarget;
@@ -36,7 +36,7 @@ static void TestCareerOpponentSpeed() {
                 *(float*)(ai + 0x84) = target;
                 for (int repeat = 0; repeat < 3; repeat++) {
                     RacerGasBrakeTarget(ai, nullptr, 0.016f, isPlayer, mode);
-                    float expected = mode == 2 && !isPlayer && target > 0 ? target * Clamp(scale, 0.25f, 2.0f) : target;
+                    float expected = mode != 1 && !isPlayer && target > 0 ? target * Clamp(scale, 0.25f, 2.0f) : target;
                     assert(fabsf(observedTarget - expected) < 0.0001f);
                     assert(*(float*)(ai + 0x84) == target); // never compounds
                 }
@@ -285,7 +285,7 @@ static void TestTelemetryInputs() {
 
 int main() {
     TestCarResetBlocking();
-    TestCareerOpponentSpeed();
+    TestRaceOpponentSpeed();
     for (bool wall : {false, true}) {
         assert(ImpactDamage(7.9f, 8.0f, 1.0f, wall) == 0.0f);
         assert(ImpactDamage(8.0f, 8.0f, 1.0f, wall) == 0.0f);

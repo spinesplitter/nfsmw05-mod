@@ -1,5 +1,6 @@
 // Required-hook validation uses a synthetic v1.3 address layout and never launches the game.
 #include "../src/game.cpp"
+#include "../src/mirror_policy.h"
 #include <assert.h>
 Config g_cfg;
 unsigned char g_traceRenderBoundaries = 0;
@@ -32,6 +33,7 @@ void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int
 void D3D_SetGlassCorners(void*, int, const float*) {}
 void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_EndMirrorEye(void*) {}
+void D3D_SetMirrorsDisabled(bool) {}
 void D3D_BeginWheelEye(bool, const float*, const float*, const float*) {}
 void D3D_EndWheelEye() {}
 void D3D_EndDashEye() {}
@@ -132,7 +134,10 @@ int main() {
     // A live disable overrides cadence without changing preferences; re-enable refreshes normally.
     g_cfg.rearViewEvery = 1;
     g_cfg.disableMirrors = 1;
-    s_mirrorPatched = true;
+    assert(!MirrorPatchWanted(true, true, true, true));
+    assert(SuppressMirrorGlassDraw(true, true, 12, 12));
+    assert(!SuppressMirrorGlassDraw(true, false, 12, 12));
+    assert(!SuppressMirrorGlassDraw(true, true, 12, 13));
     for (int i = 0; i < 8; ++i) {
         PickViewsThisFrame();
         assert(s_viewSkipped[kRearView]);
@@ -141,6 +146,7 @@ int main() {
     EndMirrors();
     assert(g_cfg.mirrors && g_cfg.gameMirrors && g_cfg.rearViewEvery == 1);
     g_cfg.disableMirrors = 0;
+    assert(MirrorPatchWanted(true, true, false, true));
     PickViewsThisFrame();
     assert(!s_viewSkipped[kRearView]);
     s_mirrorPatched = false;

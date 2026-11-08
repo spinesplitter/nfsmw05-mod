@@ -16,6 +16,7 @@
 #include "frametrace.h"
 #include "mirror_vertex_map.h"
 #include "mirror_stream_range.h"
+#include "mirror_policy.h"
 
 #include <d3d9.h>
 #include "d3d9device_gen.h"
@@ -138,6 +139,7 @@ static IDirect3DSurface9* s_mirrorSurf;
 static IDirect3DTexture9* s_mirrorRaw;        // the rear view copied as rendered
 static IDirect3DSurface9* s_mirrorRawSurf;
 static UINT s_mirrorW, s_mirrorH;
+static bool s_mirrorsDisabled;
 
 static void ReleaseDash();
 static void ReleaseCustomDriver();
@@ -460,6 +462,18 @@ struct MirrorGlassJob {
 static std::vector<MirrorGlassJob> s_glassJobs;
 static std::unordered_map<void*, std::vector<size_t>> s_glassJobsByIb;
 
+void D3D_SetMirrorsDisabled(bool disabled) {
+    s_mirrorsDisabled = disabled;
+}
+
+static bool IsMirrorGlassDraw(void* indexBuffer, UINT firstIndex) {
+    auto jobs = s_glassJobsByIb.find(indexBuffer);
+    if (jobs == s_glassJobsByIb.end()) return false;
+    for (size_t i : jobs->second)
+        if (SuppressMirrorGlassDraw(s_mirrorsDisabled, true, s_glassJobs[i].first, firstIndex)) return true;
+    return false;
+}
+
 void D3D_RegisterMirrorGlass(void* indexBuffer, int firstIndex, int triangles, const float basis[14], const uint16_t* vertices,
                              int vertexCount) {
     MirrorGlassJob* job = nullptr;
@@ -589,20 +603,6 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         vb->Release();
         return;
     }
-    std::vector<uint8_t> copy(source->begin() + range.begin, source->begin() + range.begin + range.bytes);
-    uint8_t* buffer = copy.data();
-    size_t mappedVerts = 0;
-    for (MirrorGlassPart& part : j.parts) {
-        if (part.vertices.empty()) continue;
-        mappedVerts += part.vertices.size();
-        const float* b = part.basis;
-        for (uint16_t v : part.vertices) {
-            UINT vertexOffset = (UINT)((uint64_t)offset + ((int64_t)base + v) * stride - range.begin);
-            const float* pos = (const float*)(buffer + vertexOffset + posOfs);
-            float* uv = (float*)(buffer + vertexOffset + uvOfs);
-            MirrorVertexUV(pos, b, uv);
-        }
-    }
     if (!s_glassStream || s_glassStreamBytes < range.bytes) {
         if (s_glassStream) s_glassStream->Release();
         s_glassStream = nullptr;
@@ -616,8 +616,21 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         vb->Release();
         return;
     }
-    memcpy(upload, copy.data(), copy.size());
-    s_mirrorUploadBytes += copy.size();
+    memcpy(upload, source->data() + range.begin, range.bytes);
+    uint8_t* buffer = (uint8_t*)upload;
+    size_t mappedVerts = 0;
+    for (MirrorGlassPart& part : j.parts) {
+        if (part.vertices.empty()) continue;
+        mappedVerts += part.vertices.size();
+        const float* b = part.basis;
+        for (uint16_t v : part.vertices) {
+            UINT vertexOffset = (UINT)((uint64_t)offset + ((int64_t)base + v) * stride - range.begin);
+            const float* pos = (const float*)(buffer + vertexOffset + posOfs);
+            float* uv = (float*)(buffer + vertexOffset + uvOfs);
+            MirrorVertexUV(pos, b, uv);
+        }
+    }
+    s_mirrorUploadBytes += range.bytes;
     s_mirrorFullUploadBytes += desc.Size;
     HRESULT unlocked = s_glassStream->Unlock();
     const UINT mappedOffset = range.begin ? 0 : offset;
@@ -646,10 +659,6 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
         TraceDetailScope timing(TRACE_MIRROR_DRAW);
-        IDirect3DVertexBuffer9* original = nullptr;
-        UINT originalOffset = 0, originalStride = 0;
-        INT drawBase = base;
-        MapGlassVertices(j, base, minIndex, verts, &drawBase, &original, &originalOffset, &originalStride);
         int stage = -1;
         IDirect3DBaseTexture9* t0 = nullptr;
         real->GetTexture(0, &t0);
@@ -671,12 +680,12 @@ static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE typ
                     if (t) t->Release();
                 }
             }
-            if (original) {
-                real->SetStreamSource(0, original, originalOffset, originalStride);
-                original->Release();
-            }
             return false;
         }
+        IDirect3DVertexBuffer9* original = nullptr;
+        UINT originalOffset = 0, originalStride = 0;
+        INT drawBase = base;
+        MapGlassVertices(j, base, minIndex, verts, &drawBase, &original, &originalOffset, &originalStride);
         IDirect3DBaseTexture9* orig = nullptr;
         real->GetTexture(stage, &orig);
         real->SetTexture(stage, s_mirrorTex);
@@ -2771,6 +2780,11 @@ public:
                                                    UINT count) override {
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
+        if (s_mirrorsDisabled && type == D3DPT_TRIANGLELIST && IsMirrorGlassDraw(s_curIndices, start)) {
+            AfterModelDraw();
+            AfterModelDrawDash();
+            return D3D_OK;
+        }
         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
         // Reject city/world IBs before querying RT/depth/backbuffer state. The
         // view query performs COM calls and AddRef/Release on every invocation;

@@ -64,6 +64,8 @@ void D3D_SetGlassCorners(void* indexBuffer, int firstIndex, const float uv[8]);
 
 // Draws sampling any of these textures are skipped (null: none). Used for the HUD's rear view mirror.
 void D3D_HideTextures(void* a, void* b, void* c);
+// Live performance-test switch: suppress the rear-view pass and registered custom mirror glass.
+void D3D_SetMirrorsDisabled(bool disabled);
 
 // Mirrors drawn with the game's models: for the eye about to render, the view and projection it
 // uses and the mirrors' glass (triangles: x, y, z, u, v per vertex, world space), each drawn right

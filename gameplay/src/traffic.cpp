@@ -142,7 +142,7 @@ static void(__fastcall* s_racerGasBrake)(void*, void*, float) =
 static void RacerGasBrakeTarget(uint8_t* ai, void* edx, float dt, bool player, int mode) {
     float& target = *(float*)(ai + 0x84);
     const float original = target;
-    if (!player && mode == 2 && target > 0.0f)
+    if (!player && mode != 1 && target > 0.0f)
         target *= Clamp(g_cfg.opponentSpeed, 0.25f, 2.0f);
     s_racerGasBrake(ai, edx, dt);
     target = original;
@@ -150,7 +150,7 @@ static void RacerGasBrakeTarget(uint8_t* ai, void* edx, float dt, bool player, i
 
 static void __fastcall RacerGasBrake(uint8_t* ai, void* edx, float dt) {
     int mode = RaceMode();
-    if (mode != 2 || g_cfg.opponentSpeed == 1.0f) {
+    if (mode == 1 || g_cfg.opponentSpeed == 1.0f) {
         s_racerGasBrake(ai, edx, dt);
         return;
     }
@@ -167,8 +167,8 @@ void Traffic_Install() {
     if (ExpectPtr(0x892760, 0x42A0B0) && ExpectPtr(0x892B10, 0x42A0B0)) {
         SetSlot(0x892760, 0x42A0B0, (void*)&RacerGasBrake);
         SetSlot(0x892B10, 0x42A0B0, (void*)&RacerGasBrake);
-        Log("races: Career opponent speed hooks installed (100%% stock; other modes unchanged)");
-    } else Log("races: Career opponent speed unavailable (unexpected racer controller slots)");
+        Log("races: offline opponent speed hooks installed (100%% stock; online unchanged)");
+    } else Log("races: opponent speed unavailable (unexpected racer controller slots)");
     if (!RetargetCall(0x60DBF9, 0x602010, (void*)&RaceStart))
         Log("races: tollbooth starting bonus unavailable (unexpected race-start call)");
     if (!SetSlot(kSlotGetTunings, kGetTunings, (void*)&HkGetTunings))

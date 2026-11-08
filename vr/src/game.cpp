@@ -20,6 +20,7 @@
 #include "vrmath.h"
 #include "cockpit.h"
 #include "frametrace.h"
+#include "mirror_policy.h"
 #include <string.h>
 #include <algorithm>
 #include <stdio.h>
@@ -826,7 +827,7 @@ void WriteCode(uintptr_t at, const uint8_t* bytes, int n) {
 
 // The mirror camera on and the HUD mirror off while VR runs with Mirrors=1, the game's otherwise.
 void UpdateMirrorPatch() {
-    bool want = s_mirrorPatchOk && g_cfg.mirrors && Xr_Available();
+    bool want = MirrorPatchWanted(s_mirrorPatchOk, g_cfg.mirrors, g_cfg.disableMirrors > 0.5f, Xr_Available());
     if (want == s_mirrorPatched) return;
     WriteCode(kMirrorCamOption, want ? kMirrorCamOn : kMirrorCamGame, 3);
     WriteCode(kRvmAllowed, want ? kRvmAllowedOn : kRvmAllowedGame, 3);
@@ -845,6 +846,7 @@ void* TextureOf(uintptr_t slot) {
 
 // The HUD's mirror textures, for the d3d9 wrapper to leave out while the mirrors are on.
 void UpdateHiddenTextures() {
+    D3D_SetMirrorsDisabled(g_cfg.disableMirrors > 0.5f && Xr_Available());
     if (s_mirrorPatched || (g_cfg.disableMirrors > 0.5f && Xr_Available())) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
     else D3D_HideTextures(nullptr, nullptr, nullptr);
 }

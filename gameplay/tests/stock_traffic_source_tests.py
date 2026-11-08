@@ -16,8 +16,8 @@ package = (root.parent / 'package.sh').read_text()
 assert not re.search('extra-options|ExtraOptions', package)
 ui = (root / 'src/ui.cpp').read_text()
 traffic_page = ui.split('PAGE_("TRAFFIC AND HUD"),', 1)[1].split('PAGE_(', 1)[0]
-assert '"Races", "OpponentSpeed", &g_cfg.opponentSpeed, 0.25f, 2.0f, 0.05f, 100' in traffic_page
+assert traffic_page.index('"TollboothTimeBonus"') < traffic_page.index('"OpponentSpeed"')
 assert ui.count('"OpponentSpeed", &g_cfg.opponentSpeed') == 1
-assert '{&g_cfg.opponentSpeed, "Career race opponents only;' in ui
-print('PASS: Career opponent-speed slider and help remain in Traffic and HUD')
+assert '{&g_cfg.opponentSpeed, "Offline race opponents only;' in ui
+print('PASS: offline race opponent-speed slider and help remain in Traffic and HUD')
 print('PASS: no traffic increases, expanded rosters, ExtraOptions adapter or package integration')
