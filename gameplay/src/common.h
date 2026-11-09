@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 void LogInit();
 void Log(const char* fmt, ...);
+void LogFlush();
 
 // Directory containing the host exe (with trailing backslash).
 const char* GameDir();

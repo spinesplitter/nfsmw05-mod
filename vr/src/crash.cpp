@@ -12,6 +12,8 @@ volatile LONG s_capturing;
 
 // No allocations, logging locks or DbgHelp calls in the crashing process.
 LONG WINAPI OnUnhandled(EXCEPTION_POINTERS* ep) {
+    // The log is buffered; write the tail before the process is ended by the dump.
+    LogFlush();
     if (s_shared && ep && ep->ExceptionRecord && ep->ContextRecord) {
         if (InterlockedCompareExchange(&s_capturing, 1, 0) == 0) {
             s_shared->threadId = GetCurrentThreadId();

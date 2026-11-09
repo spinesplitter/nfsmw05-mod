@@ -67,6 +67,9 @@ void LogInit(const char* fileName) {
     char path[MAX_PATH];
     snprintf(path, sizeof(path), "%s%s", GameDir(), fileName);
     s_log = fopen(path, "w");
+    // A car load / race start logs 20+ lines in one frame; one disk flush per line stalled the
+    // game thread. Keep a large buffer and flush on a timer, immediately for alarming lines.
+    if (s_log) setvbuf(s_log, nullptr, _IOFBF, 1 << 16);
 }
 
 void Log(const char* fmt, ...) {
@@ -80,6 +83,20 @@ void Log(const char* fmt, ...) {
     vfprintf(s_log, fmt, ap);
     va_end(ap);
     fputc('\n', s_log);
+    static ULONGLONG lastFlush;
+    ULONGLONG now = GetTickCount64();
+    bool urgent = strstr(fmt, "unexpected") || strstr(fmt, "BUG") || strstr(fmt, "crash") ||
+                  strstr(fmt, "failed") || strstr(fmt, "FAILED") || strstr(fmt, "cannot");
+    if (urgent || now - lastFlush > 250) {
+        fflush(s_log);
+        lastFlush = now;
+    }
+    LeaveCriticalSection(&s_logLock);
+}
+
+void LogFlush() {
+    if (!s_log) return;
+    EnterCriticalSection(&s_logLock);
     fflush(s_log);
     LeaveCriticalSection(&s_logLock);
 }

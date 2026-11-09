@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 void LogInit(const char* fileName = "nfsmw_vr.log");
 void Log(const char* fmt, ...);
+void LogFlush();
 
 // ---------------------------------------------------------------------------
 // Configuration (nfsmw_vr.ini next to speed.exe)
