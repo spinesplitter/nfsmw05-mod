@@ -20,10 +20,14 @@ public:
     };
 private:
     Stats stats_;
+    unsigned generation_ = 0;
 public:
     const Stats& GetStats() const { return stats_; }
     void ResetStats() { stats_ = Stats{}; }
-    void Clear() { snapshots_.clear(); }
+    // Contents version: bumped whenever a snapshot is dropped. A cached CPU result made from
+    // the snapshot is valid only while this is unchanged.
+    unsigned Generation() const { return generation_; }
+    void Clear() { snapshots_.clear(); ++generation_; }
     // The renderer calls -1 after each eye. It ends timing, not source lifetime.
     void BeginEye(int eye) { if (eye == 0) Clear(); }
     void Invalidate(void* buffer) {
@@ -31,6 +35,7 @@ public:
             if (snapshots_[i].buffer==buffer) {
                 ++stats_.invalidations;
                 snapshots_.erase(snapshots_.begin()+i);
+                ++generation_;
             }
             else ++i;
     }

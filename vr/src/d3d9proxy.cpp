@@ -32,6 +32,19 @@
 #include "driver_stream_cache.h"
 #include "driver_skin_state.h"
 static DriverStreamCache s_driverStreams;
+// The driver pose is the same for both eyes: keep the posed vertex copy from the first eye and
+// reuse it in the second, so the CPU skinning/readback isn't paid twice a frame.
+struct DriverPoseCacheEntry {
+    void* ib;
+    UINT start, count;
+    INT base;
+    void* vb;
+    UINT offset;
+    size_t required;
+    unsigned generation;
+    std::vector<unsigned char> bytes;
+};
+static std::vector<DriverPoseCacheEntry> s_driverPoseCache;
 static void InvalidateMirrorMappedStreams(IDirect3DVertexBuffer9* vb);
 #include "driver_buffer_hooks.h"
 static unsigned s_mirrorSnapshotFallbacks;
@@ -286,6 +299,7 @@ static unsigned s_frameSerial;    // bumped once a frame, for the work that is o
 void D3D_BeginEyes() {
     if (!s_dev) return;
     s_frameSerial++;
+    s_driverPoseCache.clear();
     if (s_frameRT) s_frameRT->Release();
     if (s_frameDS) s_frameDS->Release();
     s_frameRT = s_frameDS = nullptr;
@@ -3069,6 +3083,30 @@ public:
                 }
                 if(position>=0 && stride && SUCCEEDED(vb->GetDesc(&desc)) && offset<desc.Size) {
                     const size_t required=DriverStreamBytes(remapped,stride,desc.Size-offset);
+                    const unsigned streamGeneration=s_driverStreams.Generation();
+                    DriverPoseCacheEntry* cached=nullptr;
+                    for (auto& e : s_driverPoseCache)
+                        if (e.ib==s_curIndices && e.start==start && e.count==count && e.base==base &&
+                            e.vb==vb && e.offset==offset && e.required==required &&
+                            e.generation==streamGeneration) { cached=&e; break; }
+                    if (cached) {
+                        bool valid=true;
+                        for (uint16_t index : remapped)
+                            if ((size_t)(index+1)*stride>cached->bytes.size()) valid=false;
+                        if (valid) {
+                            HRESULT result;
+                            {
+                                TraceDetailScope uploadTiming(TRACE_DRIVER_UPLOAD);
+                                result=real->DrawIndexedPrimitiveUP(type,0,(UINT)(cached->bytes.size()/stride),count,
+                                    remapped.data(),D3DFMT_INDEX16,cached->bytes.data(),stride);
+                            }
+                            real->SetStreamSource(0,vb,offset,stride);
+                            real->SetIndices(static_cast<IDirect3DIndexBuffer9*>(s_curIndices));
+                            vb->Release();
+                            AfterModelDraw(); AfterModelDrawDash();
+                            return result;
+                        }
+                    }
                     // Unobservable resources retain the conservative per-draw fallback.
                     if (!ObserveDriverBuffer(vb)) s_driverStreams.Invalidate(vb);
                     const auto* source=required ? s_driverStreams.Get(vb,0,1,desc.Size,desc.Size,
@@ -3098,6 +3136,9 @@ public:
                                 }
                                 real->SetStreamSource(0,vb,offset,stride);
                                 real->SetIndices(static_cast<IDirect3DIndexBuffer9*>(s_curIndices));
+                                if (s_driverPoseCache.size() < 8)
+                                    s_driverPoseCache.push_back(DriverPoseCacheEntry{s_curIndices,start,count,base,
+                                        vb,offset,required,streamGeneration,std::move(copy)});
                                 vb->Release();
                                 AfterModelDraw(); AfterModelDrawDash();
                                 return result;
