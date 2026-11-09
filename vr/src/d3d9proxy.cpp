@@ -1228,6 +1228,97 @@ static bool DrawingPlayerView() {
     return s_checkedPlayerView;
 }
 
+// The editor's wiper triangles, drawn again over the game's static wipers (which "Remove wipers"
+// hides) and rotated around their hinge; the callback lives in cockpit.cpp.
+static void DrawWipers(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT start, UINT count) {
+    if (type != D3DPT_TRIANGLELIST || !s_curIndices) return;
+    std::vector<uint16_t> raw;
+    std::vector<unsigned> verts;
+    float pivot[3], axis[3], angle = 0;
+    if (!Cockpit_WiperDraw(s_curIndices, start, count, raw, verts, pivot, axis, &angle)) return;
+    if (raw.empty() || !DrawingPlayerView()) return;
+    IDirect3DVertexBuffer9* vb = nullptr;
+    UINT offset = 0, stride = 0;
+    if (FAILED(real->GetStreamSource(0, &vb, &offset, &stride)) || !vb || !stride) {
+        if (vb) vb->Release();
+        return;
+    }
+    D3DVERTEXBUFFER_DESC desc{};
+    IDirect3DVertexDeclaration9* decl = nullptr;
+    int pos = -1, norm = -1;
+    if (SUCCEEDED(real->GetVertexDeclaration(&decl)) && decl) {
+        D3DVERTEXELEMENT9 el[MAXD3DDECLLENGTH + 1];
+        UINT n = MAXD3DDECLLENGTH + 1;
+        if (SUCCEEDED(decl->GetDeclaration(el, &n)))
+            for (UINT i = 0; i < n && el[i].Stream != 0xFF; i++) {
+                if (el[i].Stream != 0) continue;
+                if (el[i].Usage == D3DDECLUSAGE_POSITION && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT3)
+                    pos = el[i].Offset;
+                if (el[i].Usage == D3DDECLUSAGE_NORMAL && el[i].UsageIndex == 0 && el[i].Type == D3DDECLTYPE_FLOAT3)
+                    norm = el[i].Offset;
+            }
+        decl->Release();
+    }
+    if (pos < 0 || FAILED(vb->GetDesc(&desc)) || (size_t)offset >= desc.Size) {
+        vb->Release();
+        return;
+    }
+    size_t top = 0;
+    std::vector<uint16_t> indices;
+    indices.reserve(raw.size());
+    for (uint16_t v : raw) {
+        const long long index = (long long)v + base;
+        if (index < 0 || index > 65535) {
+            vb->Release();
+            return;
+        }
+        indices.push_back((uint16_t)index);
+        top = std::max(top, (size_t)(index + 1));
+    }
+    const size_t required = top * stride;
+    if (!required || (size_t)offset + required > desc.Size) {
+        vb->Release();
+        return;
+    }
+    // One whole-buffer snapshot, shared with the driver/mirror paths.
+    const auto* source = s_driverStreams.Get(vb, 0, 1, desc.Size, desc.Size,
+        [&](std::vector<unsigned char>& bytes) {
+            void* locked = nullptr;
+            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY))) return false;
+            if (locked) bytes.assign((unsigned char*)locked, (unsigned char*)locked + desc.Size);
+            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
+        });
+    if (!source) {
+        vb->Release();
+        return;
+    }
+    std::vector<unsigned char> copy(source->begin() + offset, source->begin() + offset + required);
+    if (angle != 0.0f) {
+        const float c = cosf(angle), s = sinf(angle);
+        auto rot = [&](float* p, bool point) {
+            const float bx = point ? pivot[0] : 0.0f, by = point ? pivot[1] : 0.0f, bz = point ? pivot[2] : 0.0f;
+            const float x = p[0] - bx, y = p[1] - by, z = p[2] - bz;
+            const float d = axis[0] * x + axis[1] * y + axis[2] * z;
+            const float cx = axis[1] * z - axis[2] * y, cy = axis[2] * x - axis[0] * z, cz = axis[0] * y - axis[1] * x;
+            p[0] = bx + x * c + cx * s + axis[0] * d * (1 - c);
+            p[1] = by + y * c + cy * s + axis[1] * d * (1 - c);
+            p[2] = bz + z * c + cz * s + axis[2] * d * (1 - c);
+        };
+        for (unsigned v : verts) {
+            const long long index = (long long)v + base;
+            if (index < 0 || (size_t)(index + 1) * stride > copy.size()) continue;
+            unsigned char* at = copy.data() + (size_t)index * stride;
+            if ((unsigned)pos + 12 <= stride) rot((float*)(at + pos), true);
+            if (norm >= 0 && (unsigned)norm + 12 <= stride) rot((float*)(at + norm), false);
+        }
+    }
+    real->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, (UINT)(required / stride), (UINT)(indices.size() / 3),
+                                 indices.data(), D3DFMT_INDEX16, copy.data(), stride);
+    real->SetStreamSource(0, vb, offset, stride);
+    real->SetIndices((IDirect3DIndexBuffer9*)s_curIndices);
+    vb->Release();
+}
+
 static void AfterModelDraw() {
     if (!s_mirrorEye || s_pendingMirrors.empty()) return;
     bool checked = false, playerView = false;
@@ -3034,6 +3125,19 @@ public:
                                                    UINT count) override {
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
+        // The player car's windows are single-sided outside surfaces. In the seat, draw them
+        // two-sided so the glass (and the view through it) is also visible from inside.
+        const bool twoSidedGlass = Cockpit_IsWindowDraw(s_curIndices) && DrawingPlayerView();
+        DWORD oldCull = D3DCULL_CCW;
+        if (twoSidedGlass) {
+            real->GetRenderState(D3DRS_CULLMODE, &oldCull);
+            real->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+        }
+        struct RestoreCull {
+            IDirect3DDevice9Ex* dev;
+            DWORD mode;
+            ~RestoreCull() { if (dev) dev->SetRenderState(D3DRS_CULLMODE, mode); }
+        } restoreCull{twoSidedGlass ? real : nullptr, oldCull};
         // A manual mirror's original triangles are hidden in a private copy of that model's index
         // buffer. Models without manual mirror marks have no copy and are untouched.
         IDirect3DIndexBuffer9* mirrorPatched = nullptr;
@@ -3160,13 +3264,18 @@ public:
                 vb->Release();
             }
         }
-        if (!mirrorJobs && !wheelJobs && !dashJobs) return real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+        if (!mirrorJobs && !wheelJobs && !dashJobs) {
+            HRESULT hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
+            DrawWipers(real, type, base, start, count);
+            return hr;
+        }
         HRESULT hr;
         if (!DrawMirrorGlassNative(real, type, base, minIndex, verts, start, count, &hr) &&
             !DrawWheelMarked(real, type, base, minIndex, verts, start, count, &hr))
             hr = real->DrawIndexedPrimitive(type, base, minIndex, verts, start, count);
         AfterModelDraw();
         AfterModelDrawDash();
+        DrawWipers(real, type, base, start, count);
         return hr;
     }
     HRESULT STDMETHODCALLTYPE DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, CONST void* data, UINT stride) override {
@@ -3423,6 +3532,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "CockpitShiftUp")) return &g_cockpitShiftUp;
     if (!strcmp(name, "CockpitShiftDown")) return &g_cockpitShiftDown;
     if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
+    if (!strcmp(name, "GlassOpacity")) return &g_cfg.glassOpacity;
     if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;
     if (!strcmp(name, "ShowDriverIK")) return &g_cfg.showDriverIK;
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;

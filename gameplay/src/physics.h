@@ -11,6 +11,9 @@ struct CarCharacter;
 void Physics_Install();
 // Once per frame (game thread), reads tuning tables the game builds at startup.
 void Physics_Frame();
+// Make it rain: force the player view's rain intensity while on (the F4 testing button).
+void Physics_ForceRain(bool on);
+bool Physics_RainForced();
 
 // Testing: lifts the player's car [Tires] DropHeight metres straight up at its next physics step
 // (vertical and spin speed zeroed, forward speed kept) and lets it fall. Any thread.

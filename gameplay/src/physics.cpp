@@ -2064,8 +2064,26 @@ void Physics_Install() {
 
 const CarSample& Physics_Sample() { return s_sample; }
 
+static bool s_makeRain;
+
+void Physics_ForceRain(bool on) {
+    s_makeRain = on;
+    if (!on) {
+        uintptr_t rain = *(uintptr_t*)kPlayerRain;
+        if (Plausible(rain)) *(float*)(rain + kRain_Intensity) = 0.0f;
+    }
+}
+
+bool Physics_RainForced() { return s_makeRain; }
+
 void Physics_Frame() {
     AidToggles();
+    // Make it rain: keep the player view's rain intensity up; the weather system may rewrite it.
+    if (s_makeRain) {
+        uintptr_t rain = *(uintptr_t*)kPlayerRain;
+        if (Plausible(rain) && *(float*)(rain + kRain_Intensity) < 0.99f)
+            *(float*)(rain + kRain_Intensity) = 1.0f;
+    }
     // The drift tables are built by static constructors; read them once the game runs.
     if (!g.ok) {
         static bool tried;

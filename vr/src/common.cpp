@@ -180,6 +180,9 @@ void LoadConfig() {
     if (!(c.animatedDriverSmoothing >= 0.0f)) c.animatedDriverSmoothing = 0.0f;
     if (c.animatedDriverSmoothing > 1.0f) c.animatedDriverSmoothing = 1.0f;
     c.hideArms = ReadInt(ini, "HideArms", 0) != 0 ? 1.0f : 0.0f;
+    c.glassOpacity = ReadFloat(ini, "GlassOpacity", c.glassOpacity);
+    if (c.glassOpacity < 0.0f) c.glassOpacity = 0.0f;
+    if (c.glassOpacity > 1.0f) c.glassOpacity = 1.0f;
     c.wheelOverHud = ReadInt(ini, "WheelOverHud", 0) != 0 ? 1.0f : 0.0f;
     c.hudPerCar = ReadInt(ini, "HudPerCar", 0) != 0 ? 1.0f : 0.0f;
     c.dash = ReadInt(ini, "Dash", 1) != 0 ? 1.0f : 0.0f;
