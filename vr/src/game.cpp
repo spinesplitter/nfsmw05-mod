@@ -326,6 +326,7 @@ bool IsPrologueBustedNis() {
     int type = At<int>(activity, 0x2FC);
     unsigned scene = At<unsigned>(activity, 0x394);
     bool dday = At<uint8_t>(activity, 0x3E6) != 0;
+    static const unsigned intro01 = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNis01");
     static const unsigned introDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisDD");
     static const unsigned flyInDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisFlyInDD");
     static void* loggedNis;
@@ -333,11 +334,12 @@ bool IsPrologueBustedNis() {
     if (nis != loggedNis || scene != loggedScene) {
         loggedNis = nis;
         loggedScene = scene;
-        Log("game: NIS %p type %d scene %08X dday %d (intro %08X fly-in %08X)", nis, type, scene, dday ? 1 : 0,
-            introDD, flyInDD);
+        Log("game: NIS %p type %d scene %08X dday %d (first %08X, intro %08X, fly-in %08X)", nis, type, scene,
+            dday ? 1 : 0, intro01, introDD, flyInDD);
     }
-    // IntroNisDD / its fly-in is the prologue's opening; a DDay Arrest is its busted camera feed.
-    return scene == introDD || scene == flyInDD || (dday && type == 1);
+    // The prologue's opening (IntroNis01 on this build), IntroNisDD / its fly-in; a DDay Arrest is
+    // its busted camera feed.
+    return scene == intro01 || scene == introDD || scene == flyInDD || (dday && type == 1);
 }
 
 // Writes `opcode rel32` (0xE8 call / 0xE9 jmp) at `addr`, targeting `hook`.
