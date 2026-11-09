@@ -317,12 +317,15 @@ template <typename T> T& At(void* base, int offset) { return *(T*)((char*)base +
 bool IsPrologueBustedNis() {
     void* nis = *(void**)kNisInstance;
     if (!nis) return false;
-    // NISActivity's INIS sub-object is at +0x48 (the constructor stores &this->0x48 in the
-    // singleton). Its fields: mNISType +0x310, mSceneHash +0x3A8, mDDayNIS +0x408.
+    // NISActivity's INIS sub-object is at +0x48 (the constructor passes &this->0x48 to the
+    // singleton). The field offsets below are this build's, taken from the constructor and the
+    // destructor's `bStringHash("IntroNisFlyInDD") == mSceneHash` check: mNISType +0x2FC,
+    // mSceneHash +0x394, mDDayNIS +0x3E6. (The reimplementation's 0x310/0x3A8/0x408 layout does
+    // not match this executable: reading those gave the 4.0f default of the next field.)
     uint8_t* activity = (uint8_t*)nis - 0x48;
-    int type = At<int>(activity, 0x310);
-    unsigned scene = At<unsigned>(activity, 0x3A8);
-    bool dday = At<uint8_t>(activity, 0x408) != 0;
+    int type = At<int>(activity, 0x2FC);
+    unsigned scene = At<unsigned>(activity, 0x394);
+    bool dday = At<uint8_t>(activity, 0x3E6) != 0;
     static const unsigned introDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisDD");
     static const unsigned flyInDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisFlyInDD");
     static void* loggedNis;
@@ -330,7 +333,8 @@ bool IsPrologueBustedNis() {
     if (nis != loggedNis || scene != loggedScene) {
         loggedNis = nis;
         loggedScene = scene;
-        Log("game: NIS %p type %d scene %08X dday %d", nis, type, scene, dday ? 1 : 0);
+        Log("game: NIS %p type %d scene %08X dday %d (intro %08X fly-in %08X)", nis, type, scene, dday ? 1 : 0,
+            introDD, flyInDD);
     }
     // IntroNisDD / its fly-in is the prologue's opening; a DDay Arrest is its busted camera feed.
     return scene == introDD || scene == flyInDD || (dday && type == 1);
@@ -1277,7 +1281,13 @@ void __fastcall hkSelectAction(uint8_t* director, void*) {
 // The busted cutscene without its viewfinder frame while VR runs, except in the prologue's first
 // cutscene: there the frame is part of the police chase camera feed shown on the virtual screen.
 void __cdecl hkNisOverlay(int id) {
-    if (Xr_Available() && (id & 0x7F) == kNisOverlayBusted) {
+    int overlay = id & 0x7F;
+    static int loggedOverlay = -1;
+    if (Xr_Available() && overlay != loggedOverlay) {
+        loggedOverlay = overlay;
+        Log("game: NIS overlay id %d%s", overlay, overlay == kNisOverlayBusted ? " (busted frame)" : "");
+    }
+    if (Xr_Available() && overlay == kNisOverlayBusted) {
         if (!IsPrologueBustedNis()) {
             Log("game: busted overlay skipped (VR)");
             return;
