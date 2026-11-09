@@ -3428,6 +3428,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;
     if (!strcmp(name, "AnimatedDriverSave")) return &g_cfg.animatedDriverSave;
     if (!strcmp(name, "AnimatedDriverHandFix")) return &g_cfg.animatedDriverHandFix;
+    if (!strcmp(name, "AnimatedDriverSmoothing")) return &g_cfg.animatedDriverSmoothing;
     if (!strcmp(name, "WheelOverHud")) return &g_cfg.wheelOverHud;
     if (!strcmp(name, "HudPerCar")) return &g_cfg.hudPerCar;
     if (!strcmp(name, "Dash")) return &g_cfg.dash;

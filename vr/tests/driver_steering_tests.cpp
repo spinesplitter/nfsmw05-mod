@@ -5,6 +5,51 @@
 int main(int argc, char** argv) {
     CockpitSteeringRegressionMain();
     using namespace CustomDriver;
+    // Driver animation smoothing: exponential and frame-rate independent. The
+    // wheel keeps its raw angle; only the rig target is filtered.
+    {
+        DriverSmoothing::Filter filter;
+        filter.Update(0.0f, 0.0f, 1.0f / 90.0f);
+        Near(filter.Update(120.0f, 0.0f, 1.0f / 90.0f), 120.0f,
+            "0 percent smoothing passes the angle through");
+        filter.Reset();
+        Near(filter.Update(45.0f, 1.0f, 1.0f / 60.0f), 45.0f, "first smoothing sample starts at the target");
+        float eased = filter.Update(200.0f, 1.0f, 1.0f / 60.0f);
+        Check(eased > 45.0f && eased < 200.0f, "smoothing eases toward a new angle");
+        DriverSmoothing::Filter at30, at120;
+        at30.Update(0.0f, 1.0f, 1.0f / 60.0f);
+        at120.Update(0.0f, 1.0f, 1.0f / 60.0f);
+        for (int i = 0; i < 30; ++i) at30.Update(90.0f, 1.0f, 1.0f / 30.0f);
+        for (int i = 0; i < 120; ++i) at120.Update(90.0f, 1.0f, 1.0f / 120.0f);
+        Near(at30.value, at120.value, "smoothing is independent of frame rate");
+        at30.Reset();
+        at30.Update(0.0f, 1.0f, 1.0f / 60.0f);
+        Near(at30.Update(200.0f, 1.0f, 1.0f / 60.0f), 200.0f,
+            "car or angle reset snaps the animation target");
+        // The cockpit path: only the rig angle lags, never g_steeringWheelAngle.
+        s_head.valid = true;
+        s_head.worldId = 12345;
+        s_nativeWheelValid = true;
+        s_nativeWheelCar = s_head.worldId;
+        g_cfg.animatedDriverSmoothing = 1.0f;
+        g_steeringWheelAngle = 0.0f;
+        s_driverSteeringSmoothing.Reset();
+        UpdateDriverAnimationSmoothing(1.0f / 60.0f);
+        g_steeringWheelAngle = 90.0f;
+        UpdateDriverAnimationSmoothing(1.0f / 60.0f);
+        Check(DriverAnimationAngle() > 0.0f && DriverAnimationAngle() < 90.0f,
+            "driver animation angle lags the steering wheel");
+        Near(g_steeringWheelAngle, 90.0f, "steering wheel angle itself is unchanged");
+        g_cfg.animatedDriverSmoothing = 0.0f;
+        UpdateDriverAnimationSmoothing(1.0f / 60.0f);
+        Near(DriverAnimationAngle(), 90.0f, "0 percent restores raw wheel tracking");
+        s_driverSteeringSmoothing.Reset();
+        s_nativeWheelValid = false;
+        s_head.valid = false;
+        s_head.worldId = 0;
+        g_cfg.animatedDriverSmoothing = 0.25f;
+        g_steeringWheelAngle = 0.0f;
+    }
     Point axis{1,0,0}, pivot{}, right{0,-0.2f,0}, left{0,0.2f,0}, direction{1,0,0};
     for(int side=0;side<2;++side) for(float spread:{0.5f,1.f,1.1f,1.5f}) {
         Point rest=side ? right:left;

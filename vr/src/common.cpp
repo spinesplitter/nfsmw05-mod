@@ -159,6 +159,9 @@ void LoadConfig() {
     c.hideHead = ReadInt(ini, "HideHead", c.hideHead) != 0;
     c.showCustomDriverModel = ReadInt(ini, "ShowCustomDriverModel", 0) != 0 ? 1.0f : 0.0f;
     c.showDriverIK = ReadInt(ini, "ShowDriverIK", 0) != 0 ? 1.0f : 0.0f;
+    c.animatedDriverSmoothing = ReadFloat(ini, "AnimatedDriverSmoothing", c.animatedDriverSmoothing);
+    if (!(c.animatedDriverSmoothing >= 0.0f)) c.animatedDriverSmoothing = 0.0f;
+    if (c.animatedDriverSmoothing > 1.0f) c.animatedDriverSmoothing = 1.0f;
     c.hideArms = ReadInt(ini, "HideArms", 0) != 0 ? 1.0f : 0.0f;
     c.wheelOverHud = ReadInt(ini, "WheelOverHud", 0) != 0 ? 1.0f : 0.0f;
     c.hudPerCar = ReadInt(ini, "HudPerCar", 0) != 0 ? 1.0f : 0.0f;

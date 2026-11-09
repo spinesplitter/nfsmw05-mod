@@ -43,6 +43,7 @@
 #include "driver_ik.h"
 #include "driver_hover.h"
 #include "driver_steering.h"
+#include "driver_smoothing.h"
 
 float g_steeringWheelAngle = 0.0f;
 float g_seatInput[4] = {};
@@ -2125,7 +2126,29 @@ bool NativeSteeringActive() {
     return s_nativeWheelValid && s_nativeWheelCar == s_head.worldId;
 }
 
+DriverSmoothing::Filter s_driverSteeringSmoothing;
+uint32_t s_driverSmoothingCar = 0;
+
+// The animation angle lags the wheel when smoothing is set; the wheel itself never does.
+float DriverAnimationAngle() {
+    return s_driverSteeringSmoothing.initialized ? s_driverSteeringSmoothing.value : g_steeringWheelAngle;
+}
+
+void UpdateDriverAnimationSmoothing(float dt) {
+    if (!s_head.valid || !NativeSteeringActive()) {
+        s_driverSteeringSmoothing.Reset();
+        s_driverSmoothingCar = 0;
+        return;
+    }
+    if (s_driverSmoothingCar != s_head.worldId) {
+        s_driverSmoothingCar = s_head.worldId;
+        s_driverSteeringSmoothing.Reset();
+    }
+    s_driverSteeringSmoothing.Update(g_steeringWheelAngle, g_cfg.animatedDriverSmoothing, dt);
+}
+
 DriverSteering::Grip NativeGrip(const DriverIK::Rig& rig, int side, const M4& world) {
+    const float degrees = DriverAnimationAngle();
     // Wheel measurements are stored in vehicle space, so movement between frames
     // and submission order cannot make the hand trail behind the car.
     M4 inv = MInvRigid(world);
@@ -2143,7 +2166,7 @@ DriverSteering::Grip NativeGrip(const DriverIK::Rig& rig, int side, const M4& wo
         auto grip=DriverSteering::Evaluate({wrist.x,2*centre-wrist.y,wrist.z},
             {direction.x,-direction.y,direction.z},{pivot.x,2*centre-pivot.y,pivot.z},
             {-(end.x-pivot.x),end.y-pivot.y,-(end.z-pivot.z)},
-            -g_steeringWheelAngle,1-side,g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
+            -degrees,1-side,g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
         grip.wrist.y=2*centre-grip.wrist.y; grip.direction.y=-grip.direction.y;
         grip.roll=-grip.roll;
         return grip;
@@ -2151,7 +2174,7 @@ DriverSteering::Grip NativeGrip(const DriverIK::Rig& rig, int side, const M4& wo
     return DriverSteering::Evaluate(wrist,
         {bone.tail[0]-bone.head[0],bone.tail[1]-bone.head[1],bone.tail[2]-bone.head[2]},
         {pivot.x,pivot.y,pivot.z}, {end.x-pivot.x,end.y-pivot.y,end.z-pivot.z},
-        g_steeringWheelAngle, side, g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
+        degrees, side, g_cfg.animatedDriverHandFix,g_cfg.animatedDriverSpread);
 }
 struct ArmDraw { uint8_t* solid; M4 world; };
 std::unordered_map<void*, ArmDraw> s_armDraws;
@@ -3219,7 +3242,7 @@ CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const flo
     V3 centre={w.centre[0],w.centre[1],w.centre[2]};
     out.centre=local(centre,turned);
     out.axis=CustomDriver::Unit(local(centre+V3{w.axis[0],w.axis[1],w.axis[2]},turned)-out.centre);
-    out.radius=w.radius; out.degrees=g_steeringWheelAngle; out.wheel=true;
+    out.radius=w.radius; out.degrees=DriverAnimationAngle(); out.wheel=true;
     out.handSpread=g_cfg.animatedDriverSpread;
     const ControlMarks& picked=ControlMarksFor(solid,info);
     out.hasShifter=picked.shift; out.hasHandbrake=picked.handbrake;
@@ -4107,6 +4130,7 @@ void Cockpit_EndFrame() {
     double now = Now();
     float dt = (float)std::max(0.0, std::min(0.1, now - armTime));
     armTime = now;
+    UpdateDriverAnimationSmoothing(dt);
     UpdateDriverHover(dt);
     // Triangle editor: while picking, the candidate along the gaze chosen with up / down (layer,
     // nearest first) is the pick; otherwise the last one stays (locked) for the page's commands.
