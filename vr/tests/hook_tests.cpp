@@ -21,6 +21,7 @@ bool Xr_BeginFrame() { return false; }
 void Xr_RecommendedSize(int* w, int* h) { *w = *h = 0; }
 const EyeView& Xr_Eye(int) { static EyeView e; return e; }
 bool Cockpit_ApplySeat(M4&) { return false; }
+bool Cockpit_Seated() { return false; }
 void Cockpit_EndFrame() {}
 void Cockpit_BeginEye() {}
 bool Cockpit_IsPlayerCarMatrix(const void*) { return false; }

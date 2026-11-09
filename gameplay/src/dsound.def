@@ -13,3 +13,4 @@ EXPORTS
     DirectSoundCreate8 = Proxy_DirectSoundCreate8 @11
     DirectSoundCaptureCreate8 = Proxy_DirectSoundCaptureCreate8 @12
     NfsmwGameplay_Loaded @13
+    NfsmwGameplay_ChangeCamera @14

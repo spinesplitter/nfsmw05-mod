@@ -26,6 +26,8 @@
 // 2 speed-insensitive wheel). Set on the game thread before FetchInput.
 extern "C" { volatile int g_steerType = -1; }
 extern "C" { void* g_linearMaxSteering = nullptr; }
+// Pending "change camera" presses, requested by the VR mod through NfsmwGameplay_ChangeCamera.
+extern "C" { volatile int g_changeCameraRequests = 0; }
 
 namespace {
 
@@ -244,6 +246,18 @@ void ReleaseAll(void* ip) {
 
 void __cdecl Hook_DoFetchInput(void* ip) {
     if (!ip) return;
+    // A camera change requested by the VR mod (the prologue cutscene is over and the cockpit should
+    // be selected) is a press of the game's own Change Camera action.
+    int requests = g_changeCameraRequests;
+    if (requests > 0) {
+        uint8_t* queue = (uint8_t*)ip + kIP_Queue;
+        int port = *(int*)(queue + kAQ_Port);
+        if (port >= 0) {
+            g_changeCameraRequests = requests - 1;
+            Send(queue, port, A_CAMERA, 1.0f);
+            Log("controls: camera change for the cockpit (%d left)", requests - 1);
+        }
+    }
     static bool classic = false;
     if (g_cfg.classicInput != classic) {
         classic = g_cfg.classicInput;
@@ -263,6 +277,14 @@ void __cdecl Hook_DoFetchInput(void* ip) {
 }
 
 }  // namespace
+
+// The VR mod asks for this (GetProcAddress) when the prologue cutscene is over: press the game's
+// Change Camera action on the next input fetch. One request per press; the VR mod asks again until
+// the in-car ("cockpit") view is reached.
+extern "C" void NfsmwGameplay_ChangeCamera() {
+    int pending = g_changeCameraRequests;
+    if (pending < 8) g_changeCameraRequests = pending + 1;
+}
 
 void Controls_Install() {
     if (Expect(kReceiveAction, {0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C})) {

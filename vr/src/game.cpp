@@ -311,9 +311,9 @@ float s_tanX = 1, s_tanY = 1;
 
 template <typename T> T& At(void* base, int offset) { return *(T*)((char*)base + offset); }
 
-// The prologue's first cutscene (IntroNisDD / its fly-in) is the one place the police chase
-// camera frame is shown. It is rendered as a flat frame on the VR screen (black around it) so the
-// cutscene cannot make the player sick, and its BUSTED_OVERLAY frame is allowed through.
+// The prologue's first cutscene (IntroNis01 / IntroNisDD / its fly-in) is the one place the police
+// chase camera frame is shown. It is rendered as a flat frame on the VR screen (black around it) so
+// the cutscene cannot make the player sick, and its BUSTED_OVERLAY frame is allowed through.
 bool IsPrologueBustedNis() {
     void* nis = *(void**)kNisInstance;
     if (!nis) return false;
@@ -340,6 +340,17 @@ bool IsPrologueBustedNis() {
     // The prologue's opening (IntroNis01 on this build), IntroNisDD / its fly-in; a DDay Arrest is
     // its busted camera feed.
     return scene == intro01 || scene == introDD || scene == flyInDD || (dday && type == 1);
+}
+
+// Whether the prologue camera cutscene is actually on screen. The flat virtual screen must end with
+// the cutscene: once it is over the player returns to full 3D, even if the NIS activity is still
+// loaded for a few frames.
+bool IsPrologueCutscenePlaying() {
+    if (!IsPrologueBustedNis()) return false;
+    void* nis = *(void**)kNisInstance;
+    if (!nis) return false;
+    // mState (NISACTIVITY_PLAYING = 5) at +0x2F4 from the same constructor/Play code.
+    return At<int>((uint8_t*)nis - 0x48, 0x2F4) == 5;
 }
 
 // Writes `opcode rel32` (0xE8 call / 0xE9 jmp) at `addr`, targeting `hook`.
@@ -934,12 +945,18 @@ void* TextureOf(uintptr_t slot) {
     return plat ? *(void**)(plat + 0x18) : nullptr;
 }
 
-// The HUD's mirror textures, for the d3d9 wrapper to leave out while the mirrors are on.
+// The HUD's rear view mirror textures, for the d3d9 wrapper to leave out. The HUD mirror is off
+// everywhere, not only in VR: the game's rear-view mirror setting is overridden globally, and the
+// car's own glass mirrors show the rear view instead when VR is running.
 void UpdateHiddenTextures() {
     D3D_SetMirrorsDisabled(g_cfg.disableMirrors > 0.5f && Xr_Available());
     D3D_SetRearViewTarget(*(void**)(kRvmTarget + kTargetSurface), s_mirrorPatched ? g_cfg.mirrorResolution : 1.0f);
-    if (s_mirrorPatched || (g_cfg.disableMirrors > 0.5f && Xr_Available())) D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
-    else D3D_HideTextures(nullptr, nullptr, nullptr);
+    D3D_HideTextures(TextureOf(kRvmTexture), TextureOf(kRvmMaskTexture), RvmTargetTexture());
+    static bool logged;
+    if (!logged && TextureOf(kRvmTexture)) {
+        logged = true;
+        Log("game: HUD rear view mirror disabled (all modes)");
+    }
 }
 
 void* RvmSurface() {
@@ -1006,6 +1023,57 @@ void SetupPlayerView(void* view, void* cam, float tanX, float tanY) {
     }
 }
 
+// After the prologue's camera cutscene: ask the gameplay mod to press the game's Change Camera
+// action until the seat applies (bumper/hood, which VR turns into the cockpit), then stop.
+void EnsureCockpitCamera() {
+    if (!Xr_Available() || !g_cfg.seat) return;
+    typedef void(__cdecl* ChangeCamera_t)();
+    static ChangeCamera_t change;
+    static bool looked;
+    if (!looked) {
+        looked = true;
+        HMODULE mod = GetModuleHandleA("nfsmw_gameplay.asi");
+        if (!mod) mod = GetModuleHandleA("dsound.dll");
+        change = mod ? (ChangeCamera_t)GetProcAddress(mod, "NfsmwGameplay_ChangeCamera") : nullptr;
+        Log(change ? "game: cockpit camera: will be selected when control returns"
+                   : "game: cockpit camera: the gameplay mod's camera action is unavailable");
+    }
+    if (!change) return;
+    static bool seenCutscene, done;
+    static DWORD cutsceneEnd;
+    if (done) return;
+    if (IsPrologueCutscenePlaying()) {
+        seenCutscene = true;
+        cutsceneEnd = 0;
+        return;
+    }
+    if (!seenCutscene || !DrivingUnpaused()) return;
+    DWORD now = GetTickCount();
+    // Let a frame or two render in stereo first: the seat flag is stale from before the cutscene.
+    if (!cutsceneEnd) {
+        cutsceneEnd = now;
+        return;
+    }
+    if (now - cutsceneEnd < 400) return;
+    if (Cockpit_Seated()) {
+        done = true;
+        Log("game: cockpit camera selected after the prologue cutscene");
+        return;
+    }
+    static DWORD last;
+    static int changes;
+    if (last && now - last < 600) return;
+    last = now;
+    if (changes >= 6) {
+        done = true;
+        Log("game: cockpit camera: no in-car view after %d camera changes", changes);
+        return;
+    }
+    changes++;
+    change();
+    Log("game: cockpit camera: change %d", changes);
+}
+
 void __cdecl hkRenderScene() {
     D3D_ProfUpdateDone();
     s_stereoFrame = false;
@@ -1015,12 +1083,14 @@ void __cdecl hkRenderScene() {
         FixGameMirrors();
         UpdateMirrorPatch();
         UpdateHiddenTextures();
+        EnsureCockpitCamera();
     }
     void* view = (void*)kPlayerView;
     void* cam = At<void*>(view, kViewCamera);
     bool active = At<int8_t>(view, kViewActive) != 0;
-    // The prologue's police chase cutscene is shown on the virtual screen, not in stereo.
-    bool prologueScreen = Xr_Available() && IsPrologueBustedNis();
+    // The prologue's police chase cutscene is shown on the virtual screen, not in stereo; once it
+    // is over the player is back in full 3D.
+    bool prologueScreen = Xr_Available() && IsPrologueCutscenePlaying();
 
     bool began = false;
     if (Xr_Available() && s_stereoEnabled && active && cam && s_haveSetupArgs && !prologueScreen) {

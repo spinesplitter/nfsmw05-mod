@@ -12,6 +12,8 @@ void Cockpit_Install();
 // Called with the game camera's world->view matrix before the eyes are placed; moves it to the
 // driver's seat in the bumper and hood cameras. Returns true if it did.
 bool Cockpit_ApplySeat(M4& view);
+// Whether the last ApplySeat put the camera in the seat (the game is in an in-car camera).
+bool Cockpit_Seated();
 // After Present (including flat-screen frames): refresh the observed car and clear frame state.
 void Cockpit_EndFrame();
 // Seat adjustment keys, once per frame.
