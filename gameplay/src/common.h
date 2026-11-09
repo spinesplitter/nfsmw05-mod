@@ -193,6 +193,7 @@ struct Config {
     int   logPhysics = 0;           // 1: physics diagnostics only while the telemetry panel is visible
     float slideWheelspin = 0.5f;    // driven wheels past the limit spin up: the game's tie to the road ^(1 + 15 * this) (0 = the game's)
     float frictionCircle = 1.0f;    // a driven tyre's side force kept within the grip its drive torque leaves (0 = off, above 1 exaggerated)
+    float offThrottleGripRecovery = 0.0f; // sliding side grip returns toward the game's while the throttle is closed (0 = off)
     float gravity = 1.0f;
     bool  gravityAll = false;       // gravity applies to every car, not only the player's
     float maxSpin = 8.0f;           // the player's car never spins faster (rad/s); 0 = the game's 30

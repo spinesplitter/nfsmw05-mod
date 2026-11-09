@@ -140,6 +140,7 @@
 #include "physics.h"
 #include "telemetry.h"
 #include "low_speed_tyres.h"
+#include "grip_recovery.h"
 #include "game.h"
 #include "input.h"
 #include "inisave.h"
@@ -255,6 +256,9 @@ float s_wheelTie[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 // Each player tyre's grip budget at its last UpdateLoaded (the grip limit, after load sensitivity).
 extern "C" float s_budget[4];
 float s_budget[4];
+// Off-throttle slide recovery: each tyre's progress toward the game's own sliding grip.
+float s_gripRecovery[4] = {};
+uint8_t* s_gripRecoveryTire[4] = {};
 float s_gas = 0.0f;         // the player's throttle at the last DoDrifting
 // The player's car for the telemetry panel (Physics_Sample), and its tyres and their grip limits
 // while its suspension steps.
@@ -282,6 +286,7 @@ struct CircleStats {
 struct CurveStats {
     int steps = 0, sliding = 0;
     float angle = 0, angleMax = 0, factor = 0, min = 1, over = 0, share = 0;
+    float recovery = 0, recoveryMax = 0;
     // Past the limit under power: steps, the game's tie of the wheel to the road, ours, wheel slip (m/s).
     int freed = 0;
     float tie = 0, ourTie = 0, slip = 0;
@@ -496,10 +501,10 @@ void __fastcall Hook_SuspSimulate(uint8_t* susp, void*, float dT) {
         // install-time line above shows the shared preset before the car's group is applied).
         Character();
         Log("physics: settings for this car: grip %.2f, balance %+.2f, stability %.2f, drift %.2f, friction circle "
-            "%.2f x throttle %.2f = %.2f, wheelspin %.2f, load sensitivity %.2f, suspension %.2f, roll %+.2f, "
+            "%.2f x throttle %.2f = %.2f, off-throttle grip %.2f, wheelspin %.2f, load sensitivity %.2f, suspension %.2f, roll %+.2f, "
             "downforce %.2f%s, gravity %.2f, offroad %.2f, rain %.2f", g_cfg.grip, g_cfg.gripBalance, g_cfg.stability,
             g_cfg.driftAssist, g_cfg.frictionCircle, s_char.throttle, g_cfg.frictionCircle * s_char.throttle,
-            g_cfg.slideWheelspin, g_cfg.loadSensitivity, g_cfg.suspFirmness, g_cfg.rollBalance, g_cfg.downforce,
+            g_cfg.offThrottleGripRecovery, g_cfg.slideWheelspin, g_cfg.loadSensitivity, g_cfg.suspFirmness, g_cfg.rollBalance, g_cfg.downforce,
             g_cfg.downforceSquared ? " (squared)" : "", g_cfg.gravity, g_cfg.offroadGrip, g_cfg.rainGrip);
     }
     s_diag.suspCustom++;
@@ -672,11 +677,11 @@ bool LooseSurface(int i, uint8_t* tire) {
 typedef float(__thiscall* ComputeLateralForce_t)(void* tire, float load, float angle);
 
 // The tyre curve for a player's tyre at slip angle `a` (degrees): 1 up to TyrePeakAngle, falling to
-// TyreSlideGrip by 3 times it, faded in from 2 to 5 m/s (where the angle means something); 1 on
-// loose surfaces.
-float Curve(int i, uint8_t* tire, float a) {
+// slideGrip by 3 times it, faded in from 2 to 5 m/s (where the angle means something); 1 on
+// loose surfaces. slideGrip is TyreSlideGrip, or the off-throttle recovered value.
+float Curve(int i, uint8_t* tire, float a, float slideGrip) {
     float peak = g_cfg.tyrePeakAngle;
-    float f = 1.0f - (1.0f - g_cfg.tyreSlideGrip) * Smoothstep(peak, 3.0f * peak, a) * low_speed_tyres::Share(s_playerSpeed);
+    float f = 1.0f - (1.0f - slideGrip) * Smoothstep(peak, 3.0f * peak, a) * low_speed_tyres::Share(s_playerSpeed);
     if (f < 1.0f && LooseSurface(i, tire)) f = 1.0f;
     return f;
 }
@@ -690,20 +695,35 @@ float Curve(int i, uint8_t* tire, float a) {
 // lateral speed from the slip angle and the ground speed along the wheel, as in Circle).
 // Keep the game's contact force below 2 m/s; blend the replacement in by 5 m/s.
 void TyreCurve(int i, uint8_t* tire) {
-    if (low_speed_tyres::Share(s_playerSpeed) == 0.0f) return;
+    if (s_gripRecoveryTire[i] != tire) {
+        s_gripRecoveryTire[i] = tire;
+        s_gripRecovery[i] = 0.0f;
+    }
+    if (low_speed_tyres::Share(s_playerSpeed) == 0.0f) { s_gripRecovery[i] = 0.0f; return; }
     float& side = Field<float>(tire, kTire_SideForce);
     float turns = Field<float>(tire, kTire_SlipAngle);
     float a = fabsf(turns) * 360.0f;
-    if (!(a <= 180.0f)) return;              // NaN or nonsense
+    if (!(a <= 180.0f)) { s_gripRecovery[i] = 0.0f; return; }   // NaN or nonsense
     if (a > 90.0f) a = 180.0f - a;           // rolling backwards
-    float f = Curve(i, tire, a);
-    bool sliding = !(s_traction[i] >= 1.0f) || Field<uint8_t>(tire, kTire_Locked);
+    bool locked = Field<uint8_t>(tire, kTire_Locked) != 0;
+    bool sliding = !(s_traction[i] >= 1.0f) || locked;
+    bool loose = LooseSurface(i, tire);
+    // Off-throttle slide recovery: only while the throttle is closed and the tyre
+    // slides on road, and not while the brakes have it locked. The stock curve
+    // (TyreSlideGrip) otherwise, and 0% is exactly it.
+    float recovery = 0.0f;
+    if (g_cfg.offThrottleGripRecovery > 0.0f && s_gas < 0.05f && sliding && !locked && !loose &&
+        g_cfg.tyreSlideGrip < 1.0f)
+        recovery = grip_recovery::Step(s_gripRecovery[i], g_cfg.offThrottleGripRecovery, s_suspDT);
+    s_gripRecovery[i] = recovery;
+    float slideGrip = grip_recovery::SlideGrip(g_cfg.tyreSlideGrip, recovery);
+    float f = Curve(i, tire, a, slideGrip);
     bool log = PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) && s_playerSpeed > 5.0f;
     float budget = s_budget[i], grip = 0.0f, kept = 1.0f;
     if (sliding || log)
         grip = fabsf(((ComputeLateralForce_t)kComputeLateralForce)(tire, Field<float>(tire, kTire_Load), fabsf(turns)) *
                      Field<float>(tire, kTire_LatBoost) * Field<float>(tire, kTire_DriftGrip));
-    if (!(grip < 1.0e7f)) return;            // NaN or nonsense
+    if (!(grip < 1.0e7f)) { s_gripRecovery[i] = 0.0f; return; }   // NaN or nonsense
     if (sliding) {
         float curve = (budget > 0.0f ? std::min(grip, budget) : grip) * f, want = curve;
         float slip = Field<float>(tire, kTire_Slip);
@@ -711,7 +731,7 @@ void TyreCurve(int i, uint8_t* tire) {
         if (spin > 0.0f && budget > 0.0f) {
             float lat = tanf(std::min(a * 0.017453293f, 1.55f)) * fabsf(Field<float>(tire, kTire_RoadSpeed));
             float skid = sqrtf(lat * lat + slip * slip);
-            float slide = budget * g_cfg.tyreSlideGrip * (skid > 0.001f ? lat / skid : 0.0f);
+            float slide = budget * slideGrip * (skid > 0.001f ? lat / skid : 0.0f);
             want = curve + (slide - curve) * spin;
             if (curve > 1.0f) kept = want / curve;
         }
@@ -723,6 +743,7 @@ void TyreCurve(int i, uint8_t* tire) {
         CurveStats& s = s_curve[i >= 2];
         s.steps++, s.angle += a, s.factor += f;
         s.angleMax = std::max(s.angleMax, a), s.min = std::min(s.min, f);
+        s.recovery += recovery, s.recoveryMax = std::max(s.recoveryMax, recovery);
         if (budget > 0.0f) s.over += std::min(grip / budget, 9.0f);
         if (sliding) s.sliding++, s.share += std::min(kept, 9.0f);
     }
@@ -792,9 +813,10 @@ void WheelTie(int i, uint8_t* tire) {
 
 extern "C" __attribute__((used)) float LatGrip(int i) {
     uint8_t* tire = s_latTires[i];
-    if (!tire) return 1.0f;
+    if (!tire) { s_gripRecovery[i] = 0.0f; return 1.0f; }
     WheelTie(i, tire);
     if (g_cfg.tyreSlideGrip < 1.0f) TyreCurve(i, tire);
+    else s_gripRecovery[i] = 0.0f;
     return g_cfg.frictionCircle > 0.0f ? Circle(i, tire) : 1.0f;
 }
 
@@ -1189,9 +1211,10 @@ void Diagnostics(uint8_t* rb) {
         if (!PhysicsLogEnabled(g_cfg.logPhysics, Telemetry_Shown()) || s.steps == 0) continue;
         float n = (float)s.steps;
         Log("physics:   %s tyre curve (%d tyre steps, %.0f%% sliding model): slip angle %.1f deg (up to %.0f), curve "
-            "x%.2f (down to x%.2f), the game's side force %.2f of the grip limit; spinning or locked wheels x%.2f of it",
+            "x%.2f (down to x%.2f), the game's side force %.2f of the grip limit; spinning or locked wheels x%.2f of it; "
+            "off-throttle recovery %.0f%% (up to %.0f%%)",
             a ? "rear" : "front", s.steps, s.sliding * 100.0f / n, s.angle / n, s.angleMax, s.factor / n, s.min,
-            s.over / n, s.sliding ? s.share / s.sliding : 1.0f);
+            s.over / n, s.sliding ? s.share / s.sliding : 1.0f, s.recovery / n * 100.0f, s.recoveryMax * 100.0f);
         if (s.freed)
             Log("physics:   %s past the limit under power %d tyre steps: wheel tied to the road x%.2f (the game's x%.2f), "
                 "wheel slip %.1f m/s", a ? "rear" : "front", s.freed, s.ourTie / s.freed, s.tie / s.freed, s.slip / s.freed);
@@ -1294,6 +1317,7 @@ const PerCar kPerCar[] = {
     PRESET_NUMBER(tyrePeakAngle, "TyrePeakAngle", 3.0f, 20.0f),
     PRESET_NUMBER(slideWheelspin, "WheelspinInSlides", 0.0f, 1.0f),
     PRESET_NUMBER(frictionCircle, "FrictionCircle", 0.0f, 3.0f),
+    PRESET_NUMBER(offThrottleGripRecovery, "OffThrottleGripRecovery", 0.0f, 1.0f),
     PRESET_NUMBER(downforce, "Downforce", -0.25f, 2.0f),
     PRESET_TOGGLE(downforceSquared, "DownforceSquared"),
     PRESET_NUMBER(downforceMatch, "DownforceMatchSpeed", 50.0f, 400.0f),

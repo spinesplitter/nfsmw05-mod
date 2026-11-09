@@ -311,6 +311,7 @@ void LoadConfig() {
     c.realWeight = ReadInt("Physics", "RealWeight", c.realWeight) != 0;
     c.slideWheelspin = Clamp(ReadFloat("Physics", "WheelspinInSlides", c.slideWheelspin), 0.0f, 1.0f);
     c.frictionCircle = Clamp(ReadFloat("Physics", "FrictionCircle", c.frictionCircle), 0.0f, 3.0f);
+    c.offThrottleGripRecovery = Clamp(ReadFloat("Physics", "OffThrottleGripRecovery", c.offThrottleGripRecovery), 0.0f, 1.0f);
     c.gravity = Clamp(ReadFloat("Physics", "Gravity", c.gravity), 0.1f, 3.0f);
     c.gravityAll = ReadInt("Physics", "GravityAllCars", 0) != 0;
     c.maxSpin = Clamp(ReadFloat("Physics", "MaxSpin", c.maxSpin), 0.0f, 30.0f);
