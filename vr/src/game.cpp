@@ -311,6 +311,30 @@ float s_tanX = 1, s_tanY = 1;
 
 template <typename T> T& At(void* base, int offset) { return *(T*)((char*)base + offset); }
 
+// The prologue's first cutscene (IntroNisDD / its fly-in) is the one place the police chase
+// camera frame is shown. It is rendered as a flat frame on the VR screen (black around it) so the
+// cutscene cannot make the player sick, and its BUSTED_OVERLAY frame is allowed through.
+bool IsPrologueBustedNis() {
+    void* nis = *(void**)kNisInstance;
+    if (!nis) return false;
+    // NISActivity's INIS sub-object is at +0x4C. Its fields: mNISType +0x310, mSceneHash +0x3A8,
+    // mDDayNIS +0x408 (from the class layout in NISActivity.cpp).
+    int type = At<int>(nis, 0x310 - 0x4C);
+    unsigned scene = At<unsigned>(nis, 0x3A8 - 0x4C);
+    bool dday = At<uint8_t>(nis, 0x408 - 0x4C) != 0;
+    static const unsigned introDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisDD");
+    static const unsigned flyInDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisFlyInDD");
+    static void* loggedNis;
+    static unsigned loggedScene;
+    if (nis != loggedNis || scene != loggedScene) {
+        loggedNis = nis;
+        loggedScene = scene;
+        Log("game: NIS %p type %d scene %08X dday %d", nis, type, scene, dday ? 1 : 0);
+    }
+    // IntroNisDD / its fly-in is the prologue's opening; a DDay Arrest is its busted camera feed.
+    return scene == introDD || scene == flyInDD || (dday && type == 1);
+}
+
 // Writes `opcode rel32` (0xE8 call / 0xE9 jmp) at `addr`, targeting `hook`.
 void PatchRel32(uintptr_t addr, uint8_t opcode, void* hook) {
     uint8_t* p = (uint8_t*)addr;
@@ -956,9 +980,11 @@ void __cdecl hkRenderScene() {
     void* view = (void*)kPlayerView;
     void* cam = At<void*>(view, kViewCamera);
     bool active = At<int8_t>(view, kViewActive) != 0;
+    // The prologue's police chase cutscene is shown on the virtual screen, not in stereo.
+    bool prologueScreen = Xr_Available() && IsPrologueBustedNis();
 
     bool began = false;
-    if (Xr_Available() && s_stereoEnabled && active && cam && s_haveSetupArgs) {
+    if (Xr_Available() && s_stereoEnabled && active && cam && s_haveSetupArgs && !prologueScreen) {
         double tw = D3D_ProfNow();
         began = Xr_BeginFrame();
         D3D_ProfAdd(PROF_WAITFRAME, D3D_ProfNow() - tw);
@@ -967,7 +993,7 @@ void __cdecl hkRenderScene() {
         // Flat screen: the cockpit seat still applies to the single view.
         uint8_t saved[kCameraParamsSize];
         bool seat = false;
-        if (active && cam && s_haveSetupArgs) {
+        if (active && cam && s_haveSetupArgs && !prologueScreen) {
             memcpy(saved, cam, sizeof(saved));
             M4 V;
             memcpy(&V, saved + kCamMatrix, sizeof(V));
@@ -1247,11 +1273,15 @@ void __fastcall hkSelectAction(uint8_t* director, void*) {
     EndCinematicSlowdown(director);
 }
 
-// The busted cutscene without its viewfinder frame while VR runs: the scene is seen as it is.
+// The busted cutscene without its viewfinder frame while VR runs, except in the prologue's first
+// cutscene: there the frame is part of the police chase camera feed shown on the virtual screen.
 void __cdecl hkNisOverlay(int id) {
     if (Xr_Available() && (id & 0x7F) == kNisOverlayBusted) {
-        Log("game: busted overlay skipped (VR)");
-        return;
+        if (!IsPrologueBustedNis()) {
+            Log("game: busted overlay skipped (VR)");
+            return;
+        }
+        Log("game: busted overlay shown on the prologue screen (VR)");
     }
     ((void(__cdecl*)(int))kNisOverlay)(id);
 }
