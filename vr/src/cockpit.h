@@ -32,6 +32,9 @@ void Cockpit_BeginEye();
 // Whether `matrix` is a local-to-world matrix the player's own car (body, parts, driver, steering
 // wheel) was submitted with for the player view in the current eye.
 bool Cockpit_IsPlayerCarMatrix(const void* matrix);
+// Whether this index buffer belongs to one of the player car's windows: its draws get two-sided
+// culling so the outside glass is visible from inside the cabin.
+bool Cockpit_IsWindowDraw(void* indexBuffer);
 // How many such matrices this eye (0: the car was not drawn in the player view).
 int Cockpit_PlayerCarMatrices();
 // Deform a private copy of stream 0 for a registered player-driver draw. Never writes game assets.

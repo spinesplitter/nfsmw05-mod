@@ -3028,6 +3028,19 @@ public:
                                                    UINT count) override {
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
+        // The player car's windows are single-sided outside surfaces. In the seat, draw them
+        // two-sided so the glass (and the view through it) is also visible from inside.
+        const bool twoSidedGlass = Cockpit_IsWindowDraw(s_curIndices) && DrawingPlayerView();
+        DWORD oldCull = D3DCULL_CCW;
+        if (twoSidedGlass) {
+            real->GetRenderState(D3DRS_CULLMODE, &oldCull);
+            real->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+        }
+        struct RestoreCull {
+            IDirect3DDevice9Ex* dev;
+            DWORD mode;
+            ~RestoreCull() { if (dev) dev->SetRenderState(D3DRS_CULLMODE, mode); }
+        } restoreCull{twoSidedGlass ? real : nullptr, oldCull};
         // A manual mirror's original triangles are hidden in a private copy of that model's index
         // buffer. Models without manual mirror marks have no copy and are untouched.
         IDirect3DIndexBuffer9* mirrorPatched = nullptr;

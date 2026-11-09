@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <deque>
 #include <thread>
@@ -1464,6 +1465,13 @@ bool ReadMesh(uint8_t* solid, SolidMesh& s) {
 // The solids whose rear view mirror was handed to the d3d9 side in the current eye.
 std::vector<uint8_t*> s_mirrorSolids;
 std::vector<uint8_t*> s_manualMirrorSolids;
+// The player car's window/glass solids in the current eye. They are drawn with culling off so the
+// outside surface is also visible from the seat.
+std::unordered_set<void*> s_windowIbs;
+
+bool WindowDraw(void* indexBuffer) {
+    return indexBuffer && s_windowIbs.count(indexBuffer) != 0;
+}
 
 // All of a solid's triangles (three points each), for which `keep` is true.
 template <class Keep> void SolidTriangles(uint8_t* solid, std::vector<V3>& out, Keep keep) {
@@ -3217,6 +3225,11 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     // for each control/driver predicate in every split entry submission.
     const std::string playerName = player ? SolidName(*info) : std::string();
     const EditSet* playerEdits = player ? &EditsFor(playerName) : nullptr;
+    if (player && playerName.find("_WINDOW") != std::string::npos &&
+        playerName.find("LIGHT") == std::string::npos) {
+        void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
+        if (ib) s_windowIbs.insert(ib);
+    }
     if (player && info->wheel && info->wheel->ok) {
         const Wheel& wheel=*info->wheel;
         float upLength=sqrtf(wheel.axis[0]*wheel.axis[0]+wheel.axis[2]*wheel.axis[2]);
@@ -4159,6 +4172,8 @@ bool Cockpit_IsPlayerCarMatrix(const void* matrix) {
     return false;
 }
 
+bool Cockpit_IsWindowDraw(void* indexBuffer) { return WindowDraw(indexBuffer); }
+
 int Cockpit_PlayerCarMatrices() { return s_carMatrixCount; }
 
 void Cockpit_BeginEye() {
@@ -4166,6 +4181,7 @@ void Cockpit_BeginEye() {
     s_carMatrixCount = 0;
     s_mirrorSolids.clear();
     s_manualMirrorSolids.clear();
+    s_windowIbs.clear();
     s_eyeDone.clear();
     s_driverIKWorldValid = false;
     s_handbrakeGripValid = false;
