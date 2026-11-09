@@ -3533,6 +3533,8 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "CockpitShiftDown")) return &g_cockpitShiftDown;
     if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
     if (!strcmp(name, "GlassOpacity")) return &g_cfg.glassOpacity;
+    if (!strcmp(name, "WiperSweep")) return &g_wiperSweep;
+    if (!strcmp(name, "WiperStrike")) return &g_wiperStrikes;
     if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;
     if (!strcmp(name, "ShowDriverIK")) return &g_cfg.showDriverIK;
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;

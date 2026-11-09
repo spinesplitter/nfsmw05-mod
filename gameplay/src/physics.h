@@ -14,6 +14,8 @@ void Physics_Frame();
 // Make it rain: force the player view's rain intensity while on (the F4 testing button).
 void Physics_ForceRain(bool on);
 bool Physics_RainForced();
+// The VR mod's wiper stroke counter: plays the stitch-static wiper sound when it goes up.
+void Physics_WiperSound(float* strikes);
 
 // Testing: lifts the player's car [Tires] DropHeight metres straight up at its next physics step
 // (vertical and spin speed zeroed, forward speed kept) and lets it fall. Any thread.

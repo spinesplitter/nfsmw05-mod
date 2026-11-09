@@ -50,6 +50,7 @@
 #include "inisave.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <psapi.h>
 
 namespace {
@@ -1023,6 +1024,61 @@ void Game_SetMenuOpen(bool open) { s.menuOpen = open; }
 
 void Game_PlayMoment(uint32_t moment) {
     if (moment) PlayMoment(moment);
+}
+
+// The wiper sounds: the game's own Stitch_Static_MB samples 1 and 2, played through the AEMS
+// "AEMS_StichStatic" event (type 2 = static, id = sample index) the way cSampleWarpper::Play does.
+// The event object is kept alive for a moment so the sound is not cut off, then released.
+constexpr uintptr_t kAemsStitchStaticCtor = 0x4ADFC0;    // AEMS_StichStatic::AEMS_StichStatic
+constexpr uintptr_t kAemsStitchStaticCommit = 0x4AE120;  // AEMS_StichStatic::CommitMemberData
+constexpr uintptr_t kAemsStitchStaticRelease = 0x4AE110; // AEMS_StichStatic::~AEMS_StichStatic
+typedef void* (__thiscall* AemsStitchStaticCtor_t)(void*, int, int, int, int, int, int, int, int, int, int);
+
+struct StitchStaticVoice {
+    void* object;
+    double until;
+};
+static StitchStaticVoice s_stitchVoices[8];
+static int s_stitchVoiceNext;
+
+static void ReleaseStitchVoice(StitchStaticVoice& voice) {
+    if (!voice.object) return;
+    ((void(__thiscall*)(void*))kAemsStitchStaticRelease)(voice.object);
+    free(voice.object);
+    voice.object = nullptr;
+}
+
+void Game_PlayStitchStatic(int sampleIndex) {
+    if (sampleIndex < 0) return;
+    static bool checked = false, valid = false;
+    if (!checked) {
+        checked = true;
+        valid = Expect(kAemsStitchStaticCtor, {0x8B, 0x44, 0x24, 0x04, 0x85, 0xC0, 0x56, 0x57});
+        if (!valid) Log("wipers: unexpected AEMS static code; the wiper sound is off");
+    }
+    if (!valid) return;
+    double now = Now();
+    for (auto& voice : s_stitchVoices)
+        if (voice.object && now >= voice.until) ReleaseStitchVoice(voice);
+    void* object = calloc(1, 0x2C);
+    if (!object) return;
+    ((AemsStitchStaticCtor_t)kAemsStitchStaticCtor)(object, 2, sampleIndex, 0x7FFF, 0x1000, 0x8000, 0,
+                                                     0x7FFF, 0x7FFF, 0x61A8, 0);
+    if (!*(void**)object) {
+        free(object);
+        return;
+    }
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        Log("wipers: Stitch_Static_MB wiper sounds ready");
+    }
+    ((void(__thiscall*)(void*))kAemsStitchStaticCommit)(object);
+    StitchStaticVoice& voice = s_stitchVoices[s_stitchVoiceNext];
+    s_stitchVoiceNext = (s_stitchVoiceNext + 1) % (sizeof(s_stitchVoices) / sizeof(s_stitchVoices[0]));
+    ReleaseStitchVoice(voice);
+    voice.object = object;
+    voice.until = now + 0.5;   // the stitch-static samples are a few tens of milliseconds
 }
 
 void Game_PopTires() { s.popPending = true; }

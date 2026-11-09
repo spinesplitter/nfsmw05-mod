@@ -41,3 +41,6 @@ void Game_SetSequential(bool sequential);
 void Game_PopTires();
 // Plays a sound moment (game thread), e.g. to preview [Shifter] GrindSound.
 void Game_PlayMoment(uint32_t moment);
+
+// Plays one of the game's Stitch_Static_MB samples (1 or 2) as the wiper sound. Game thread only.
+void Game_PlayStitchStatic(int sampleIndex);

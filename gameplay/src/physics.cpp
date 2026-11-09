@@ -2076,6 +2076,18 @@ void Physics_ForceRain(bool on) {
 
 bool Physics_RainForced() { return s_makeRain; }
 
+// The VR mod counts wiper strokes: play Stitch_Static_MB_1 on one, _2 on the next.
+void Physics_WiperSound(float* strikes) {
+    static float last = 0.0f;
+    static int next = 1;
+    if (!strikes) return;
+    float now = *strikes;
+    if (now == last) return;
+    last = now;
+    Game_PlayStitchStatic(next);
+    next = next == 1 ? 2 : 1;
+}
+
 void Physics_Frame() {
     AidToggles();
     // Make it rain: keep the player view's rain intensity up; the weather system may rewrite it.

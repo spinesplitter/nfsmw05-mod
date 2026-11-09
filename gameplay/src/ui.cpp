@@ -170,6 +170,7 @@ constexpr struct {
     {MOD_VR, "MirrorDistance", 0.0f},
     {MOD_VR, "ResolutionScale", 1.0f},
     {MOD_VR, "GlassOpacity", 0.15f},
+    {MOD_VR, "WiperStrike", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -212,6 +213,7 @@ enum {
     VR_MIRRORDISTANCE,
     VR_RENDERSCALE,
     VR_GLASSOPACITY,
+    VR_WIPERSTRIKE,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
@@ -222,6 +224,8 @@ static_assert(KeyIs(kExt[VR_DISABLEMIRRORS].key, "DisableMirrors"), "kExt out of
 static_assert(KeyIs(kExt[VR_MIRRORRESOLUTION].key, "MirrorResolution"), "kExt out of order at VR_MIRRORRESOLUTION");
 static_assert(KeyIs(kExt[VR_MIRRORDISTANCE].key, "MirrorDistance"), "kExt out of order at VR_MIRRORDISTANCE");
 static_assert(KeyIs(kExt[VR_RENDERSCALE].key, "ResolutionScale"), "kExt out of order at VR_RENDERSCALE");
+static_assert(KeyIs(kExt[VR_GLASSOPACITY].key, "GlassOpacity"), "kExt out of order at VR_GLASSOPACITY");
+static_assert(KeyIs(kExt[VR_WIPERSTRIKE].key, "WiperStrike"), "kExt out of order at VR_WIPERSTRIKE");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
 static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
@@ -3368,6 +3372,8 @@ void Ui_Frame() {
     // Raw attempts, before clutch/misshift validation. Do not feed H events into gearbox counters.
     if (float* v = ExtSetting(VR_COCKPITSHIFTUP)) *v = (float)((in.shiftUp + in.cockpitGateForward) & 0xFFFF);
     if (float* v = ExtSetting(VR_COCKPITSHIFTDOWN)) *v = (float)((in.shiftDown + in.cockpitGateBackward) & 0xFFFF);
+    // The wiper animation's stroke counter (VR mod): one stitch-static sound per stroke.
+    Physics_WiperSound(ExtSetting(VR_WIPERSTRIKE));
     // VR seat bindings, held: the VR mod moves the seat while they are.
     auto held = [&](int seat) { return (in.seatDown >> seat & 1) ? 1.0f : 0.0f; };
     if (float* v = ExtSetting(VR_SEATRIGHT)) *v = held(SEAT_RIGHT) - held(SEAT_LEFT);

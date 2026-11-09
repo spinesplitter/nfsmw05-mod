@@ -1480,6 +1480,11 @@ bool WindowDraw(void* indexBuffer) {
 // The player car's wiper solid per index buffer (registered while submitting the car).
 std::unordered_map<void*, uint8_t*> s_wiperSolids;
 
+// Read by the gameplay mod through NfsmwVr_Setting("WiperSweep" / "WiperStrike"): the sweep angle
+// and a count of wiper strokes. The count drives the stitch-static wiper sounds (defined after the
+// anonymous namespace below).
+static int s_wiperHalf = -1;
+
 
 // All of a solid's triangles (three points each), for which `keep` is true.
 template <class Keep> void SolidTriangles(uint8_t* solid, std::vector<V3>& out, Keep keep) {
@@ -3769,6 +3774,10 @@ bool Held(int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000)
 
 }  // namespace
 
+// Read by the gameplay mod through NfsmwVr_Setting("WiperSweep" / "WiperStrike").
+float g_wiperSweep = 0.0f;
+float g_wiperStrikes = 0.0f;
+
 bool Cockpit_HasMarkedArmDraw(void* ib) {
     return (NativeSteeringActive() || s_armHover.progress > 0.0001f) && s_armDraws.count(ib) != 0;
 }
@@ -4442,8 +4451,23 @@ bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uin
     memcpy(pivot, c.pivot, sizeof(c.pivot));
     memcpy(axis, c.axis, sizeof(c.axis));
     // A sweep from the rest position to about 50 degrees and back while it rains; parked when dry.
+    constexpr float kPi = 3.14159265f;
     float rain = GameRainIntensity();
-    *angle = rain > 0.02f ? 0.9f * (0.5f - 0.5f * cosf((float)(Now() * 6.2831853 * 0.9))) : 0.0f;
+    float phase = (float)(Now() * 2.0 * kPi * 0.9);
+    *angle = rain > 0.02f ? 0.9f * (0.5f - 0.5f * cosf(phase)) : 0.0f;
+    g_wiperSweep = *angle;
+    // One count per half sweep (out and back): the gameplay mod plays Stitch_Static_MB_1 on the
+    // out stroke and _2 on the return, alternating every stroke.
+    if (rain > 0.02f) {
+        int half = (int)(phase / kPi);
+        if (s_wiperHalf < 0) s_wiperHalf = half;
+        if (half != s_wiperHalf) {
+            s_wiperHalf = half;
+            g_wiperStrikes += 1.0f;
+        }
+    } else {
+        s_wiperHalf = -1;
+    }
     return true;
 }
 

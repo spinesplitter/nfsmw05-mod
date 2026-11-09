@@ -39,6 +39,11 @@ bool Cockpit_IsWindowDraw(void* indexBuffer);
 // the hinge/normal/sweep angle for the current rain. False when this draw has none.
 bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uint16_t>& indices,
                        std::vector<unsigned>& verts, float pivot[3], float axis[3], float* angle);
+
+// Wiper state for the gameplay mod's sound: the current sweep angle, and a count that goes up once
+// per wiper stroke (the game thread plays the two stitch-static samples on it).
+extern float g_wiperSweep;
+extern float g_wiperStrikes;
 // How many such matrices this eye (0: the car was not drawn in the player view).
 int Cockpit_PlayerCarMatrices();
 // Deform a private copy of stream 0 for a registered player-driver draw. Never writes game assets.
