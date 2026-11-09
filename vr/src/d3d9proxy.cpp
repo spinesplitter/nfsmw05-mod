@@ -227,6 +227,7 @@ static void ReleaseSavedState() {
 static IDirect3DCubeTexture9* s_genericEnv;
 static IDirect3DTexture9* s_genericEnv2D;
 static IDirect3DTexture9* s_dropletTex;
+static IDirect3DTexture9* s_crackTex;
 static void ReleaseGlassMaterials() {
     if (s_genericEnv) s_genericEnv->Release();
     s_genericEnv = nullptr;
@@ -234,6 +235,8 @@ static void ReleaseGlassMaterials() {
     s_genericEnv2D = nullptr;
     if (s_dropletTex) s_dropletTex->Release();
     s_dropletTex = nullptr;
+    if (s_crackTex) s_crackTex->Release();
+    s_crackTex = nullptr;
 }
 
 static void ReleaseEyeTargets() {
@@ -565,6 +568,108 @@ static IDirect3DTexture9* GlassDroplets() {
         Log("d3d9: glass rain droplets ready (overlay on the player car's windows)");
     }
     return s_dropletTex;
+}
+
+// The cracked-glass overlay: radial impact cracks, branches and concentric rings. Drawn over the
+// window triangles once the player car reaches 75% damage (car damage, not engine heat).
+static IDirect3DTexture9* GlassCracks() {
+    if (s_crackTex) return s_crackTex;
+    if (!s_dev) return nullptr;
+    const int n = 256;
+    if (FAILED(s_dev->CreateTexture(n, n, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &s_crackTex,
+                                    nullptr))) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: glass crack texture could not be created");
+        }
+        s_crackTex = nullptr;
+        return nullptr;
+    }
+    D3DLOCKED_RECT lr;
+    if (FAILED(s_crackTex->LockRect(0, &lr, nullptr, D3DLOCK_DISCARD))) {
+        s_crackTex->Release();
+        s_crackTex = nullptr;
+        return nullptr;
+    }
+    for (int y = 0; y < n; y++)
+        memset((unsigned char*)lr.pBits + y * lr.Pitch, 0, (size_t)n * 4);
+    unsigned seed = 0x7F4A7C15u;
+    auto rnd = [&]() {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        return seed;
+    };
+    auto rnd01 = [&]() { return (rnd() & 0xFFFF) / 65535.0f; };
+    auto line = [&](float x0, float y0, float x1, float y1, float width, int alpha) {
+        int xa = (int)floorf(std::min(x0, x1) - width), xb = (int)ceilf(std::max(x0, x1) + width);
+        int ya = (int)floorf(std::min(y0, y1) - width), yb = (int)ceilf(std::max(y0, y1) + width);
+        xa = std::max(0, xa); ya = std::max(0, ya);
+        xb = std::min(n - 1, xb); yb = std::min(n - 1, yb);
+        float dx = x1 - x0, dy = y1 - y0;
+        float len2 = dx * dx + dy * dy;
+        for (int y = ya; y <= yb; y++) {
+            DWORD* row = (DWORD*)((unsigned char*)lr.pBits + y * lr.Pitch);
+            for (int x = xa; x <= xb; x++) {
+                float px = x + 0.5f - x0, py = y + 0.5f - y0;
+                float t = len2 > 1e-5f ? (px * dx + py * dy) / len2 : 0.0f;
+                t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+                float ex = px - dx * t, ey = py - dy * t;
+                float dist = sqrtf(ex * ex + ey * ey);
+                if (dist >= width) continue;
+                int a = (int)(alpha * (1.0f - dist / width));
+                int old = (int)((row[x] >> 24) & 0xFF);
+                if (a > old) row[x] = D3DCOLOR_ARGB(a, 235, 245, 255);
+            }
+        }
+    };
+    constexpr float kTwoPi = 6.2831853f;
+    for (int impact = 0; impact < 3; impact++) {
+        float cx = (0.18f + 0.64f * rnd01()) * n;
+        float cy = (0.18f + 0.64f * rnd01()) * n;
+        for (int k = 0; k < 6; k++)
+            line(cx + (rnd01() - 0.5f) * 10.0f, cy + (rnd01() - 0.5f) * 10.0f,
+                 cx + (rnd01() - 0.5f) * 10.0f, cy + (rnd01() - 0.5f) * 10.0f, 2.0f, 230);
+        int rays = 13 + (int)(rnd() % 8);
+        for (int r = 0; r < rays; r++) {
+            float angle = (r + rnd01() * 0.7f) * kTwoPi / rays;
+            float length = (0.12f + 0.34f * rnd01()) * n;
+            float x = cx, y = cy;
+            int segments = 4 + (int)(rnd() % 5);
+            for (int s = 1; s <= segments; s++) {
+                float t = (float)s / segments;
+                float jitter = (rnd01() - 0.5f) * length * 0.10f;
+                float px = cx + cosf(angle) * length * t + cosf(angle + 1.5708f) * jitter;
+                float py = cy + sinf(angle) * length * t + sinf(angle + 1.5708f) * jitter;
+                line(x, y, px, py, 1.8f * (1.0f - 0.55f * t), (int)(210 * (1.0f - 0.45f * t)));
+                if (s > 1 && (rnd() % 4) == 0) {
+                    float branch = angle + (rnd01() < 0.5f ? -1.0f : 1.0f) * (0.4f + 0.7f * rnd01());
+                    float branchLen = length * (0.10f + 0.20f * rnd01());
+                    line(px, py, px + cosf(branch) * branchLen, py + sinf(branch) * branchLen, 1.0f, 125);
+                }
+                x = px; y = py;
+            }
+        }
+        int rings = 2 + (int)(rnd() % 3);
+        for (int r = 0; r < rings; r++) {
+            float radius = (0.05f + 0.18f * rnd01()) * n;
+            int segments = 18 + (int)(rnd() % 12);
+            float a0 = rnd01() * kTwoPi;
+            for (int s = 0; s < segments; s++) {
+                float a1 = a0 + kTwoPi / segments;
+                if ((rnd() % 7) != 0)
+                    line(cx + cosf(a0) * radius, cy + sinf(a0) * radius,
+                         cx + cosf(a1) * radius, cy + sinf(a1) * radius, 1.0f, 105);
+                a0 = a1;
+            }
+        }
+    }
+    s_crackTex->UnlockRect(0);
+    static bool logged;
+    if (!logged) {
+        logged = true;
+        Log("d3d9: glass cracks ready (from 75%% car damage)");
+    }
+    return s_crackTex;
 }
 
 // The mirror picture's brightness and contrast (c0.x contrast, c0.y brightness).
@@ -1770,6 +1875,7 @@ struct ColorTris {
     std::vector<float> xyz;
     std::vector<float> uv;      // empty: solid colour; else one (u, v) per vertex
     D3DCOLOR color;
+    int overlay;                // 0 solid, 1 rain droplets, 2 cracks
     bool drawn;
 };
 static std::vector<ColorTris> s_colorTris;
@@ -1846,6 +1952,7 @@ void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32
     c.ib = indexBuffer;
     c.xyz.assign(xyz, xyz + triangles * 9);
     c.color = argb;
+    c.overlay = 0;
     c.drawn = false;
     s_colorTris.push_back(std::move(c));
     matching.push_back(s_colorTris.size() - 1);
@@ -1855,12 +1962,29 @@ void D3D_AddTexturedTris(void* indexBuffer, const float* xyz, const float* uv, i
     if (!s_colorEye || !indexBuffer || !xyz || !uv || triangles <= 0) return;
     auto& matching = s_colorTrisByIb[indexBuffer];
     for (size_t i : matching)
-        if (!s_colorTris[i].uv.empty() && s_colorTris[i].color == argb) return;
+        if (s_colorTris[i].overlay == 1 && s_colorTris[i].color == argb) return;
     ColorTris c;
     c.ib = indexBuffer;
     c.xyz.assign(xyz, xyz + triangles * 9);
     c.uv.assign(uv, uv + triangles * 6);
     c.color = argb;
+    c.overlay = 1;
+    c.drawn = false;
+    s_colorTris.push_back(std::move(c));
+    matching.push_back(s_colorTris.size() - 1);
+}
+
+void D3D_AddCrackTris(void* indexBuffer, const float* xyz, const float* uv, int triangles, uint32_t argb) {
+    if (!s_colorEye || !indexBuffer || !xyz || !uv || triangles <= 0) return;
+    auto& matching = s_colorTrisByIb[indexBuffer];
+    for (size_t i : matching)
+        if (s_colorTris[i].overlay == 2 && s_colorTris[i].color == argb) return;
+    ColorTris c;
+    c.ib = indexBuffer;
+    c.xyz.assign(xyz, xyz + triangles * 9);
+    c.uv.assign(uv, uv + triangles * 6);
+    c.color = argb;
+    c.overlay = 2;
     c.drawn = false;
     s_colorTris.push_back(std::move(c));
     matching.push_back(s_colorTris.size() - 1);
@@ -2306,7 +2430,7 @@ static void ResetCustomDriverEye() {
     s_customDriverDrawn = false;
 }
 
-static void SetDropletOverlay(D3DCOLOR argb, IDirect3DTexture9* tex) {
+static void SetGlassOverlay(D3DCOLOR argb, IDirect3DTexture9* tex, D3DTEXTUREADDRESS address) {
     s_dev->SetTexture(0, tex);
     s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, argb);
     s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
@@ -2319,8 +2443,8 @@ static void SetDropletOverlay(D3DCOLOR argb, IDirect3DTexture9* tex) {
     s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
     s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
     s_dev->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
-    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
-    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, address);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, address);
 }
 
 static void DrawColorTris(ColorTris& c) {
@@ -2328,9 +2452,17 @@ static void DrawColorTris(ColorTris& c) {
     if (!saved) return;
     saved->Capture();
     SetPanelState(s_dashEye.view, s_dashEye.proj);
-    IDirect3DTexture9* droplets = c.uv.empty() ? nullptr : GlassDroplets();
-    if (droplets)
-        SetDropletOverlay(c.color, droplets);
+    IDirect3DTexture9* overlayTex = nullptr;
+    if (c.overlay == 1)
+        overlayTex = GlassDroplets();
+    else if (c.overlay == 2)
+        overlayTex = GlassCracks();
+    if (!overlayTex && c.overlay != 0) {
+        saved->Apply();
+        return;
+    }
+    if (overlayTex)
+        SetGlassOverlay(c.color, overlayTex, c.overlay == 2 ? D3DTADDRESS_MIRROR : D3DTADDRESS_WRAP);
     else
         SetColor(c.color);
     // Drawn over the game's own triangles: pulled toward the eye in depth too (decal bias), so the
@@ -2338,7 +2470,7 @@ static void DrawColorTris(ColorTris& c) {
     float bias = -0.00005f, slope = -1.0f;
     s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
     s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, *(DWORD*)&slope);
-    if (droplets) {
+    if (overlayTex) {
         std::vector<float> verts;
         verts.reserve(c.xyz.size() / 3 * 5);
         for (size_t i = 0, n = c.xyz.size() / 3; i < n; i++) {
@@ -3830,6 +3962,7 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "GlassReflection")) return &g_cfg.glassReflection;
     if (!strcmp(name, "WiperSweep")) return &g_wiperSweep;
     if (!strcmp(name, "WiperStrike")) return &g_wiperStrikes;
+    if (!strcmp(name, "CarDamage")) return &g_carDamage;
     if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;
     if (!strcmp(name, "ShowDriverIK")) return &g_cfg.showDriverIK;
     if (!strcmp(name, "AnimatedDriverSpread")) return &g_cfg.animatedDriverSpread;

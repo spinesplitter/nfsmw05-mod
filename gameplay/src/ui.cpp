@@ -172,6 +172,7 @@ constexpr struct {
     {MOD_VR, "GlassOpacity", 0.15f},
     {MOD_VR, "GlassRain", 0.8f},
     {MOD_VR, "GlassReflection", 1.0f},
+    {MOD_VR, "CarDamage", 0.0f},
     {MOD_VR, "WiperStrike", 0.0f},
 };
 enum {
@@ -217,6 +218,7 @@ enum {
     VR_GLASSOPACITY,
     VR_GLASSRAIN,
     VR_GLASSREFLECTION,
+    VR_CARDAMAGE,
     VR_WIPERSTRIKE,
     EXT_COUNT
 };
@@ -231,6 +233,7 @@ static_assert(KeyIs(kExt[VR_RENDERSCALE].key, "ResolutionScale"), "kExt out of o
 static_assert(KeyIs(kExt[VR_GLASSOPACITY].key, "GlassOpacity"), "kExt out of order at VR_GLASSOPACITY");
 static_assert(KeyIs(kExt[VR_GLASSRAIN].key, "GlassRain"), "kExt out of order at VR_GLASSRAIN");
 static_assert(KeyIs(kExt[VR_GLASSREFLECTION].key, "GlassReflection"), "kExt out of order at VR_GLASSREFLECTION");
+static_assert(KeyIs(kExt[VR_CARDAMAGE].key, "CarDamage"), "kExt out of order at VR_CARDAMAGE");
 static_assert(KeyIs(kExt[VR_WIPERSTRIKE].key, "WiperStrike"), "kExt out of order at VR_WIPERSTRIKE");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
@@ -833,7 +836,7 @@ const Item kItems[] = {
     HEADER_("TESTING"),
     {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     {NUMBER, "Mirror render resolution", "VR", "MirrorResolution", &s_ext[VR_MIRRORRESOLUTION], 0.25f, 1.0f, 0.05f, 100, "%.0f%%", 0},
-    {NUMBER, "Interior glass opacity", "VR", "GlassOpacity", &s_ext[VR_GLASSOPACITY], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
+    {NUMBER, "Glass tint", "VR", "GlassOpacity", &s_ext[VR_GLASSOPACITY], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
     {NUMBER, "Glass rain droplets", "VR", "GlassRain", &s_ext[VR_GLASSRAIN], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
     {NUMBER, "Glass reflection strength", "VR", "GlassReflection", &s_ext[VR_GLASSREFLECTION], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
     {NUMBER, "Mirror distance (0 = stock)", "VR", "MirrorDistance", &s_ext[VR_MIRRORDISTANCE], 0.0f, 3000.0f, 100.0f, 1, "%.0f m", 0},
@@ -3373,6 +3376,12 @@ void Ui_Frame() {
     if (float* mc = ExtSetting(FFB_MENUCONTROLLER)) *mc = g_cfg.menuController ? 1.0f : 0.0f;
     if (float* ma = ExtSetting(FFB_MENUAXES)) *ma = g_cfg.menuAxes ? 1.0f : 0.0f;
     EngineStatus st = Game_Engine();
+    // Car damage (not engine heat): the VR mod cracks the windows from 75%. Hold the last value
+    // while the car is not simulated (pause menu), so the cracks do not vanish when you stop.
+    HudStatus hs = Game_Hud();
+    if (float* v = ExtSetting(VR_CARDAMAGE)) {
+        if (hs.valid) *v = hs.damage;
+    }
     InputSnapshot in = Input_Get();
     // The cockpit's steering wheel turns with the bound wheel (VR mod, also on a flat screen).
     if (float* angle = ExtSetting(VR_WHEELANGLE)) *angle = in.steerBound ? in.wheelDeg : 0.0f;

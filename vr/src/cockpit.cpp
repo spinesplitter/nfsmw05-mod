@@ -2052,7 +2052,7 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
     if (!ReadMesh(solid, mesh)) return;
     void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
     if (!ib) return;
-    std::vector<float> xyz, uv;
+    std::vector<float> xyz, uv, uvCrack;
     for (int i = 0; i < mesh.n; i++) {
         uint8_t* e = mesh.entries + i * kEntrySize;
         int tris = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
@@ -2082,6 +2082,8 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
                 }
                 uv.push_back(u * 0.8f);
                 uv.push_back(v * 0.8f);
+                uvCrack.push_back(u * 0.42f);
+                uvCrack.push_back(v * 0.42f);
             }
         }
     }
@@ -2090,6 +2092,15 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
     if (g_cfg.glassOpacity > 0.001f) {
         const int alpha = (int)(g_cfg.glassOpacity * 255.0f + 0.5f);
         D3D_AddColorTris(ib, xyz.data(), tris, D3DCOLOR_ARGB(alpha, 18, 20, 24));
+    }
+    // Car damage (not engine heat): from 75% the windows are cracked, a little more visibly as
+    // the damage rises toward 100%.
+    if (g_carDamage >= 0.75f && !uvCrack.empty()) {
+        float t = (g_carDamage - 0.75f) / 0.25f;
+        if (t > 1.0f) t = 1.0f;
+        int alpha = (int)(190.0f + 65.0f * t + 0.5f);
+        if (alpha > 255) alpha = 255;
+        D3D_AddCrackTris(ib, xyz.data(), uvCrack.data(), tris, D3DCOLOR_ARGB(alpha, 235, 245, 255));
     }
     float rain = GameRainIntensity();
     if (rain > 1.0f) rain = 1.0f;
@@ -3803,6 +3814,8 @@ bool Held(int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000)
 // Read by the gameplay mod through NfsmwVr_Setting("WiperSweep" / "WiperStrike").
 float g_wiperSweep = 0.0f;
 float g_wiperStrikes = 0.0f;
+// Written by the gameplay mod through NfsmwVr_Setting("CarDamage").
+float g_carDamage = 0.0f;
 
 bool Cockpit_HasMarkedArmDraw(void* ib) {
     return (NativeSteeringActive() || s_armHover.progress > 0.0001f) && s_armDraws.count(ib) != 0;

@@ -28,6 +28,7 @@ void D3D_RegisterWheelDraw(void*, int) {}
 void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
 void D3D_AddColorTris(void*, const float*, int, uint32_t) {}
 void D3D_AddTexturedTris(void*, const float*, const float*, int, uint32_t) {}
+void D3D_AddCrackTris(void*, const float*, const float*, int, uint32_t) {}
 void D3D_AddCustomDriver(void*, const float*, const CustomDriver::Controls&) {}
 void D3D_DrawOverlay(const float*, int, uint32_t) {}
 void D3D_DrawOverlayLines(const float*, int, float, uint32_t) {}

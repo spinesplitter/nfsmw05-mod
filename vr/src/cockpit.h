@@ -44,6 +44,9 @@ bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uin
 // per wiper stroke (the game thread plays the two stitch-static samples on it).
 extern float g_wiperSweep;
 extern float g_wiperStrikes;
+// The player car's damage (0..1, 1 = totaled), written by the gameplay mod; the windows crack
+// from 75% (car damage, not engine heat).
+extern float g_carDamage;
 // How many such matrices this eye (0: the car was not drawn in the player view).
 int Cockpit_PlayerCarMatrices();
 // Deform a private copy of stream 0 for a registered player-driver draw. Never writes game assets.

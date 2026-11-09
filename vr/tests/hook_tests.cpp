@@ -32,6 +32,7 @@ void D3D_AddMirror(void*, const float*, int, const float*, int) {}
 void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int) {}
 void D3D_SetGlassCorners(void*, int, const float*) {}
 void D3D_AddTexturedTris(void*, const float*, const float*, int, uint32_t) {}
+void D3D_AddCrackTris(void*, const float*, const float*, int, uint32_t) {}
 void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_EndMirrorEye(void*) {}
 void D3D_SetMirrorsDisabled(bool) {}
