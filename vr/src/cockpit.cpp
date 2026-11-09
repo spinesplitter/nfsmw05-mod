@@ -34,7 +34,6 @@
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <deque>
 #include <thread>
@@ -1465,8 +1464,7 @@ bool ReadMesh(uint8_t* solid, SolidMesh& s) {
 // The solids whose rear view mirror was handed to the d3d9 side in the current eye.
 std::vector<uint8_t*> s_mirrorSolids;
 std::vector<uint8_t*> s_manualMirrorSolids;
-// The player car's window/glass solids already given their interior pane this eye.
-std::unordered_set<uint8_t*> s_windowOverlaySolids;
+
 
 // All of a solid's triangles (three points each), for which `keep` is true.
 template <class Keep> void SolidTriangles(uint8_t* solid, std::vector<V3>& out, Keep keep) {
@@ -1602,7 +1600,6 @@ void BuildTris(uint8_t* solid, SolidInfo& info);
 bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, const float* matrix, int side,
                               std::vector<float>& out);
 void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* m, const EditSet& edits);
-void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m);
 
 // A car listed in [VR] GameMirrorsSkip (model names such as BMWM3GTRE46, any case): its side
 // mirrors stay the game's.
@@ -2537,36 +2534,6 @@ void AddColor(void* ib, const std::vector<V3>& tris, const float* m, float lift,
     D3D_AddColorTris(ib, xyz.data(), (int)tris.size() / 3, argb);
 }
 
-// The outside glass is culled from the seat, so the player car's windows get a faint, unlit pane at
-// the same place: visible from inside without the exterior material's reflections. Once per solid
-// and eye; the game's glass is still used unchanged from outside.
-void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
-    if (!s_windowOverlaySolids.insert(solid).second) return;
-    SolidMesh mesh;
-    if (!ReadMesh(solid, mesh)) return;
-    void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
-    if (!ib) return;
-    std::vector<float> xyz;
-    for (int i = 0; i < mesh.n; i++) {
-        uint8_t* e = mesh.entries + i * kEntrySize;
-        int tris = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
-        if (tris <= 0 || first < 0 || first + tris * 3 > mesh.numIndices) continue;
-        for (int t = 0; t < tris; t++) {
-            const uint16_t* tri = mesh.indices + first + t * 3;
-            if (tri[0] >= mesh.numVerts || tri[1] >= mesh.numVerts || tri[2] >= mesh.numVerts) continue;
-            if (info.hidden.count(TriId(tri[0], tri[1], tri[2]))) continue;
-            for (int k = 0; k < 3; k++) {
-                V3 w = ToWorld(mesh.at(tri[k]), m);
-                xyz.push_back(w.x);
-                xyz.push_back(w.y);
-                xyz.push_back(w.z);
-            }
-        }
-    }
-    if (!xyz.empty())
-        D3D_AddColorTris(ib, xyz.data(), (int)(xyz.size() / 9), D3DCOLOR_ARGB(32, 18, 20, 24));
-}
-
 // The gaze against the solid's triangles (drawn with `m`): every hit is a candidate.
 void PickIn(uint8_t* solid, SolidInfo& info, const float* m) {
     if (info.trisDirty) BuildTris(solid, info);
@@ -3251,9 +3218,7 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     // for each control/driver predicate in every split entry submission.
     const std::string playerName = player ? SolidName(*info) : std::string();
     const EditSet* playerEdits = player ? &EditsFor(playerName) : nullptr;
-    if (player && playerName.find("_WINDOW") != std::string::npos &&
-        playerName.find("LIGHT") == std::string::npos)
-        NoteWindowOverlay(solid, *info, m);
+
     if (player && info->wheel && info->wheel->ok) {
         const Wheel& wheel=*info->wheel;
         float upLength=sqrtf(wheel.axis[0]*wheel.axis[0]+wheel.axis[2]*wheel.axis[2]);
@@ -4205,7 +4170,6 @@ void Cockpit_BeginEye() {
     s_carMatrixCount = 0;
     s_mirrorSolids.clear();
     s_manualMirrorSolids.clear();
-    s_windowOverlaySolids.clear();
     s_eyeDone.clear();
     s_driverIKWorldValid = false;
     s_handbrakeGripValid = false;
