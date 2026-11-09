@@ -1672,6 +1672,20 @@ float Physics_GroupValue(const std::string& name, const void* value) {
     return GroupValue(*g, i);
 }
 
+// A value just changed in g_cfg belongs to the active car's preset (its group, or Shared). Copy it
+// into that preset's in-memory values immediately: a car loading later must never see the preset as
+// it was before the edit (SyncGroup only ran when the car changed).
+void Physics_CommitPreset(const void* value) {
+    int i = PerCarOf(value);
+    if (i < 0) return;
+    float v = PresetValue(kPerCar[i]);
+    if (pc.group.empty()) {
+        pc.global[i] = v;
+        return;
+    }
+    if (Group* g = FindGroup(pc.group)) g->value[i] = v, g->has[i] = true;
+}
+
 void Physics_SetGroupValue(const std::string& name, const void* value, float v) {
     ReadGroups();
     int i = PerCarOf(value);

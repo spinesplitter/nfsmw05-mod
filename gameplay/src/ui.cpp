@@ -847,6 +847,7 @@ constexpr int kMaxRows = 18;        // rows shown at once; the list scrolls
 struct {
     bool open = false;
     bool dirty = false;
+    double dirtyAt = 0;             // when the last setting changed (autosave debounce)
     bool clutchCal = false;         // [Clutch] Released/Pressed changed by binding a pedal
     bool pedalCal = false;          // [Controls] AccelerateRest/BrakeRest changed
     int page = 0;                   // index of the current page's PAGE item in kItems
@@ -870,6 +871,12 @@ struct {
     std::string renameText;
     double resetTime = 0;
 } s_menu;
+
+// Every setting change marks the menu dirty and restarts the autosave debounce.
+void MarkDirty() {
+    s_menu.dirty = true;
+    s_menu.dirtyAt = Now();
+}
 
 // Sound moments for a missed shift: the totaled car's engine failure, and the two the engine
 // sound plays once when its engine state changes (SFXCTL_Engine::UpdateParams, states 1 and 2).
@@ -1241,7 +1248,7 @@ void FinishCapture(const std::string& binding, int axisRest) {
         s_menu.pedalCal = true;
     }
     Input_SetBinding(field, JoinBindings(list));
-    s_menu.dirty = true;
+    MarkDirty();
     Note(std::string(it.label) + ": added " + b);
     Log("ui: %s = %s", it.key, field.c_str());
 }
@@ -1264,7 +1271,7 @@ void Unbind(const Item& it) {
         s_menu.pedalCal = true;
     }
     Input_SetBinding(field, value);
-    s_menu.dirty = true;
+    MarkDirty();
     Note(std::string(it.label) + (value.empty() ? ": unbound" : ": back to default"));
     Log("ui: %s = %s", it.key, field.c_str());
 }
@@ -1383,7 +1390,7 @@ bool ResetItem(const Item& it, bool game = false) {
     } else {
         *(uint32_t*)it.value = u;
     }
-    s_menu.dirty = true;
+    MarkDirty();
     return true;
 }
 
@@ -1400,6 +1407,15 @@ int ResetPage(int index, bool game) {
 
 // After a number changed (bindings or mouse): pass the other mods' values on, keep pairs consistent.
 void AfterNumberChange(const Item& it) {
+    // Per-preset value: update the preset's stored values and queue its line here, not only on
+    // menu close. Closing the menu (or the game) used to be the only save point.
+    if (Physics_IsPresetValue(it.value)) {
+        Physics_CommitPreset(it.value);
+        char buf[32] = {};
+        if (it.kind == TOGGLE) snprintf(buf, sizeof(buf), "%d", *(bool*)it.value ? 1 : 0);
+        else if (it.kind == NUMBER) snprintf(buf, sizeof(buf), "%g", *(float*)it.value);
+        if (buf[0]) IniSave_Queue({{IniPath(), Physics_Section(), it.key, buf}});
+    }
     if (it.value == &s_ext[FFB_DEVICE]) {
         FfbRefreshDevices();
         int count = FfbDeviceName(0, nullptr);
@@ -1412,6 +1428,10 @@ void AfterNumberChange(const Item& it) {
         g_cfg.tc = mode == 2;
         if (mode == 0) g_cfg.tractionControl = 0.0f;
         else if (g_cfg.tractionControl <= 0.0f) g_cfg.tractionControl = 1.0f;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%g", g_cfg.tractionControl);
+        IniSave_Queue({{IniPath(), Physics_Section(), "TractionControl", buf},
+                       {IniPath(), Physics_Section(), "TC", g_cfg.tc ? "1" : "0"}});
     }
     // The steering lock is part of the wheel's rotation.
     if (g_cfg.steeringLock > g_cfg.wheelRotation) {
@@ -1423,7 +1443,7 @@ void AfterNumberChange(const Item& it) {
         if (it.value == &g_cfg.biteStart) g_cfg.biteEnd = std::max(0.0f, g_cfg.biteStart - 0.05f);
         else if (it.value == &g_cfg.biteEnd) g_cfg.biteStart = std::min(1.0f, g_cfg.biteEnd + 0.05f);
     }
-    s_menu.dirty = true;
+    MarkDirty();
 }
 
 // The mods' versions for the menu's title: one when every loaded mod has the same, else each
@@ -1518,6 +1538,8 @@ void SetSource(int index, int next) {
     s_menu.armed = -1;
     if (next == 0) Physics_UseShared();
     else Physics_UseGroup(groups[next - 1]);
+    // The Groups page follows the car's preset, so it edits the same group the Physics page shows.
+    s_menu.group = next == 0 ? "" : groups[next - 1];
     s_tcMode = g_cfg.tc ? 2.0f : g_cfg.tractionControl > 0.0f ? 1.0f : 0.0f;
     Note(std::string(Physics_Car()) + ": " + SourceText());
 }
@@ -1657,7 +1679,7 @@ void Change(int index, int dir) {
             if (!setting) { Note("No VR mod"); return; }
             *setting = 0.0f;
             s_ext[VR_SHOWCUSTOMDRIVER] = 0.0f;
-            s_menu.dirty = true;
+            MarkDirty();
             Note("Animated driver hidden (Animated Driver page restores it)");
             return;
         }
@@ -1739,7 +1761,7 @@ void Change(int index, int dir) {
     } else {
         return;
     }
-    s_menu.dirty = true;
+    MarkDirty();
 }
 
 // The values are collected here and written by inisave's thread: one WritePrivateProfileString per
@@ -2615,7 +2637,7 @@ void ValueWidget(int i, float w, float k) {
                         *(uint32_t*)it.value = snd.moment;
                         Game_PlayMoment(snd.moment);
                         s_menu.sel = i;
-                        s_menu.dirty = true;
+                        MarkDirty();
                     }
                 ImGui::EndCombo();
             }
@@ -3344,6 +3366,12 @@ void Ui_Frame() {
         VrRecenter();
     }
     UpdateMenu(in, st.driving);
+    // Closing the menu was the only save point; quitting with it open (or right after a change)
+    // lost the edits. Write a settled batch while it stays open too.
+    if (s_menu.open && s_menu.dirty && Now() - s_menu.dirtyAt > 1.5) {
+        Save();
+        s_menu.dirty = false;
+    }
     if (float* v = ExtSetting(VR_MENUOPEN)) *v = s_menu.open ? 1.0f : 0.0f;
     Telemetry_Frame(st.driving);
     if (!st.driving) return;

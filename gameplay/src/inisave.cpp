@@ -190,7 +190,21 @@ void IniSave_Queue(const std::vector<IniWrite>& writes) {
 
 void IniSave_Flush() {
     if (!s_started) return;
+    // Bounded: at process exit the writer thread may already be gone with s_busy stuck; never
+    // hang the exiting process waiting for it.
+    DWORD start = GetTickCount();
     EnterCriticalSection(&s_lock);
-    while (s_busy || !s_queue.empty()) SleepConditionVariableCS(&s_idle, &s_lock, 2000);
+    while ((s_busy || !s_queue.empty()) && GetTickCount() - start < 1000)
+        SleepConditionVariableCS(&s_idle, &s_lock, 100);
     LeaveCriticalSection(&s_lock);
+}
+
+void IniSave_Shutdown() {
+    if (!s_started) return;
+    IniSave_Flush();   // the worker drains in the normal case
+    std::deque<IniWrite> left;
+    EnterCriticalSection(&s_lock);
+    left.swap(s_queue);
+    LeaveCriticalSection(&s_lock);
+    if (!left.empty()) WriteBatch(left);   // the worker is gone at process exit
 }

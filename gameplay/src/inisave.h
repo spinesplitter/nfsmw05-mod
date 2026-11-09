@@ -23,3 +23,7 @@ void IniSave_Queue(const std::vector<IniWrite>& writes);
 
 // Blocks until everything queued is written (at exit). Any thread.
 void IniSave_Flush();
+
+// Final save on DLL detach: flush, then write whatever the worker left behind (it is already
+// terminated at process exit). Any thread.
+void IniSave_Shutdown();

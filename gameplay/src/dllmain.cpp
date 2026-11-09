@@ -3,6 +3,7 @@
 #include "common.h"
 #include "game.h"
 #include "ini_migration.h"
+#include "inisave.h"
 
 // --- dsound.dll proxy ------------------------------------------------------------------------
 static const char* const kExports[12] = {
@@ -59,6 +60,13 @@ static void MigrateOldIni() {
 }
 
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_DETACH) {
+        // Preset/setting edits are written by the inisave worker; give it a bounded moment to
+        // finish, then write anything it left behind, and flush the log tail too.
+        IniSave_Shutdown();
+        LogFlush();
+        return TRUE;
+    }
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
     DisableThreadLibraryCalls(inst);
     // Installed both as dsound.dll and as an .asi: the proxy runs, this copy stays out of the

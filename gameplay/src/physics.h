@@ -70,6 +70,8 @@ std::string Physics_NewGroup();
 // A group's value of a physics setting (`value` = its g_cfg field), and setting it (written at
 // once; the car being driven gets it too if it is in the group).
 float Physics_GroupValue(const std::string& name, const void* value);
+// A per-preset value changed in g_cfg: write it into the active car's preset now.
+void Physics_CommitPreset(const void* value);
 void Physics_SetGroupValue(const std::string& name, const void* value, float v);
 float Physics_GroupTcMode(const std::string& name);
 void Physics_SetGroupTcMode(const std::string& name, float mode);
