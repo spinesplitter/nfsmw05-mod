@@ -2642,8 +2642,9 @@ static bool WriteShadowsRes(const std::string& ini, int value) { return WriteWsf
 // The game's physics rate follows the headset. The widescreen fix sets it from its [MISC] SimRate
 // when the game starts (-1 = the desktop monitor's refresh rate: ~103 Hz here against the
 // headset's 72, so a frame got one or two physics steps in an uneven pattern, and motion stepped).
-// Once the headset's rate is known, SimRate is set to a whole multiple of it near 144 Hz (72 -> 144,
-// two steps a frame; 90 -> 180; 120 -> 120), from the next start. [VR] SimRateFromHeadset=0 = off.
+// Once the headset's rate is known, SimRate is set to that rate (one physics step per rendered
+// frame: 72 -> 72, 90 -> 90, 120 -> 120, 144 -> 144), from the next start; a slow frame then
+// catches up with one extra step, not three or four. [VR] SimRateFromHeadset=0 = off.
 static void MatchSimRateToHeadset(const std::string& ini) {
     static bool done;
     static int stableFrames;
@@ -2656,7 +2657,7 @@ static void MatchSimRateToHeadset(const std::string& ini) {
     if (stableFrames < 72) return;   // a second of the same rate
     done = true;
     int headset = (int)lrintf(hz);
-    int target = headset * std::max(1, (int)lrintf(144.0f / (float)headset));
+    int target = headset;   // one physics step per rendered frame, whatever the headset's rate
     int now = (int)GetPrivateProfileIntA("MISC", "SimRate", 0, ini.c_str());
     if (now == target) {
         Log("d3d9: physics rate %d Hz matches the headset's %d Hz (%d steps a frame)", now, headset, target / headset);
