@@ -3058,10 +3058,10 @@ public:
         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
         // Reject city/world IBs before querying RT/depth/backbuffer state. The
         // view query performs COM calls and AddRef/Release on every invocation;
-        // only a registered driver's skin can need the override below. One map probe and one
-        // view query for both the skin state and the private stream copy.
-        bool driverListed = type == D3DPT_TRIANGLELIST && DrawingPlayerView() &&
-            Cockpit_IsRegisteredDriverDraw(s_curIndices);
+        // only a registered driver's skin can need the override below. Keep the cheap index-map
+        // probe first: it short-circuits every world draw before the COM call.
+        bool driverListed = type == D3DPT_TRIANGLELIST &&
+            Cockpit_IsRegisteredDriverDraw(s_curIndices) && DrawingPlayerView();
         DriverSkinState<IDirect3DDevice9> skinState(real,
             driverListed && Cockpit_IsSkinDraw(s_curIndices,start,count));
         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
