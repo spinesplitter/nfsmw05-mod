@@ -48,8 +48,8 @@ static void Check(bool ok, const char* message) {
 }
 static void Near(float a, float b, const char* message) { Check(fabsf(a - b) < 0.0002f, message); }
 static void TestWheelPositionSave() {
-    // Driver fitting uses a separate file and an explicit save request, not
-    // the dashboard's one-second auto-save policy.
+    // Driver fitting uses its own per-car file and the same one-second auto-save policy as the
+    // dashboard; the explicit "Save for this car" request still saves immediately.
     char driverDir[MAX_PATH], driverPath[MAX_PATH];
     Check(GetTempPathA(MAX_PATH, driverDir) != 0, "driver temporary directory");
     Check(GetTempFileNameA(driverDir, "drv", 0, driverPath) != 0, "driver temporary ini");
@@ -69,7 +69,8 @@ static void TestWheelPositionSave() {
     Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit never leaks to another car");
     Near(g_cfg.animatedDriverHandFix,0,"unsaved hand fix never leaks to another car");
     UpdateAnimatedDriverCar("DRIVER_A");
-    Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit is not persisted");
+    Near(g_cfg.animatedDriverSpread,1.23f,"changed driver fit auto-saves for its car");
+    Near(g_cfg.animatedDriverHandFix,-25,"changed hand fix auto-saves for its car");
     g_cfg.animatedDriverSpread=1.23f; g_cfg.animatedDriverSave=1;
     g_cfg.animatedDriverHandFix=-25;
     UpdateAnimatedDriverCar("DRIVER_A");

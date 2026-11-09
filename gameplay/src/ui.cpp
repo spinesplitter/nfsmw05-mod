@@ -1615,7 +1615,8 @@ void Change(int index, int dir) {
     }
     if (it.kind == TOGGLE) {
         bool& b = *(bool*)it.value;
-        b = !b;
+        if (&b == &g_cfg.sequential) Game_SetSequential(!b);
+        else b = !b;
     } else if (it.kind == NUMBER) {
         int ext = ExtIndex(it.value);
         if (ext >= 0 && !ExtSetting(ext)) return;
@@ -1740,6 +1741,9 @@ void Change(int index, int dir) {
 // The values are collected here and written by inisave's thread: one WritePrivateProfileString per
 // setting, each rewriting its whole file, took ~475 ms on the game thread.
 void Save() {
+    // The live toggle belongs to the current mode; keep both modes' last choices.
+    if (g_cfg.sequential) g_cfg.sequentialNeedsClutch = g_cfg.requireClutch;
+    else g_cfg.requireClutchH = g_cfg.requireClutch;
     std::vector<IniWrite> writes;
     for (const Item& it : kItems) {
         if (it.kind == HEADER || it.kind == LINK || it.kind == ACTION || it.kind == PAGE || it.kind == RESET) continue;
@@ -1753,6 +1757,12 @@ void Save() {
         if (ext >= 0) {
             if (ext == VR_ANIMATEDDRIVERSPREAD || ext == VR_ANIMATEDDRIVERHANDFIX) continue; // explicit per-car Save, never global
             if (ExtSetting(ext)) writes.push_back({ExtIniPath(ext), it.section, it.key, text});
+            continue;
+        }
+        if (it.value == &g_cfg.requireClutch) {
+            writes.push_back({IniPath(), "Shifter", "RequireClutch", text});
+            writes.push_back({IniPath(), "Shifter", "RequireClutchH", g_cfg.requireClutchH ? "1" : "0"});
+            writes.push_back({IniPath(), "Shifter", "SequentialNeedsClutch", g_cfg.sequentialNeedsClutch ? "1" : "0"});
             continue;
         }
         if (it.value == &s_tcMode) {

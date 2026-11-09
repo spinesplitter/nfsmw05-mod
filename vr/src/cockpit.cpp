@@ -536,13 +536,10 @@ void UpdatePerCar(PerCar& p, const std::string& car) {
 }
 
 void UpdateAnimatedDriverCar(const std::string& car) {
-    // Explicit-save fitting: do not auto-save previews or carry an unsaved fit
-    // into another model. Reuse the validated per-car loader and file format.
-    if (car != s_animatedDriverCar.car) {
-        s_animatedDriverCar.dirty = false;
-        UpdatePerCar(s_animatedDriverCar, car);
-        g_cfg.animatedDriverSave = 0;
-    }
+    // Same per-car auto-save as the HUD, dashboard and seat: a changed fit is written for this car
+    // once it has been left alone for a moment, and a car change writes any pending fit first.
+    UpdatePerCar(s_animatedDriverCar, car);
+    // "Save for this car" remains an immediate save.
     if (g_cfg.animatedDriverSave > 0.5f) {
         if (!car.empty()) SavePerCar(s_animatedDriverCar);
         g_cfg.animatedDriverSave = 0;

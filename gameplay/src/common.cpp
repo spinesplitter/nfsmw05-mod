@@ -201,6 +201,7 @@ void LoadConfig() {
     c.shiftUp = ReadStr("Shifter", "ShiftUp", c.shiftUp.c_str());
     c.shiftDown = ReadStr("Shifter", "ShiftDown", c.shiftDown.c_str());
     c.requireClutch = ReadInt("Shifter", "RequireClutch", 1) != 0;
+    c.requireClutchH = ReadInt("Shifter", "RequireClutchH", c.requireClutch) != 0;
     c.shiftPedal = Clamp(ReadFloat("Shifter", "ClutchToShift", c.shiftPedal), 0.0f, 1.0f);
     c.revMatchRpm = Clamp(ReadFloat("Shifter", "RevMatchRPM", 0.0f), 0.0f, 3000.0f);
     c.blockWrongDirection = ReadInt("Shifter", "BlockWrongDirection", 1) != 0;
@@ -208,7 +209,9 @@ void LoadConfig() {
     c.keepShiftDelay = ReadInt("Shifter", "KeepShiftDelay", 0) != 0;
     c.grind = ReadInt("Shifter", "Grind", 1) != 0;
     c.grindSound = (uint32_t)strtoul(ReadStr("Shifter", "GrindSound", "0xBC2DFA2F").c_str(), nullptr, 0);
-    c.sequentialNeedsClutch = ReadInt("Shifter", "SequentialNeedsClutch", 0) != 0;
+    // The last clutch choice for the mode the game starts in is the live toggle's value.
+    c.sequentialNeedsClutch = ReadInt("Shifter", "SequentialNeedsClutch", c.requireClutch) != 0;
+    c.requireClutch = c.sequential ? c.sequentialNeedsClutch : c.requireClutchH;
     c.misshiftChance = Clamp(ReadFloat("Shifter", "MisshiftChance", c.misshiftChance), 0.0f, 1.0f);
     c.misshiftDamage = Clamp(ReadFloat("Shifter", "MisshiftDamage", c.misshiftDamage), 0.0f, 1.0f);
 

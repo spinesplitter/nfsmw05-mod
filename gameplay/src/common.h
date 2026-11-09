@@ -97,7 +97,8 @@ struct Config {
     bool  sequential = false;       // sequential shifting (ShiftUp / ShiftDown) instead of the H-pattern
     std::string shiftUp = "key:LSHIFT";
     std::string shiftDown = "key:LCTRL";
-    bool  requireClutch = true;     // need the clutch pressed to put it in gear
+    bool  requireClutch = true;     // need the clutch pressed to put it in gear (the current mode's value)
+    bool  requireClutchH = true;    // ... remembered for H-pattern, restored when switching back
     float shiftPedal = 0.6f;       // pedal travel that counts as "clutch pressed"
     float revMatchRpm = 0.0f;       // >0: allow clutchless shifts within this many rpm
     bool  blockWrongDirection = true; // no reverse while rolling forward (and vice versa)

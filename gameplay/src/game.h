@@ -33,6 +33,10 @@ void* Game_PlayerInterface(void* handle);
 // Blocks the car's controls while the tuning menu is open. Game thread only.
 void Game_SetMenuOpen(bool open);
 
+// Switches H-pattern / sequential, restoring that mode's last "Clutch needed to shift" value.
+// Used by the driving toggle and the F4 menu. Game thread only.
+void Game_SetSequential(bool sequential);
+
 // Pops all four of the player's tires on the next engine step (testing). Game thread only.
 void Game_PopTires();
 // Plays a sound moment (game thread), e.g. to preview [Shifter] GrindSound.

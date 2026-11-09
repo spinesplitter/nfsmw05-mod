@@ -47,6 +47,7 @@
 #include "controls.h"
 #include "flow.h"
 #include "patch.h"
+#include "inisave.h"
 #include <math.h>
 #include <stdio.h>
 #include <psapi.h>
@@ -204,6 +205,22 @@ struct {
     bool popPending = false;    // the menu asked to pop the tires
 } s;
 
+void ApplySequentialMode(bool sequential) {
+    sequential = sequential != false;
+    if (sequential == g_cfg.sequential) return;
+    // Each mode remembers its own "Clutch needed to shift".
+    if (g_cfg.sequential) g_cfg.sequentialNeedsClutch = g_cfg.requireClutch;
+    else g_cfg.requireClutchH = g_cfg.requireClutch;
+    g_cfg.sequential = sequential;
+    g_cfg.requireClutch = sequential ? g_cfg.sequentialNeedsClutch : g_cfg.requireClutchH;
+    s.lastGear = -100;
+    Log("toggle: %s shifting (clutch %s)", sequential ? "sequential" : "H-pattern",
+        g_cfg.requireClutch ? "needed" : "not needed");
+    IniSave_Queue({{IniPath(), "Shifter", "RequireClutch", g_cfg.requireClutch ? "1" : "0"},
+                   {IniPath(), "Shifter", "RequireClutchH", g_cfg.requireClutchH ? "1" : "0"},
+                   {IniPath(), "Shifter", "SequentialNeedsClutch", g_cfg.sequentialNeedsClutch ? "1" : "0"}});
+}
+
 bool Fresh() { return Now() - s.seen < 0.5; }
 bool IsBlown(uint8_t* eng);
 const char* VehicleName(uint8_t* eng);
@@ -346,9 +363,7 @@ bool __fastcall Hook_DoShifting(void* ip, void*, int delta) {
     }
     if (in.toggles != s.toggles) {
         s.toggles = in.toggles;
-        g_cfg.sequential = !g_cfg.sequential;
-        s.lastGear = -100;
-        Log("toggle: %s shifting", g_cfg.sequential ? "sequential" : "H-pattern");
+        Game_SetSequential(!g_cfg.sequential);
     }
     int presses = (int)(in.shiftUp - s.ups) - (int)(in.shiftDown - s.downs);
     s.ups = in.shiftUp;
@@ -391,7 +406,9 @@ bool __fastcall Hook_DoShifting(void* ip, void*, int delta) {
     if (delta == 0 && presses != 0) delta = presses > 0 ? 1 : -1;
     bool manual = !s.autoShift;
     bool clutchIn = s.clutchActive && in.clutchPedal >= g_cfg.shiftPedal;
-    bool needClutch = g_cfg.requireClutch && s.clutchActive && (g_cfg.sequential || g_cfg.sequentialNeedsClutch);
+    // Sequential mode uses the toggle restored for it; without an H-shifter in H-pattern mode, use
+    // the existing "SequentialNeedsClutch" fallback.
+    bool needClutch = s.clutchActive && (g_cfg.sequential ? g_cfg.requireClutch : g_cfg.sequentialNeedsClutch);
     if (delta != 0 && needClutch && !clutchIn) {
         // The game's shift control and ShiftUp / ShiftDown can be the same key: one press, one grind.
         static double lastRefused = -1e9;
@@ -967,6 +984,8 @@ void* MakeTrampoline(uintptr_t at, size_t stolen) {
 }
 
 }  // namespace
+
+void Game_SetSequential(bool sequential) { ApplySequentialMode(sequential); }
 
 EngineStatus Game_Engine() {
     EngineStatus st;
