@@ -2822,7 +2822,7 @@ static void OnPresent() {
         Spectator_CycleMode();
         FitWindow(s_wnd, s_bbW, s_bbH);
     }
-    if (KeyPressed(g_cfg.keyRecenter)) Xr_Recenter();
+    if (KeyPressed(g_cfg.keyRecenter)) Xr_RequestRecenter();
     if (KeyPressed(g_cfg.keyToggle)) Game_ToggleStereo();
     if (KeyPressed(g_cfg.keyLevel)) Game_ToggleLevel();
     if (KeyPressed(g_cfg.keyDump)) s_dumpRequested = g_cfg.dumpFrames > 0 ? g_cfg.dumpFrames : 1;
@@ -2839,6 +2839,7 @@ static void OnPresent() {
     UpdatePictureSettings();
 
     if (s_xr) {
+        Xr_ProcessRecenterRequest();
         bool stereo = Game_StereoThisFrame(), captured = false;
         if (stereo) {
             captured = true;
@@ -3549,8 +3550,8 @@ const char* __cdecl Proxy_NfsmwVr_Version() { return MOD_VERSION; }
 // Same as the recentre key. 0 when no headset session is running.
 int __cdecl Proxy_NfsmwVr_Recenter() {
     if (!s_active || !s_xr) return 0;
-    Xr_Recenter();
-    Log("d3d9: recentred from the gameplay mod's menu");
+    Xr_RequestRecenter();
+    Log("d3d9: recentre requested by the gameplay mod");
     return 1;
 }
 

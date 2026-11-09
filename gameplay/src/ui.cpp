@@ -337,11 +337,22 @@ std::string ExtIniPath(int i) {
     return path;
 }
 
-// The VR mod's recentre (same as its key). False without a headset.
+// The VR mod's recentre (same as its key). False without a headset. Thread-safe:
+// the input thread may call it before the first UI frame. Try every loaded copy;
+// an inactive proxy/ASI copy returns 0, the active one queues the recentre.
 bool VrRecenter() {
-    HMODULE m = ExtModule(MOD_VR);
-    FARPROC f = m ? GetProcAddress(m, "NfsmwVr_Recenter") : nullptr;
-    return f && ((int(__cdecl*)())f)() != 0;
+    static std::vector<FARPROC> candidates = []() {
+        std::vector<FARPROC> out;
+        HMODULE mods[512];
+        DWORD bytes = 0;
+        if (EnumProcessModules(GetCurrentProcess(), mods, sizeof(mods), &bytes))
+            for (DWORD k = 0; k < bytes / sizeof(HMODULE) && k < 512; k++)
+                if (FARPROC p = GetProcAddress(mods[k], "NfsmwVr_Recenter")) out.push_back(p);
+        return out;
+    }();
+    for (FARPROC f : candidates)
+        if (f && ((int(__cdecl*)())f)() != 0) return true;
+    return false;
 }
 
 // The FFB mod's devices in Windows' order: "n: name (axes, buttons)", and how many there are.
@@ -2146,7 +2157,7 @@ const struct {
     {&s_ext[VR_MIRRORBRIGHTNESS], "Brightness of the rear view in the side mirrors and the rear view mirror."},
     {&s_ext[VR_MIRRORCONTRAST], "Contrast of the rear view in the side mirrors and the rear view mirror."},
     {&s_ext[VR_NEARZ], "Closest distance drawn. Lower it if the dashboard or wheel near your eyes is cut off; very low values can make distant surfaces flicker."},
-    {&g_cfg.recenterVr, "Recentres the VR view, like the VR mod's F8. Works while driving and in menus."},
+    {&g_cfg.recenterVr, "Recentres the VR view, like the VR mod's F8. Works at launch, in menus and while driving."},
     {&g_cfg.seat[0], "Moves the VR seat (cockpit camera) forward while held. Saved per car."},
     {&g_cfg.seat[1], "Moves the VR seat back while held. Saved per car."},
     {&g_cfg.seat[2], "Moves the VR seat left while held. Saved per car."},
@@ -3314,6 +3325,8 @@ bool VrOverlay() {
 
 }  // namespace
 
+bool Ui_RecenterVr() { return VrRecenter(); }
+
 // Each menu row on another mod's setting must name the same key as the kExt entry it points at
 // (the EXT enum and kExt listed in different orders swapped rows' settings once).
 void CheckExtRows() {
@@ -3359,12 +3372,8 @@ void Ui_Frame() {
     if (float* v = ExtSetting(VR_SEATUP)) *v = held(SEAT_UP) - held(SEAT_DOWN);
     if (float* v = ExtSetting(VR_SEATFORWARD)) *v = held(SEAT_FORWARD) - held(SEAT_BACK);
     if (float* v = ExtSetting(VR_SEATRESET)) *v = held(SEAT_RESET);
-    // [Controls] RecenterVr works everywhere, not only while driving.
-    static uint32_t recenters = in.recenters;
-    if (in.recenters != recenters) {
-        recenters = in.recenters;
-        VrRecenter();
-    }
+    // [Controls] RecenterVr is handled on the input thread (Ui_RecenterVr), so it
+    // works at launch and in menus, before this frame hook runs.
     UpdateMenu(in, st.driving);
     // Closing the menu was the only save point; quitting with it open (or right after a change)
     // lost the edits. Write a settled batch while it stays open too.

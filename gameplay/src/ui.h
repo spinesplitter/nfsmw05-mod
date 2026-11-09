@@ -4,3 +4,6 @@
 // Called once per frame from eDisplayFrame, after the HUD / frontend and before EndScene.
 // With the VR mod that is inside its HUD phase, so everything lands on the floating HUD panel.
 void Ui_Frame();
+
+// The VR mod's recentre, safe to call from the input thread (also before the first UI frame).
+bool Ui_RecenterVr();

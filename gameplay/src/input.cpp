@@ -1,5 +1,6 @@
 #include "input.h"
 #include "devices.h"
+#include "ui.h"
 #include <math.h>
 #include <mmsystem.h>
 
@@ -494,6 +495,8 @@ static DWORD WINAPI InputThread(LPVOID) {
         if (telDown && !prevTel) s_snap.telemetryToggles++;
         for (int i = 0; i < 4; i++) s_snap.menuNav[i] += navPresses[i];
         LeaveCriticalSection(&s_lock);
+        // Recentre on the input thread: the UI frame hook is not guaranteed before a race.
+        if (recenterDown && !prevRecenter) Ui_RecenterVr();
         prevToggle = toggleDown;
         prevUp = upDown;
         prevDown = downDown;

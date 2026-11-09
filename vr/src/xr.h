@@ -38,6 +38,10 @@ bool Xr_SetSharedTextures(HANDLE eye0, HANDLE eye1, HANDLE hud, int width, int h
 void Xr_EndFrame(LayerMode mode, float tanX, float tanY, bool withHud);
 
 void Xr_Recenter();
+// The gameplay mod's recentre binding can fire on its input thread: queue the
+// request there, then Xr_ProcessRecenterRequest() runs Xr_Recenter() on the game thread.
+void Xr_RequestRecenter();
+void Xr_ProcessRecenterRequest();
 
 // Name the runtime reports (empty before Xr_Init).
 const char* Xr_RuntimeName();

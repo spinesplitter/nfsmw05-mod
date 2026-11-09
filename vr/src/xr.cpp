@@ -864,6 +864,14 @@ void Xr_Recenter() {
     s.recenterPending = true;
 }
 
+// Set from any thread (the gameplay mod's input thread). The game thread consumes
+// it in d3d9proxy's Present, where Xr_Recenter (and the bridge call) is safe.
+static volatile LONG s_recenterRequest = 0;
+void Xr_RequestRecenter() { InterlockedExchange(&s_recenterRequest, 1); }
+void Xr_ProcessRecenterRequest() {
+    if (InterlockedExchange(&s_recenterRequest, 0)) Xr_Recenter();
+}
+
 // Frame timing at the runtime, logged every 5 s: how long xrWaitFrame blocked and xrEndFrame took,
 // and how many display slots were skipped (the predicted display time moving on by more than one
 // period: the headset showed a reprojected or repeated frame there).
