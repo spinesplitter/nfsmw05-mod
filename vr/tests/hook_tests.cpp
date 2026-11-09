@@ -35,6 +35,8 @@ void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_EndMirrorEye(void*) {}
 void D3D_SetMirrorsDisabled(bool) {}
 void D3D_SetPlayerCarDraw(bool) {}
+void D3D_SetDrawMatrix(const float*) {}
+bool D3D_HasManualMirrorPatches() { return false; }
 void D3D_SetRearViewTarget(void*, float) {}
 void D3D_BeginWheelEye(bool, const float*, const float*, const float*) {}
 void D3D_EndWheelEye() {}

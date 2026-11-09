@@ -71,11 +71,21 @@ void D3D_SuppressMirrorGlass(void* indexBuffer);
 // Whether the car currently being drawn is the player's own (from its model matrix). Used only to
 // keep the manual-mirror hide off opponents; normal mirror rendering is not gated by it.
 void D3D_SetPlayerCarDraw(bool on);
-// The triangles (three indices each) a manual mirror replaces. They are zero-area only in a private
-// copy of that marked model's index buffer, and that copy is used only for the player's car.
-// `generation` rebuilds the copy when the edits change.
+// The model-to-world matrix of the geometry being drawn (from the game's WorldView / WorldViewProj
+// multiply), so a manual mirror can recognise its own car even when the matrix pointer is not the
+// one the entry was queued with.
+void D3D_SetDrawMatrix(const float* matrix);
+// The triangles (three indices each) a mirror replaces. They are zero-area only in a private copy
+// of that marked model's index buffer, and that copy is used only for the player's car. `matrix`
+// (the model-to-world the marked geometry is drawn with, null to not use it) identifies the car
+// when the game does not draw the entry with the queued matrix pointer. `generation` rebuilds the
+// copy when the edits change.
 void D3D_SetManualMirrorTriangles(void* indexBuffer, const uint16_t* triangles, int triangleCount,
-                                  int generation);
+                                  int generation, const float* matrix);
+// Releases every private hide copy (mirrors turned off: the models' own glass must draw again).
+void D3D_ClearManualMirrorPatches();
+// Whether any mirror hide copy exists (lets the game skip the player-car scan when none does).
+bool D3D_HasManualMirrorPatches();
 void D3D_SetRearViewTarget(void* surface, float resolutionScale);
 
 // Mirrors drawn with the game's models: for the eye about to render, the view and projection it

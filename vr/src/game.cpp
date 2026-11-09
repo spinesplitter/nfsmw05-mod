@@ -483,14 +483,45 @@ bool SplitPlayerDepth(void* view, bool player = true, bool validateOnly = false)
 }
 
 void* __stdcall hkWorldViewProjMultiply(void* out, const void* local, const void* viewProj) {
-    if (s_depthSplit && viewProj && local) {
-        for (int k = 0; k < s_carViewProjCount; k++)
-            if (viewProj == s_carViewProjFor[k] && Cockpit_IsPlayerCarMatrix(local)) {
-                viewProj = &s_carViewProj[k];
-                s_carHits++;
-                break;
+    bool player = false;
+    if (local) {
+        // Only scan the queued matrices for the player view's projection (as before) or while a
+        // manual mirror needs the flag; world geometry keeps the cheap viewProj pointer test.
+        bool playerViewProj = false;
+        if (s_depthSplit && viewProj) {
+            for (int k = 0; k < s_carViewProjCount; k++)
+                if (viewProj == s_carViewProjFor[k]) {
+                    playerViewProj = true;
+                    break;
+                }
+        }
+        if (playerViewProj || D3D_HasManualMirrorPatches()) {
+            // Sticky like WorldView's: parts of a car come back to back, and the queued set only
+            // grows during an eye.
+            static const void* lastMatrix;
+            static int lastCount = -1;
+            static bool lastPlayer;
+            int count = Cockpit_PlayerCarMatrices();
+            if (local != lastMatrix || count != lastCount) {
+                lastMatrix = local;
+                lastCount = count;
+                lastPlayer = Cockpit_IsPlayerCarMatrix(local);
             }
+            player = lastPlayer;
+            if (playerViewProj && player && s_depthSplit) {
+                for (int k = 0; k < s_carViewProjCount; k++)
+                    if (viewProj == s_carViewProjFor[k]) {
+                        viewProj = &s_carViewProj[k];
+                        s_carHits++;
+                        break;
+                    }
+            }
+        }
     }
+    // Entries drawn straight from WorldViewProj (cached combinations) must set the same flag as
+    // those drawn through WorldView, or the mirror hide is skipped for them.
+    D3D_SetPlayerCarDraw(player);
+    D3D_SetDrawMatrix((const float*)local);
     return ((MatrixMultiply_t)kMatrixMultiply)(out, local, viewProj);
 }
 
@@ -652,6 +683,7 @@ void* __stdcall hkWorldViewMultiply(void* out, const void* local, const void* vi
         lastPlayer = local && Cockpit_IsPlayerCarMatrix(local);
     }
     D3D_SetPlayerCarDraw(lastPlayer);
+    D3D_SetDrawMatrix((const float*)local);
     if (s_stableView && view && !memcmp(view, &s_eyeView, sizeof(s_eyeView))) view = &s_seatView;
     return ((MatrixMultiply_t)kMatrixMultiply)(out, local, view);
 }

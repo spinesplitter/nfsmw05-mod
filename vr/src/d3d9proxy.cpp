@@ -570,14 +570,41 @@ struct ManualMirrorPatch {
     IDirect3DIndexBuffer9* patched = nullptr;
     std::unordered_set<uint64_t> tris;
     int generation = -1;
+    float matrix[16] = {};
+    bool haveMatrix = false;
 };
 static std::unordered_map<void*, ManualMirrorPatch> s_manualMirrorPatches;
+
+// The last model-to-world matrix the game computed for a draw. Used to recognise a manual mirror's
+// own car when the game draws it from a cached matrix (WorldViewProj) rather than the pointer the
+// entry was queued with.
+static float s_drawMatrix[16];
+static bool s_drawMatrixValid = false;
+void D3D_SetDrawMatrix(const float* matrix) {
+    if (!matrix) {
+        s_drawMatrixValid = false;
+        return;
+    }
+    memcpy(s_drawMatrix, matrix, sizeof(s_drawMatrix));
+    s_drawMatrixValid = true;
+}
+
+static bool SameDrawMatrix(const float* a, const float* b) {
+    for (int i = 0; i < 16; i++) {
+        float d = fabsf(a[i] - b[i]);
+        if (d > 1e-4f * (1.0f + fabsf(b[i]))) return false;
+    }
+    return true;
+}
 
 static void ReleaseManualMirrorPatches() {
     for (auto& kv : s_manualMirrorPatches)
         if (kv.second.patched) kv.second.patched->Release();
     s_manualMirrorPatches.clear();
 }
+
+void D3D_ClearManualMirrorPatches() { ReleaseManualMirrorPatches(); }
+bool D3D_HasManualMirrorPatches() { return !s_manualMirrorPatches.empty(); }
 
 static uint64_t TriKey(uint16_t a, uint16_t b, uint16_t c) {
     if (a > b) std::swap(a, b);
@@ -587,7 +614,7 @@ static uint64_t TriKey(uint16_t a, uint16_t b, uint16_t c) {
 }
 
 void D3D_SetManualMirrorTriangles(void* indexBuffer, const uint16_t* triangles, int triangleCount,
-                                  int generation) {
+                                  int generation, const float* matrix) {
     if (!indexBuffer) return;
     if (triangleCount <= 0) {
         auto it = s_manualMirrorPatches.find(indexBuffer);
@@ -600,9 +627,13 @@ void D3D_SetManualMirrorTriangles(void* indexBuffer, const uint16_t* triangles, 
     for (int i = 0; i < triangleCount; i++)
         want.insert(TriKey(triangles[3 * i], triangles[3 * i + 1], triangles[3 * i + 2]));
     auto it = s_manualMirrorPatches.find(indexBuffer);
-    if (it != s_manualMirrorPatches.end() && it->second.generation == generation && it->second.tris == want)
-        return;
     if (it != s_manualMirrorPatches.end()) {
+        // The car moves: keep the matrix current even when the index copy need not be rebuilt.
+        if (matrix) {
+            memcpy(it->second.matrix, matrix, sizeof(it->second.matrix));
+            it->second.haveMatrix = true;
+        }
+        if (it->second.generation == generation && it->second.tris == want) return;
         if (it->second.patched) it->second.patched->Release();
         s_manualMirrorPatches.erase(it);
     }
@@ -615,6 +646,10 @@ void D3D_SetManualMirrorTriangles(void* indexBuffer, const uint16_t* triangles, 
     ManualMirrorPatch patch;
     patch.tris.swap(want);
     patch.generation = generation;
+    if (matrix) {
+        memcpy(patch.matrix, matrix, sizeof(patch.matrix));
+        patch.haveMatrix = true;
+    }
     if (FAILED(s_dev->CreateIndexBuffer(desc.Size, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFMT_INDEX16,
                                         D3DPOOL_DEFAULT, &patch.patched, nullptr)) || !patch.patched) {
         source->Unlock();
@@ -3028,14 +3063,29 @@ public:
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
         // A manual mirror's original triangles are hidden in a private copy of that model's index
-        // buffer. Models without manual mirror marks have no copy and are untouched.
+        // buffer. Models without mirror marks have no copy and are untouched. The car is normally
+        // recognised from the queued matrix pointer; when the game draws the entry from a cached
+        // WorldViewProj it is recognised by the matrix's contents instead, so an opponent sharing
+        // the model still keeps its glass.
         IDirect3DIndexBuffer9* mirrorPatched = nullptr;
-        if (s_playerCarDraw && DrawingPlayerView() && g_cfg.mirrors && g_cfg.disableMirrors <= 0.5f &&
+        if (DrawingPlayerView() && g_cfg.mirrors && g_cfg.disableMirrors <= 0.5f &&
             type == D3DPT_TRIANGLELIST && s_curIndices) {
             auto it = s_manualMirrorPatches.find(s_curIndices);
             if (it != s_manualMirrorPatches.end() && it->second.patched) {
-                mirrorPatched = it->second.patched;
-                real->SetIndices(mirrorPatched);
+                bool mine = s_playerCarDraw ||
+                            (s_drawMatrixValid && it->second.haveMatrix && SameDrawMatrix(s_drawMatrix, it->second.matrix));
+                if (mine) {
+                    mirrorPatched = it->second.patched;
+                    real->SetIndices(mirrorPatched);
+                }
+                static int logged;
+                if (logged < 8) {
+                    logged++;
+                    Log("d3d9: mirror hide %s (player %d, matrix match %d, first %u count %u)",
+                        mine ? "used" : "not this car", s_playerCarDraw ? 1 : 0,
+                        s_drawMatrixValid && it->second.haveMatrix && SameDrawMatrix(s_drawMatrix, it->second.matrix) ? 1 : 0,
+                        start, count);
+                }
             }
         }
         struct RestoreMirrorPatch {

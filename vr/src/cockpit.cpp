@@ -1988,7 +1988,7 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
     if (!info.interior && edits.mirror.empty()) {
         // Mirror marks cleared: stop hiding the glass in the player's private draw copy.
         void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
-        D3D_SetManualMirrorTriangles(ib, nullptr, 0, 0);
+        D3D_SetManualMirrorTriangles(ib, nullptr, 0, 0, nullptr);
     }
     if (!info.interior && !edits.mirror.empty()) {
         NoteMarkedMirrors(solid, info, m, edits);
@@ -2018,6 +2018,28 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
             for (size_t i = 3; i < verts.size(); i += 5) verts[i] = 1.0f - verts[i];
         uint8_t* plat = At<uint8_t*>(solid, kSolidPlat);
         void* ib = plat ? At<void*>(plat, kPlatIndexBuffer) : nullptr;
+        // Hide the interior model's own glass in the player's private draw copy: the rim and picture
+        // replace it instead of sitting over a second surface at the same depth (z-fighting).
+        SolidMesh mesh;
+        if (ib && ReadMesh(solid, mesh) && mesh.ib) {
+            std::vector<uint16_t> hiding;
+            for (int i = 0; i < mesh.n; i++) {
+                uint8_t* e = mesh.entries + i * kEntrySize;
+                int tris = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
+                if (tris <= 0 || first < 0 || first + tris * 3 > mesh.numIndices) continue;
+                for (int t = 0; t < tris; t++) {
+                    const uint16_t* tri = mesh.indices + first + t * 3;
+                    if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
+                    if (OnGlass(mesh, glass, tri)) hiding.insert(hiding.end(), {tri[0], tri[1], tri[2]});
+                }
+            }
+            uint32_t version = CurrentHash(info);
+            D3D_SetManualMirrorTriangles(mesh.ib, hiding.data(), (int)(hiding.size() / 3), (int)version, m);
+            static std::set<uint8_t*> logged;
+            if (!hiding.empty() && logged.insert(solid).second)
+                Log("mirrors: %s: %d original rear-view glass triangles hidden under the picture",
+                    SolidName(info).c_str(), (int)(hiding.size() / 3));
+        }
         D3D_AddMirror(ib, verts.data(), (int)(verts.size() / 5), inner < 0.999f ? frame.data() : nullptr,
                       inner < 0.999f ? (int)(frame.size() / 5) : 0);
     }
@@ -2041,7 +2063,7 @@ void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, con
         info.hashSeen = s_hashSerial;
     }
     int version = (int)(info.indexHash ^ (uint32_t)s_editsGen);
-    D3D_SetManualMirrorTriangles(ib, replacing.data(), (int)(replacing.size() / 3), version);
+    D3D_SetManualMirrorTriangles(ib, replacing.data(), (int)(replacing.size() / 3), version, matrix);
     bool added = false;
     for (int side = 0; side < 2; side++) {
         std::vector<float> vertices;
@@ -4294,6 +4316,16 @@ bool Cockpit_IsPlayerCarMatrix(const void* matrix) {
 int Cockpit_PlayerCarMatrices() { return s_carMatrixCount; }
 
 void Cockpit_BeginEye() {
+    // Mirrors turned off (F4 / ini): the models' own glass must draw again. Clear the private hide
+    // copies when that setting changes rather than keeping the glass zero-area.
+    static bool patchesCleared = true;
+    bool mirrorsOff = !g_cfg.mirrors || g_cfg.disableMirrors > 0.5f;
+    if (mirrorsOff && !patchesCleared) {
+        D3D_ClearManualMirrorPatches();
+        patchesCleared = true;
+    } else if (!mirrorsOff) {
+        patchesCleared = false;
+    }
     s_armDraws.clear();
     s_carMatrixCount = 0;
     s_mirrorSolids.clear();

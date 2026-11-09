@@ -21,7 +21,8 @@ void D3D_AddMirror(void*, const float*, int, const float*, int) {}
 void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int) {}
 void D3D_SetGlassCorners(void*, int, const float*) {}
 void D3D_SuppressMirrorGlass(void*) {}
-void D3D_SetManualMirrorTriangles(void*, const uint16_t*, int, int) {}
+void D3D_SetManualMirrorTriangles(void*, const uint16_t*, int, int, const float*) {}
+void D3D_ClearManualMirrorPatches() {}
 void D3D_AddMirrorGlassPart(void*, int, const float*, const uint16_t*, int) {}
 void D3D_RegisterWheelDraw(void*, int) {}
 void D3D_AddDash(void*, const float*, const float*, const float*, const float*) {}
