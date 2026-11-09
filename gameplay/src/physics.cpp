@@ -2064,38 +2064,8 @@ void Physics_Install() {
 
 const CarSample& Physics_Sample() { return s_sample; }
 
-static bool s_makeRain;
-
-void Physics_ForceRain(bool on) {
-    s_makeRain = on;
-    if (!on) {
-        uintptr_t rain = *(uintptr_t*)kPlayerRain;
-        if (Plausible(rain)) *(float*)(rain + kRain_Intensity) = 0.0f;
-    }
-}
-
-bool Physics_RainForced() { return s_makeRain; }
-
-// The VR mod counts wiper strokes: play Stitch_Static_MB_1 on one, _2 on the next.
-void Physics_WiperSound(float* strikes) {
-    static float last = 0.0f;
-    static int next = 1;
-    if (!strikes) return;
-    float now = *strikes;
-    if (now == last) return;
-    last = now;
-    Game_PlayStitchStatic(next);
-    next = next == 1 ? 2 : 1;
-}
-
 void Physics_Frame() {
     AidToggles();
-    // Make it rain: keep the player view's rain intensity up; the weather system may rewrite it.
-    if (s_makeRain) {
-        uintptr_t rain = *(uintptr_t*)kPlayerRain;
-        if (Plausible(rain) && *(float*)(rain + kRain_Intensity) < 0.99f)
-            *(float*)(rain + kRain_Intensity) = 1.0f;
-    }
     // The drift tables are built by static constructors; read them once the game runs.
     if (!g.ok) {
         static bool tried;

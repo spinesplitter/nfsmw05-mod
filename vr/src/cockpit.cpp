@@ -34,7 +34,6 @@
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <deque>
 #include <memory>
@@ -50,8 +49,6 @@
 float g_steeringWheelAngle = 0.0f;
 float g_seatInput[4] = {};
 float g_cockpitHandbrake = 0, g_cockpitShiftUp = 0, g_cockpitShiftDown = 0;
-float GameRainIntensity();
-int GameRainDropletCount();
 
 namespace {
 
@@ -191,10 +188,10 @@ struct TriRef {
 // are not read.)
 struct EditSet {
     std::map<uint64_t, std::array<uint16_t, 3>> hide;   // with the original winding, to put it back
-    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin, native, mirror, wipers;
+    std::set<uint64_t> black, wheel, noWheel, show, handbrake, shifter, arms, skin, native, mirror;
     bool loaded = false;
 };
-const char* const kEditKeys[11] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin", "Native", "Mirror", "Wipers"};
+const char* const kEditKeys[10] = {"Black", "Wheel", "NoWheel", "Show", "Handbrake", "Shifter", "Arms", "Skin", "Native", "Mirror"};
 int s_editsGen = 0;                                 // counts edits, for caches built from them
 std::unordered_map<std::string, EditSet> s_edits;
 
@@ -250,8 +247,8 @@ EditSet& EditsFor(const std::string& solidName) {
         return ParseTris(buf.data());
     };
     for (auto& t : read("Hide")) e.hide[TriId(t[0], t[1], t[2])] = t;
-    std::set<uint64_t>* sets[11] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror, &e.wipers};
-    for (int k = 0; k < 11; k++)
+    std::set<uint64_t>* sets[10] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror};
+    for (int k = 0; k < 10; k++)
         for (auto& t : read(kEditKeys[k])) sets[k]->insert(TriId(t[0], t[1], t[2]));
     size_t n = e.hide.size() + e.black.size() + e.wheel.size() + e.noWheel.size() + e.show.size() + e.mirror.size();
     if (n) Log("editor: %s: %u edited triangles loaded", solidName.c_str(), (unsigned)n);
@@ -262,9 +259,9 @@ void SaveEdits(const std::string& solidName) {
     const EditSet& e = EditsFor(solidName);
     std::vector<std::array<uint16_t, 3>> hide;
     for (auto& h : e.hide) hide.push_back(h.second);
-    const std::set<uint64_t>* sets[11] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror, &e.wipers};
+    const std::set<uint64_t>* sets[10] = {&e.black, &e.wheel, &e.noWheel, &e.show, &e.handbrake, &e.shifter, &e.arms, &e.skin, &e.native, &e.mirror};
     WritePrivateProfileStringA(solidName.c_str(), "Hide", hide.empty() ? nullptr : TrisText(hide).c_str(), EditsPath());
-    for (int k = 0; k < 11; k++) {
+    for (int k = 0; k < 10; k++) {
         std::vector<std::array<uint16_t, 3>> v;
         for (uint64_t id : *sets[k]) v.push_back(IdTri(id));
         WritePrivateProfileStringA(solidName.c_str(), kEditKeys[k], v.empty() ? nullptr : TrisText(v).c_str(), EditsPath());
@@ -1470,22 +1467,6 @@ bool ReadMesh(uint8_t* solid, SolidMesh& s) {
 // The solids whose rear view mirror was handed to the d3d9 side in the current eye.
 std::vector<uint8_t*> s_mirrorSolids;
 std::vector<uint8_t*> s_manualMirrorSolids;
-// The player car's window/glass solids in the current eye. They are drawn with culling off so the
-// outside surface is also visible from inside the cabin.
-std::unordered_set<void*> s_windowIbs;
-std::unordered_set<uint8_t*> s_windowOverlaySolids;
-
-bool WindowDraw(void* indexBuffer) {
-    return indexBuffer && s_windowIbs.count(indexBuffer) != 0;
-}
-
-// The player car's wiper solid per index buffer (registered while submitting the car).
-std::unordered_map<void*, uint8_t*> s_wiperSolids;
-
-// Read by the gameplay mod through NfsmwVr_Setting("WiperSweep" / "WiperStrike"): the sweep angle
-// and a count of wiper strokes. The count drives the stitch-static wiper sounds (defined after the
-// anonymous namespace below).
-static int s_wiperHalf = -1;
 
 
 // All of a solid's triangles (three points each), for which `keep` is true.
@@ -1622,9 +1603,6 @@ void BuildTris(uint8_t* solid, SolidInfo& info);
 bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, const float* matrix, int side,
                               std::vector<float>& out);
 void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* m, const EditSet& edits);
-// A tint over the player car's windows so the interior glass reads as glass from the seat; its
-// opacity is Config::glassOpacity (0 = off).
-void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m);
 
 // A car listed in [VR] GameMirrorsSkip (model names such as BMWM3GTRE46, any case): its side
 // mirrors stay the game's.
@@ -2042,77 +2020,6 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
         void* ib = plat ? At<void*>(plat, kPlatIndexBuffer) : nullptr;
         D3D_AddMirror(ib, verts.data(), (int)(verts.size() / 5), inner < 0.999f ? frame.data() : nullptr,
                       inner < 0.999f ? (int)(frame.size() / 5) : 0);
-    }
-}
-
-V3 ToWorld(const V3& p, const float* m);
-
-void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
-    if (!s_windowOverlaySolids.insert(solid).second) return;
-    SolidMesh mesh;
-    if (!ReadMesh(solid, mesh)) return;
-    void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
-    if (!ib) return;
-    std::vector<float> xyz, uv, uvCrack;
-    for (int i = 0; i < mesh.n; i++) {
-        uint8_t* e = mesh.entries + i * kEntrySize;
-        int tris = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
-        if (tris <= 0 || first < 0 || first + tris * 3 > mesh.numIndices) continue;
-        for (int t = 0; t < tris; t++) {
-            const uint16_t* tri = mesh.indices + first + t * 3;
-            if (tri[0] >= mesh.numVerts || tri[1] >= mesh.numVerts || tri[2] >= mesh.numVerts) continue;
-            if (info.hidden.count(TriId(tri[0], tri[1], tri[2]))) continue;
-            V3 p0 = mesh.at(tri[0]), p1 = mesh.at(tri[1]), p2 = mesh.at(tri[2]);
-            V3 n = Cross(Sub(p1, p0), Sub(p2, p0));
-            float ax = fabsf(n.x), ay = fabsf(n.y), az = fabsf(n.z);
-            for (int k = 0; k < 3; k++) {
-                V3 p = mesh.at(tri[k]);
-                V3 w = ToWorld(p, m);
-                xyz.push_back(w.x);
-                xyz.push_back(w.y);
-                xyz.push_back(w.z);
-                // Model space keeps the droplet pattern stuck to the glass; the largest normal
-                // axis picks the two coordinates that lie across the pane.
-                float u, v;
-                if (ax >= ay && ax >= az) {
-                    u = p.z; v = -p.y;
-                } else if (ay >= az) {
-                    u = p.x; v = -p.z;
-                } else {
-                    u = p.x; v = -p.y;
-                }
-                uv.push_back(u * 0.8f);
-                uv.push_back(v * 0.8f);
-                uvCrack.push_back(u * 0.42f);
-                uvCrack.push_back(v * 0.42f);
-            }
-        }
-    }
-    if (xyz.empty()) return;
-    const int tris = (int)(xyz.size() / 9);
-    if (g_cfg.glassOpacity > 0.001f) {
-        // The slider is 0 = no tint, 1 = the vanilla tint (not an opaque black overlay).
-        constexpr float kVanillaTint = 0.20f;
-        const int alpha = (int)(g_cfg.glassOpacity * kVanillaTint * 255.0f + 0.5f);
-        D3D_AddColorTris(ib, xyz.data(), tris, D3DCOLOR_ARGB(alpha, 18, 20, 24));
-    }
-    // Car damage (not engine heat): from 75% the windows are cracked, a little more visibly as
-    // the damage rises toward 100%.
-    if (g_carDamage >= 0.75f && !uvCrack.empty()) {
-        float t = (g_carDamage - 0.75f) / 0.25f;
-        if (t > 1.0f) t = 1.0f;
-        int alpha = (int)(190.0f + 65.0f * t + 0.5f);
-        if (alpha > 255) alpha = 255;
-        D3D_AddCrackTris(ib, xyz.data(), uvCrack.data(), tris, D3DCOLOR_ARGB(alpha, 235, 245, 255));
-    }
-    float rain = GameRainIntensity();
-    if (rain > 1.0f) rain = 1.0f;
-    // The game's own rain droplet layer is used (not a generated pattern), and only while that
-    // layer actually has droplets: under an underpass, or after the rain stops, it goes to zero.
-    if (rain > 0.02f && GameRainDropletCount() > 0 && g_cfg.glassRain > 0.001f && !uv.empty()) {
-        int alpha = (int)(g_cfg.glassRain * rain * 220.0f + 0.5f);
-        if (alpha > 255) alpha = 255;
-        D3D_AddTexturedTris(ib, xyz.data(), uv.data(), tris, D3DCOLOR_ARGB(alpha, 255, 255, 255));
     }
 }
 
@@ -3034,24 +2941,6 @@ void RunEditCommand(int cmd) {
             case 21:
                 e.mirror.erase(id);
                 break;
-            case 22:
-                e.wipers.insert(id);
-                e.hide.erase(id);
-                e.black.erase(id);
-                e.mirror.erase(id);
-                break;
-            case 23:
-                e.wipers.erase(id);
-                break;
-            case 24:
-                // Remove the stock wipers from the static model; the mod draws them again so they
-                // can sweep when it rains.
-                if (!e.hide.count(id) && wound.count(id)) e.hide[id] = wound[id];
-                e.wipers.insert(id);
-                e.black.erase(id);
-                e.mirror.erase(id);
-                e.skin.erase(id);
-                break;
         }
     }
     static const char* kWhat[] = {"", "hidden", "black", "on the steering wheel", "off the steering wheel", "restored"};
@@ -3059,9 +2948,7 @@ void RunEditCommand(int cmd) {
                        cmd == 15 ? "control marks cleared" : cmd == 16 ? "marked as arms" :
                        cmd == 17 ? "arm marks cleared" : cmd == 18 ? "drawn as skin" :
                        cmd == 19 ? "merged as fingers (Arms/Skin/Show)" :
-                       cmd == 20 ? "marked as mirror" : cmd == 21 ? "mirror marks cleared" :
-                       cmd == 22 ? "marked as wipers" : cmd == 23 ? "wiper marks cleared" :
-                       cmd == 24 ? "removed (animated when it rains)" : kWhat[cmd];
+                       cmd == 20 ? "marked as mirror" : cmd == 21 ? "mirror marks cleared" : kWhat[cmd];
     Log("editor: %s: %u triangles %s", s_pick.name.c_str(), (unsigned)s_brush.size(), what);
     s_editsGen++;
     SaveEdits(s_pick.name);
@@ -3393,19 +3280,6 @@ uint8_t* __cdecl OnSubmit(uint8_t* model, const float* m, uint8_t* entry) {
     // for each control/driver predicate in every split entry submission.
     const std::string playerName = player ? SolidName(*info) : std::string();
     const EditSet* playerEdits = player ? &EditsFor(playerName) : nullptr;
-    // The car's window solids (windshield, rear and door glass): two-sided draws in the player
-    // view, plus the interior tint whose opacity the menu controls.
-    if (player && playerName.find("_WINDOW") != std::string::npos &&
-        playerName.find("LIGHT") == std::string::npos) {
-        void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
-        if (ib) s_windowIbs.insert(ib);
-        NoteWindowOverlay(solid, *info, m);
-    }
-    // Wipers marked in the editor: this solid's animated wiper draw (see Cockpit_WiperDraw).
-    if (player && playerEdits && !playerEdits->wipers.empty()) {
-        void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
-        if (ib) s_wiperSolids[ib] = solid;
-    }
 
     if (player && info->wheel && info->wheel->ok) {
         const Wheel& wheel=*info->wheel;
@@ -3815,12 +3689,6 @@ bool GameFocused() {
 bool Held(int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000); }
 
 }  // namespace
-
-// Read by the gameplay mod through NfsmwVr_Setting("WiperSweep" / "WiperStrike").
-float g_wiperSweep = 0.0f;
-float g_wiperStrikes = 0.0f;
-// Written by the gameplay mod through NfsmwVr_Setting("CarDamage").
-float g_carDamage = 0.0f;
 
 bool Cockpit_HasMarkedArmDraw(void* ib) {
     return (NativeSteeringActive() || s_armHover.progress > 0.0001f) && s_armDraws.count(ib) != 0;
@@ -4329,7 +4197,7 @@ void Cockpit_EndFrame() {
     int cmd = (int)lrintf(g_cfg.editCommand);
     if (cmd) {
         g_cfg.editCommand = 0;
-        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 24)) RunEditCommand(cmd);
+        if ((cmd >= 1 && cmd <= 6) || (cmd >= 13 && cmd <= 21)) RunEditCommand(cmd);
         if (cmd == 10) CentreWheelPivot();                             // F4 > Menu and testing
         if (cmd == 11) g_cfg.wheelPivot[0] = g_cfg.wheelPivot[1] = 0;
         if (cmd == 12) CopySelection();
@@ -4406,125 +4274,6 @@ bool Cockpit_IsPlayerCarMatrix(const void* matrix) {
     return false;
 }
 
-bool Cockpit_IsWindowDraw(void* indexBuffer) { return WindowDraw(indexBuffer); }
-
-// --- wipers ---------------------------------------------------------------------------------------
-// The wiper triangles the editor selected. They are hidden in the game's static model ("Remove
-// wipers") and drawn again by the d3d9 side, rotated around the hinge the editor's selection gives
-// (the lowest point) about the blade's own normal, sweeping while the player view's rain is on.
-struct WiperDrawData {
-    bool valid = false;
-    std::vector<uint16_t> tris;   // original windings, three vertices each
-    std::vector<unsigned> verts;  // unique vertices to rotate
-    int entryFirst = -1, entryCount = 0;
-    float pivot[3] = {0, 0, 0}, axis[3] = {0, 0, 1};
-};
-static std::unordered_map<void*, WiperDrawData> s_wiperCache;
-
-// Rain intensity of the player view (0 = dry), read from the game's Rain object.
-float GameRainIntensity() {
-    constexpr uintptr_t kPlayerRain = 0x9196B8;
-    constexpr int kRainIntensity = 0x28C;
-    uintptr_t rain = *(uintptr_t*)kPlayerRain;
-    if (rain < 0x10000 || rain >= 0x7FFF0000) return 0.0f;
-    float v = *(float*)(rain + kRainIntensity);
-    return v >= 0.0f && v <= 10.0f ? v : 0.0f;
-}
-
-// The game's own raindrop count for the player view (the first field of the Rain object). It is
-// zero under an underpass or when the rain stops, so the glass overlay follows the game's filter.
-int GameRainDropletCount() {
-    constexpr uintptr_t kPlayerRain = 0x9196B8;
-    uintptr_t rain = *(uintptr_t*)kPlayerRain;
-    if (rain < 0x10000 || rain >= 0x7FFF0000) return 0;
-    int n = *(int*)rain;
-    return n > 0 && n < 100000 ? n : 0;
-}
-
-bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uint16_t>& indices,
-                       std::vector<unsigned>& verts, float pivot[3], float axis[3], float* angle) {
-    auto sit = s_wiperSolids.find(ib);
-    if (sit == s_wiperSolids.end()) return false;
-    uint8_t* solid = sit->second;
-    auto infoIt = s_solids.find(solid);
-    if (infoIt == s_solids.end()) return false;
-    SolidInfo& info = infoIt->second;
-    const EditSet& edits = EditsOf(info);
-    if (edits.wipers.empty()) return false;
-    // The static wipers are removed first ("Remove wipers"); the animated copy replaces them.
-    bool removed = false;
-    for (uint64_t id : edits.wipers) removed |= edits.hide.count(id) != 0;
-    if (!removed) return false;
-    static int cacheGen = -1;
-    if (cacheGen != s_editsGen) {
-        s_wiperCache.clear();
-        cacheGen = s_editsGen;
-    }
-    WiperDrawData& c = s_wiperCache[ib];
-    if (!c.valid) {
-        SolidMesh mesh;
-        if (!ReadMesh(solid, mesh)) return false;
-        if (info.trisDirty) BuildTris(solid, info);
-        c.valid = true;
-        std::set<unsigned> unique;
-        float normal[3] = {0, 0, 0}, minZ = 1e9f;
-        V3 low{};
-        size_t k = 0;
-        for (int i = 0; i < mesh.n && k < info.tris.size(); i++) {
-            uint8_t* e = mesh.entries + i * kEntrySize;
-            int ef = At<int>(e, kEntryFirstIndex), et = At<int>(e, kEntryTris);
-            for (int t = 0; t < et && k < info.tris.size(); t++, k++) {
-                if (!edits.wipers.count(info.tris[k].id)) continue;
-                std::array<uint16_t, 3> v = {info.tris[k].v[0], info.tris[k].v[1], info.tris[k].v[2]};
-                auto hv = edits.hide.find(info.tris[k].id);
-                if (hv != edits.hide.end()) v = hv->second;
-                if (c.entryFirst < 0) c.entryFirst = ef, c.entryCount = et;
-                if (ef != c.entryFirst || v[0] >= mesh.numVerts || v[1] >= mesh.numVerts || v[2] >= mesh.numVerts)
-                    continue;
-                for (int j = 0; j < 3; j++) {
-                    c.tris.push_back(v[j]);
-                    unique.insert(v[j]);
-                }
-                auto P = [](const float* f) { return V3{f[0], f[1], f[2]}; };
-                V3 p0 = P(mesh.pos(v[0])), p1 = P(mesh.pos(v[1])), p2 = P(mesh.pos(v[2]));
-                V3 n = Cross(Sub(p1, p0), Sub(p2, p0));
-                normal[0] += n.x, normal[1] += n.y, normal[2] += n.z;
-                for (const V3& p : {p0, p1, p2})
-                    if (p.z < minZ) minZ = p.z, low = p;
-            }
-        }
-        if (c.tris.empty()) { c.valid = false; return false; }
-        c.verts.assign(unique.begin(), unique.end());
-        float len = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-        if (len > 1e-6f) c.axis[0] = normal[0] / len, c.axis[1] = normal[1] / len, c.axis[2] = normal[2] / len;
-        c.pivot[0] = low.x, c.pivot[1] = low.y, c.pivot[2] = low.z;
-    }
-    if (c.tris.empty() || first != (unsigned)c.entryFirst || count != (unsigned)c.entryCount) return false;
-    indices = c.tris;
-    verts = c.verts;
-    memcpy(pivot, c.pivot, sizeof(c.pivot));
-    memcpy(axis, c.axis, sizeof(c.axis));
-    // A sweep from the rest position to about 50 degrees and back while it rains; parked when dry.
-    constexpr float kPi = 3.14159265f;
-    float rain = GameRainIntensity();
-    float phase = (float)(Now() * 2.0 * kPi * 0.9);
-    *angle = rain > 0.02f ? 0.9f * (0.5f - 0.5f * cosf(phase)) : 0.0f;
-    g_wiperSweep = *angle;
-    // One count per half sweep (out and back): the gameplay mod plays Stitch_Static_MB_1 on the
-    // out stroke and _2 on the return, alternating every stroke.
-    if (rain > 0.02f) {
-        int half = (int)(phase / kPi);
-        if (s_wiperHalf < 0) s_wiperHalf = half;
-        if (half != s_wiperHalf) {
-            s_wiperHalf = half;
-            g_wiperStrikes += 1.0f;
-        }
-    } else {
-        s_wiperHalf = -1;
-    }
-    return true;
-}
-
 
 
 int Cockpit_PlayerCarMatrices() { return s_carMatrixCount; }
@@ -4534,10 +4283,6 @@ void Cockpit_BeginEye() {
     s_carMatrixCount = 0;
     s_mirrorSolids.clear();
     s_manualMirrorSolids.clear();
-    s_windowIbs.clear();
-    s_windowOverlaySolids.clear();
-    s_wiperSolids.clear();
-    s_wiperCache.clear();
     s_eyeDone.clear();
     s_driverIKWorldValid = false;
     s_handbrakeGripValid = false;

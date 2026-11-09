@@ -32,21 +32,6 @@ void Cockpit_BeginEye();
 // Whether `matrix` is a local-to-world matrix the player's own car (body, parts, driver, steering
 // wheel) was submitted with for the player view in the current eye.
 bool Cockpit_IsPlayerCarMatrix(const void* matrix);
-// Whether this index buffer belongs to one of the player car's windows: its draws get two-sided
-// culling so the outside glass is visible from inside the cabin.
-bool Cockpit_IsWindowDraw(void* indexBuffer);
-// The edited wiper triangles of this draw (raw vertex indices), the unique vertices to rotate, and
-// the hinge/normal/sweep angle for the current rain. False when this draw has none.
-bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uint16_t>& indices,
-                       std::vector<unsigned>& verts, float pivot[3], float axis[3], float* angle);
-
-// Wiper state for the gameplay mod's sound: the current sweep angle, and a count that goes up once
-// per wiper stroke (the game thread plays the two stitch-static samples on it).
-extern float g_wiperSweep;
-extern float g_wiperStrikes;
-// The player car's damage (0..1, 1 = totaled), written by the gameplay mod; the windows crack
-// from 75% (car damage, not engine heat).
-extern float g_carDamage;
 // How many such matrices this eye (0: the car was not drawn in the player view).
 int Cockpit_PlayerCarMatrices();
 // Deform a private copy of stream 0 for a registered player-driver draw. Never writes game assets.

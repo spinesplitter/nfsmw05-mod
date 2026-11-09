@@ -169,11 +169,6 @@ constexpr struct {
     {MOD_VR, "MirrorResolution", 1.0f},
     {MOD_VR, "MirrorDistance", 0.0f},
     {MOD_VR, "ResolutionScale", 1.0f},
-    {MOD_VR, "GlassOpacity", 1.0f},
-    {MOD_VR, "GlassRain", 1.0f},
-    {MOD_VR, "GlassReflection", 1.0f},
-    {MOD_VR, "CarDamage", 0.0f},
-    {MOD_VR, "WiperStrike", 0.0f},
 };
 enum {
     FFB_GAIN, FFB_ALIGNING, FFB_CENTERING, FFB_DAMPING, FFB_FRICTION, FFB_SOFTLOCK,
@@ -215,11 +210,6 @@ enum {
     VR_MIRRORRESOLUTION,
     VR_MIRRORDISTANCE,
     VR_RENDERSCALE,
-    VR_GLASSOPACITY,
-    VR_GLASSRAIN,
-    VR_GLASSREFLECTION,
-    VR_CARDAMAGE,
-    VR_WIPERSTRIKE,
     EXT_COUNT
 };
 static_assert(sizeof(kExt) / sizeof(kExt[0]) == EXT_COUNT, "kExt and the EXT enum differ");
@@ -230,11 +220,6 @@ static_assert(KeyIs(kExt[VR_DISABLEMIRRORS].key, "DisableMirrors"), "kExt out of
 static_assert(KeyIs(kExt[VR_MIRRORRESOLUTION].key, "MirrorResolution"), "kExt out of order at VR_MIRRORRESOLUTION");
 static_assert(KeyIs(kExt[VR_MIRRORDISTANCE].key, "MirrorDistance"), "kExt out of order at VR_MIRRORDISTANCE");
 static_assert(KeyIs(kExt[VR_RENDERSCALE].key, "ResolutionScale"), "kExt out of order at VR_RENDERSCALE");
-static_assert(KeyIs(kExt[VR_GLASSOPACITY].key, "GlassOpacity"), "kExt out of order at VR_GLASSOPACITY");
-static_assert(KeyIs(kExt[VR_GLASSRAIN].key, "GlassRain"), "kExt out of order at VR_GLASSRAIN");
-static_assert(KeyIs(kExt[VR_GLASSREFLECTION].key, "GlassReflection"), "kExt out of order at VR_GLASSREFLECTION");
-static_assert(KeyIs(kExt[VR_CARDAMAGE].key, "CarDamage"), "kExt out of order at VR_CARDAMAGE");
-static_assert(KeyIs(kExt[VR_WIPERSTRIKE].key, "WiperStrike"), "kExt out of order at VR_WIPERSTRIKE");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
 static_assert(KeyIs(kExt[FFB_CRASHES].key, "Crashes"), "kExt out of order at FFB_CRASHES");
@@ -812,9 +797,6 @@ const Item kItems[] = {
     {ACTION, "Clear arm marks", nullptr, "EdClearArms", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Make mirror", nullptr, "EdMakeMirror", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Clear mirror marks", nullptr, "EdClearMirror", nullptr, 0, 0, 0, 0, nullptr, 0},
-    {ACTION, "Select wipers (mark the selection)", nullptr, "EdWipers", nullptr, 0, 0, 0, 0, nullptr, 0},
-    {ACTION, "Clear wiper marks", nullptr, "EdClearWipers", nullptr, 0, 0, 0, 0, nullptr, 0},
-    {ACTION, "Remove wipers (animate when it rains)", nullptr, "EdRemoveWipers", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Restore", nullptr, "EdRestore", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Undo", nullptr, "EdUndo", nullptr, 0, 0, 0, 0, nullptr, 0},
 
@@ -831,14 +813,10 @@ const Item kItems[] = {
 
     PAGE_("MENU AND TESTING"),
     BACK_,
-    {ACTION, "Make it rain (on / off)", nullptr, "MakeRain", nullptr, 0, 0, 0, 0, nullptr, 0},
     {ACTION, "Hide Animated Driver Model", nullptr, "HideAnimatedDriver", nullptr, 0, 0, 0, 0, nullptr, 0},
     HEADER_("TESTING"),
     {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     {NUMBER, "Mirror render resolution", "VR", "MirrorResolution", &s_ext[VR_MIRRORRESOLUTION], 0.25f, 1.0f, 0.05f, 100, "%.0f%%", 0},
-    {NUMBER, "Glass tint", "VR", "GlassOpacity", &s_ext[VR_GLASSOPACITY], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
-    {NUMBER, "Glass rain intensity", "VR", "GlassRain", &s_ext[VR_GLASSRAIN], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
-    {NUMBER, "Glass reflection strength", "VR", "GlassReflection", &s_ext[VR_GLASSREFLECTION], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
     {NUMBER, "Mirror distance (0 = stock)", "VR", "MirrorDistance", &s_ext[VR_MIRRORDISTANCE], 0.0f, 3000.0f, 100.0f, 1, "%.0f m", 0},
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
@@ -1688,12 +1666,6 @@ void Change(int index, int dir) {
             GoBack();
             return;
         }
-        if (strcmp(it.key, "MakeRain") == 0) {
-            bool on = !Physics_RainForced();
-            Physics_ForceRain(on);
-            Note(on ? "Rain forced on (the testing button)" : "Rain off: the game's weather");
-            return;
-        }
         if (strcmp(it.key, "SaveAnimatedDriver") == 0) {
             float* request = ExtSetting(VR_ANIMATEDDRIVERSAVE);
             if (!request) { Note("No updated VR mod"); return; }
@@ -1721,9 +1693,7 @@ void Change(int index, int dir) {
                 {"EdClearControl", 15, "Control marks cleared"},
                 {"EdArms", 16, "Marked as arms"}, {"EdClearArms", 17, "Arm marks cleared"},
                 {"EdSkin", 18, "Drawn as skin"}, {"EdMergeFingers", 19, "Merge fingers requested"},
-                {"EdMakeMirror", 20, "Marked as mirror"}, {"EdClearMirror", 21, "Mirror marks cleared"},
-                {"EdWipers", 22, "Marked as wipers"}, {"EdClearWipers", 23, "Wiper marks cleared"},
-                {"EdRemoveWipers", 24, "Wipers removed: they sweep when it rains"}};
+                {"EdMakeMirror", 20, "Marked as mirror"}, {"EdClearMirror", 21, "Mirror marks cleared"}};
             if (strcmp(it.key, "EdPick") == 0) {
                 StartPicking();
                 return;
@@ -3376,12 +3346,6 @@ void Ui_Frame() {
     if (float* mc = ExtSetting(FFB_MENUCONTROLLER)) *mc = g_cfg.menuController ? 1.0f : 0.0f;
     if (float* ma = ExtSetting(FFB_MENUAXES)) *ma = g_cfg.menuAxes ? 1.0f : 0.0f;
     EngineStatus st = Game_Engine();
-    // Car damage (not engine heat): the VR mod cracks the windows from 75%. Hold the last value
-    // while the car is not simulated (pause menu), so the cracks do not vanish when you stop.
-    HudStatus hs = Game_Hud();
-    if (float* v = ExtSetting(VR_CARDAMAGE)) {
-        if (hs.valid) *v = hs.damage;
-    }
     InputSnapshot in = Input_Get();
     // The cockpit's steering wheel turns with the bound wheel (VR mod, also on a flat screen).
     if (float* angle = ExtSetting(VR_WHEELANGLE)) *angle = in.steerBound ? in.wheelDeg : 0.0f;
@@ -3389,8 +3353,6 @@ void Ui_Frame() {
     // Raw attempts, before clutch/misshift validation. Do not feed H events into gearbox counters.
     if (float* v = ExtSetting(VR_COCKPITSHIFTUP)) *v = (float)((in.shiftUp + in.cockpitGateForward) & 0xFFFF);
     if (float* v = ExtSetting(VR_COCKPITSHIFTDOWN)) *v = (float)((in.shiftDown + in.cockpitGateBackward) & 0xFFFF);
-    // The wiper animation's stroke counter (VR mod): one stitch-static sound per stroke.
-    Physics_WiperSound(ExtSetting(VR_WIPERSTRIKE));
     // VR seat bindings, held: the VR mod moves the seat while they are.
     auto held = [&](int seat) { return (in.seatDown >> seat & 1) ? 1.0f : 0.0f; };
     if (float* v = ExtSetting(VR_SEATRIGHT)) *v = held(SEAT_RIGHT) - held(SEAT_LEFT);
