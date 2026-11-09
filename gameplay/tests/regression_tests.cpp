@@ -226,7 +226,6 @@ static void TestSteeringLock() {
 }
 
 #include "../src/low_speed_tyres.h"
-#include "../src/grip_recovery.h"
 
 static void TestLowSpeedTyres() {
     using namespace low_speed_tyres;
@@ -256,39 +255,6 @@ static void TestLowSpeedTyres() {
     assert(fabsf(WheelTie(0.8f, 0.0f, 20.0f) - 0.8f) < 1e-6f);
     assert(WheelTie(0.0f, 1.0f, 20.0f) == 0.0f);
     assert(WheelTie(1.0f, 1.0f, 20.0f) == 1.0f);
-}
-
-static void TestGripRecovery() {
-    using namespace grip_recovery;
-    assert(Amount(-1.0f) == 0.0f && Amount(0.0f) == 0.0f);
-    assert(Amount(0.5f) == 0.5f && Amount(1.0f) == 1.0f && Amount(2.0f) == 1.0f);
-    // 0% is exactly the old behaviour, even from part-way through a recovery.
-    assert(Step(0.0f, 0.0f, 1.0f / 60) == 0.0f);
-    assert(Step(0.7f, 0.0f, 1.0f / 60) == 0.0f);
-    // Progress rises toward 1 and never past it.
-    float progress = 0.0f, previous = 0.0f;
-    for (int i = 0; i < 600; i++) {
-        progress = Step(progress, 0.5f, 1.0f / 120);
-        assert(progress >= previous && progress <= 1.0f);
-        previous = progress;
-    }
-    assert(progress > 0.95f);
-    // The same elapsed time in different steps lands in the same place.
-    float at30 = 0.0f, at120 = 0.0f;
-    for (int i = 0; i < 30; i++) at30 = Step(at30, 1.0f, 1.0f / 30);
-    for (int i = 0; i < 120; i++) at120 = Step(at120, 1.0f, 1.0f / 120);
-    assert(fabsf(at30 - at120) < 1e-5f);
-    // 100% is the fastest: 0.1 s closes most of the deficit.
-    assert(Step(0.0f, 1.0f, 0.1f) > 0.6f);
-    // A zero-dt step holds; it does not snap.
-    assert(Step(0.25f, 1.0f, 0.0f) == 0.25f);
-    // The configured sliding grip moves toward the game's 1, never past it.
-    assert(fabsf(SlideGrip(0.5f, 0.0f) - 0.5f) < 1e-6f);
-    assert(fabsf(SlideGrip(0.5f, 0.5f) - 0.75f) < 1e-6f);
-    assert(fabsf(SlideGrip(0.5f, 1.0f) - 1.0f) < 1e-6f);
-    assert(SlideGrip(1.0f, 0.5f) == 1.0f);
-    assert(SlideGrip(0.5f, 2.0f) == 1.0f);
-    assert(SlideGrip(0.5f, -1.0f) == 0.5f);
 }
 
 static void TestTelemetryInputs() {
@@ -338,7 +304,6 @@ int main() {
     assert(!PhysicsLogEnabled(1, false));
     assert(PhysicsLogEnabled(1, true));
     TestLowSpeedTyres();
-    TestGripRecovery();
     TestTelemetryInputs();
     TestSteeringLock();
     static_assert(sizeof(void*) == 4, "test the game layout");

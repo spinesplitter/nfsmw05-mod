@@ -192,10 +192,6 @@ cars use their group's settings or Shared.
 - **Throttle takes side grip** (100%): a tyre's grip is shared between driving and cornering, so
   flooring it in a low gear makes a rear-drive car step out and a front-drive car push wide;
   easing off tightens the line. Car character makes high-torque cars do this more.
-- **Off-throttle grip recovery** (0%): how quickly a sliding tyre gets its side grip back once you
-  close the throttle. 0% = off: the configured Grip when sliding holds until the slide ends.
-  100% = the sliding-grip deficit is gone in about 0.3 s. It only returns grip the sliding curve
-  took away, never more than the tyre's normal grip; a wheel locked by the brakes stays locked.
 - **Wheelspin in slides** (50%): once the rear slides under power the wheels spin up and the revs
   climb, so more throttle means more angle. Lower it if power slides turn into spins too easily.
 
@@ -255,7 +251,6 @@ has far more of it than a road car.
 | Tyre grip peaks at | `TyrePeakAngle` | 3–20° | 8° | yes | (none) |
 | Wheelspin in slides | `WheelspinInSlides` | 0–100% | 50% | yes | 0% |
 | Throttle takes side grip | `FrictionCircle` | 0–300% | 100% | yes | 0% |
-| Off-throttle grip recovery | `OffThrottleGripRecovery` | 0–100% | 0% | yes | 0% |
 | Downforce | `Downforce` | −25–200% | 70% | yes | 100% |
 | Downforce grows with speed squared | `DownforceSquared` | on / off | on | yes | off |
 | Wall bounce | `WallBounce` | 0–100% | 0% | yes | 100% |
