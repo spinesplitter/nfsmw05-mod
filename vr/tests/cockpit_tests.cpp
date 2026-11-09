@@ -18,6 +18,7 @@ void Log(const char* format, ...) {
 }
 void ConfigFile(const char*, char* out, bool) { strcpy(out, "missing-cockpit-test.ini"); }
 void D3D_AddMirror(void*, const float*, int, const float*, int) {}
+void D3D_AddMirrorOnce(void*, const float*, int, const float*, int) {}
 void D3D_RegisterMirrorGlass(void*, int, int, const float*, const uint16_t*, int) {}
 void D3D_SetGlassCorners(void*, int, const float*) {}
 void D3D_SuppressMirrorGlass(void*) {}

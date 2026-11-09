@@ -933,6 +933,7 @@ struct PendingMirror {
     void* ib;
     std::vector<float> verts, frame;
     bool drawn;
+    bool once;      // the original triangles are hidden: one draw per eye is enough
 };
 static std::vector<PendingMirror> s_pendingMirrors;
 static D3DMATRIX s_mirrorView, s_mirrorProj;
@@ -955,7 +956,8 @@ void D3D_BeginMirrorEye(const float* view, const float* proj) {
     s_mirrorEye = true;
 }
 
-void D3D_AddMirror(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount) {
+static void AddPendingMirror(void* indexBuffer, const float* verts, int vertexCount, const float* frame,
+                             int frameCount, bool once) {
     if (!s_mirrorEye || !indexBuffer || vertexCount < 3) return;
     for (PendingMirror& p : s_pendingMirrors)
         if (p.ib == indexBuffer && p.verts.size() == (size_t)vertexCount * 5 && !memcmp(p.verts.data(), verts, 5 * sizeof(float)))
@@ -965,11 +967,21 @@ void D3D_AddMirror(void* indexBuffer, const float* verts, int vertexCount, const
     m.verts.assign(verts, verts + vertexCount * 5);
     if (frame && frameCount >= 3) m.frame.assign(frame, frame + frameCount * 5);
     m.drawn = false;
+    m.once = once;
     s_pendingMirrors.push_back(m);
+}
+
+void D3D_AddMirror(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount) {
+    AddPendingMirror(indexBuffer, verts, vertexCount, frame, frameCount, false);
+}
+
+void D3D_AddMirrorOnce(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount) {
+    AddPendingMirror(indexBuffer, verts, vertexCount, frame, frameCount, true);
 }
 
 // Draws one mirror's glass into whatever the game is drawing to now, with its depth buffer.
 static void DrawMirrorGlass(const PendingMirror& m, bool depth) {
+    TraceDetailScope timing(TRACE_MIRROR_DRAW);
     if (!s_mirrorTex) return;
     IDirect3DStateBlock9* saved = SavedStateBlock();
     if (!saved) return;
@@ -1201,6 +1213,7 @@ static void AfterModelDraw() {
     bool checked = false, playerView = false;
     for (PendingMirror& m : s_pendingMirrors) {
         if (m.ib != s_curIndices) continue;
+        if (m.once && m.drawn) continue;
         if (!checked) {
             checked = true;
             playerView = DrawingPlayerView();

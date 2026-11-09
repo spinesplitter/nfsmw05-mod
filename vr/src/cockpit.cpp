@@ -1978,7 +1978,7 @@ void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, con
     for (int side = 0; side < 2; side++) {
         std::vector<float> vertices;
         if (!BuildMarkedMirrorVertices(info, edits, matrix, side, vertices)) continue;
-        D3D_AddMirror(ib, vertices.data(), (int)(vertices.size() / 5), nullptr, 0);
+        D3D_AddMirrorOnce(ib, vertices.data(), (int)(vertices.size() / 5), nullptr, 0);
         added = true;
     }
     if (!info.manualMirrorLogged) {
