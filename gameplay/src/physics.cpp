@@ -492,6 +492,15 @@ void __fastcall Hook_SuspSimulate(uint8_t* susp, void*, float dT) {
         }
         Log("physics: tyres front / rear: DYNAMIC_GRIP %.2f / %.2f, STATIC_GRIP %.2f / %.2f; tyre curve peak %.1f deg, "
             "sliding grip %.2f", grip[0][0], grip[1][0], grip[0][1], grip[1][1], g_cfg.tyrePeakAngle, g_cfg.tyreSlideGrip);
+        // The effective per-car values, so the log proves what this car is actually running (the
+        // install-time line above shows the shared preset before the car's group is applied).
+        Character();
+        Log("physics: settings for this car: grip %.2f, balance %+.2f, stability %.2f, drift %.2f, friction circle "
+            "%.2f x throttle %.2f = %.2f, wheelspin %.2f, load sensitivity %.2f, suspension %.2f, roll %+.2f, "
+            "downforce %.2f%s, gravity %.2f, offroad %.2f, rain %.2f", g_cfg.grip, g_cfg.gripBalance, g_cfg.stability,
+            g_cfg.driftAssist, g_cfg.frictionCircle, s_char.throttle, g_cfg.frictionCircle * s_char.throttle,
+            g_cfg.slideWheelspin, g_cfg.loadSensitivity, g_cfg.suspFirmness, g_cfg.rollBalance, g_cfg.downforce,
+            g_cfg.downforceSquared ? " (squared)" : "", g_cfg.gravity, g_cfg.offroadGrip, g_cfg.rainGrip);
     }
     s_diag.suspCustom++;
     Saved sv;
