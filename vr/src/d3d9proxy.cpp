@@ -3109,18 +3109,26 @@ public:
                     }
                     // Unobservable resources retain the conservative per-draw fallback.
                     if (!ObserveDriverBuffer(vb)) s_driverStreams.Invalidate(vb);
-                    const auto* source=required ? s_driverStreams.Get(vb,0,1,desc.Size,desc.Size,
+                    const auto* source=required ? s_driverStreams.Get(vb,offset,stride,required,required,
                         [&](std::vector<unsigned char>& bytes) {
                             TraceDetailScope readbackTiming(TRACE_DRIVER_READBACK);
                             void* locked=nullptr;
-                            // Preserve the original whole-buffer lock behavior. Bounded
-                            // per-draw copies below touch CPU memory only, never the GPU.
-                            if(FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) return false;
-                            if (locked) bytes.assign((unsigned char*)locked,(unsigned char*)locked+desc.Size);
-                            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
+                            // Read only the prefix this draw can address. Some default-pool streams
+                            // reject a partial lock; fall back to the whole buffer there.
+                            if (SUCCEEDED(vb->Lock(offset,(UINT)required,&locked,D3DLOCK_READONLY)) && locked) {
+                                bytes.assign((unsigned char*)locked,(unsigned char*)locked+required);
+                                return SUCCEEDED(vb->Unlock()) != 0;
+                            }
+                            locked = nullptr;
+                            if (FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY)) || !locked) return false;
+                            const size_t available = desc.Size;
+                            if (offset + required <= available)
+                                bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+offset+required);
+                            const bool ok = SUCCEEDED(vb->Unlock()) != 0;
+                            return ok && bytes.size()==required;
                         }) : nullptr;
                     if(required && source) {
-                        std::vector<unsigned char> copy(source->begin()+offset,source->begin()+offset+required);
+                        std::vector<unsigned char> copy(source->begin(),source->begin()+required);
                         bool repaired=uv>=0 && Cockpit_RepairSkinUV(s_curIndices,start,count,base,stride,uv,copy.data(),copy.size());
                         bool posed=Cockpit_HasMarkedArmDraw(s_curIndices) &&
                             Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size());
