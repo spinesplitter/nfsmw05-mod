@@ -3,9 +3,10 @@
 #include <utility>
 #include <vector>
 
-// CPU snapshot lifetime is one frame, with explicit write/release invalidation.
-// Never cache a partial
-// prefix: a later split draw must not introduce another GPU readback.
+// CPU snapshot lifetime is driven by explicit write/release invalidation: the driver and mirror
+// streams are rest-pose geometry the game only rewrites through the hooked buffer, so a snapshot
+// stays valid until that buffer is written or released. Never cache a partial prefix: a later split
+// draw must not introduce another GPU readback.
 class DriverStreamCache {
     struct Snapshot {
         void* buffer;
@@ -21,6 +22,7 @@ public:
 private:
     Stats stats_;
     unsigned generation_ = 0;
+    static const size_t kMaxSnapshots = 16;   // a live stream per car/glass buffer, with headroom
 public:
     const Stats& GetStats() const { return stats_; }
     void ResetStats() { stats_ = Stats{}; }
@@ -59,6 +61,10 @@ public:
             return nullptr;
         }
         stats_.bytes += snapshot.bytes.size();
+        if (snapshots_.size() >= kMaxSnapshots) {
+            snapshots_.erase(snapshots_.begin());
+            ++generation_;
+        }
         snapshots_.push_back(std::move(snapshot));
         return &snapshots_.back().bytes;
     }

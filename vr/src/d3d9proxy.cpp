@@ -2380,8 +2380,9 @@ static unsigned s_eyeDrawsAtBegin[2];
 #include "driver_stream_range.h"
 
 void D3D_EyePassBegin(int eye) {
-    // -1 is bookkeeping between eyes, not a frame boundary.
-    s_driverStreams.BeginEye(eye);
+    // -1 is bookkeeping between eyes, not a frame boundary. The stream snapshots are not cleared
+    // here: they stay valid until the game writes/releases the buffer (driver_stream_cache.h), so
+    // the rest-pose driver is read back once per car, not once per frame.
     s_tallyEye = eye;
     if (eye >= 0 && eye < 2) {
         s_eyeDrawsAtBegin[eye] = s_eyeDrawCalls[eye];
@@ -2788,7 +2789,6 @@ static void OnPresent() {
         s_mirrorSnapshotFallbacks = 0;
         snapshotFrames = 0;
     }
-    s_driverStreams.Clear();
     RaiseRenderPriority();
     if (KeyPressed(g_cfg.keySpectator)) {
         Spectator_CycleMode();
