@@ -454,8 +454,6 @@ bool SplitPlayerDepth(void* view, bool player = true, bool validateOnly = false)
 }
 
 void* __stdcall hkWorldViewProjMultiply(void* out, const void* local, const void* viewProj) {
-    // This runs for each queued draw before it is drawn; opponents have their own matrices.
-    D3D_SetPlayerCarDraw(local && Cockpit_IsPlayerCarMatrix(local));
     if (s_depthSplit && viewProj && local) {
         for (int k = 0; k < s_carViewProjCount; k++)
             if (viewProj == s_carViewProjFor[k] && Cockpit_IsPlayerCarMatrix(local)) {
@@ -612,6 +610,8 @@ bool s_stableView = false;
 M4 s_eyeView, s_seatView;
 
 void* __stdcall hkWorldViewMultiply(void* out, const void* local, const void* view) {
+    // Sticky: parts of one car can be drawn back to back without another car's matrix between them.
+    D3D_SetPlayerCarDraw(local && Cockpit_IsPlayerCarMatrix(local));
     if (s_stableView && view && !memcmp(view, &s_eyeView, sizeof(s_eyeView))) view = &s_seatView;
     return ((MatrixMultiply_t)kMatrixMultiply)(out, local, view);
 }

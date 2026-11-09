@@ -546,9 +546,9 @@ void D3D_SuppressMirrorGlass(void* indexBuffer) {
     if (indexBuffer) s_suppressedMirrorGlass.insert(indexBuffer);
 }
 
-// The manual mirror's triangles must not draw under the mirror picture. The model resources are
-// shared with opponents, so the game's index buffer cannot be edited: a private copy with those
-// triangles made zero-area is bound only while the player's own car is drawn.
+// The manual mirror's triangles must not draw under the mirror picture. The game's index buffer is
+// not edited: a private copy with only those triangles made zero-area is bound while the player's
+// own car draws that marked model, so normal mirrors and opponents keep their glass.
 static bool s_playerCarDraw = false;
 void D3D_SetPlayerCarDraw(bool on) { s_playerCarDraw = on; }
 
@@ -847,8 +847,7 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
 // on sampler 1) is the rear view for this draw.
 static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts,
                                   UINT start, UINT count, HRESULT* hr) {
-    if (s_glassJobs.empty() || !s_mirrorTex || !s_playerCarDraw || s_suppressedMirrorGlass.count(s_curIndices))
-        return false;
+    if (s_glassJobs.empty() || !s_mirrorTex || s_suppressedMirrorGlass.count(s_curIndices)) return false;
     auto jobs = s_glassJobsByIb.find(s_curIndices);
     if (jobs == s_glassJobsByIb.end()) return false;
     for (size_t i : jobs->second) {
@@ -1198,7 +1197,7 @@ static bool DrawingPlayerView() {
 }
 
 static void AfterModelDraw() {
-    if (!s_mirrorEye || !s_playerCarDraw || s_pendingMirrors.empty()) return;
+    if (!s_mirrorEye || s_pendingMirrors.empty()) return;
     bool checked = false, playerView = false;
     for (PendingMirror& m : s_pendingMirrors) {
         if (m.ib != s_curIndices) continue;
@@ -2984,11 +2983,9 @@ public:
         return real->SetTexture(stage, tex);
     }
     HRESULT STDMETHODCALLTYPE DrawPrimitive(D3DPRIMITIVETYPE type, UINT start, UINT count) override {
-        if (s_dropDraws || s_skipPostPass || s_texHidden) { D3D_SetPlayerCarDraw(false); return D3D_OK; }
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
-        HRESULT hr = real->DrawPrimitive(type, start, count);
-        D3D_SetPlayerCarDraw(false);
-        return hr;
+        return real->DrawPrimitive(type, start, count);
     }
     HRESULT STDMETHODCALLTYPE SetIndices(IDirect3DIndexBuffer9* ib) override {
         s_curIndices = ib;
@@ -3002,10 +2999,10 @@ public:
     }
     HRESULT STDMETHODCALLTYPE DrawIndexedPrimitive(D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts, UINT start,
                                                    UINT count) override {
-        if (s_dropDraws || s_skipPostPass || s_texHidden) { D3D_SetPlayerCarDraw(false); return D3D_OK; }
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
-        // The player car's manual mirrors hide their original triangles in a private index buffer;
-        // the shared model stays intact, so an opponent drawing it keeps its own glass.
+        // A manual mirror's original triangles are hidden in a private copy of that model's index
+        // buffer. Models without manual mirror marks have no copy and are untouched.
         IDirect3DIndexBuffer9* mirrorPatched = nullptr;
         if (s_playerCarDraw && DrawingPlayerView() && g_cfg.mirrors && g_cfg.disableMirrors <= 0.5f &&
             type == D3DPT_TRIANGLELIST && s_curIndices) {
@@ -3020,10 +3017,7 @@ public:
             IDirect3DIndexBuffer9* ib;
             ~RestoreMirrorPatch() { if (ib) dev->SetIndices(ib); }
         } restoreMirrorPatch{real, mirrorPatched ? static_cast<IDirect3DIndexBuffer9*>(s_curIndices) : nullptr};
-        struct ResetPlayerDraw {
-            ~ResetPlayerDraw() { D3D_SetPlayerCarDraw(false); }
-        } resetPlayerDraw;
-        if (s_mirrorsDisabled && type == D3DPT_TRIANGLELIST && s_playerCarDraw && IsMirrorGlassDraw(s_curIndices, start)) {
+        if (s_mirrorsDisabled && type == D3DPT_TRIANGLELIST && IsMirrorGlassDraw(s_curIndices, start)) {
             AfterModelDraw();
             AfterModelDrawDash();
             return D3D_OK;
@@ -3111,20 +3105,16 @@ public:
         return hr;
     }
     HRESULT STDMETHODCALLTYPE DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, CONST void* data, UINT stride) override {
-        if (s_dropDraws || s_skipPostPass || s_texHidden) { D3D_SetPlayerCarDraw(false); return D3D_OK; }
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
-        HRESULT hr = real->DrawPrimitiveUP(type, count, data, stride);
-        D3D_SetPlayerCarDraw(false);
-        return hr;
+        return real->DrawPrimitiveUP(type, count, data, stride);
     }
     HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE type, UINT minIndex, UINT verts, UINT count,
                                                      CONST void* indices, D3DFORMAT fmt, CONST void* data,
                                                      UINT stride) override {
-        if (s_dropDraws || s_skipPostPass || s_texHidden) { D3D_SetPlayerCarDraw(false); return D3D_OK; }
+        if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
-        HRESULT hr = real->DrawIndexedPrimitiveUP(type, minIndex, verts, count, indices, fmt, data, stride);
-        D3D_SetPlayerCarDraw(false);
-        return hr;
+        return real->DrawIndexedPrimitiveUP(type, minIndex, verts, count, indices, fmt, data, stride);
     }
 
     HRESULT STDMETHODCALLTYPE Present(CONST RECT* src, CONST RECT* dst, HWND wnd, CONST RGNDATA* dirty) override {

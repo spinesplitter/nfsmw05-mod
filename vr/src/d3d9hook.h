@@ -68,12 +68,12 @@ void D3D_HideTextures(void* a, void* b, void* c);
 void D3D_SetMirrorsDisabled(bool disabled);
 // A manually selected mirror replaces auto-mapped glass on its solid for this eye.
 void D3D_SuppressMirrorGlass(void* indexBuffer);
-// True while the game's queued draw is the player's own car (from its model matrix in game.cpp).
-// Opponents can share the player's model buffers, so mirror work is limited to this car.
+// Whether the car currently being drawn is the player's own (from its model matrix). Used only to
+// keep the manual-mirror hide off opponents; normal mirror rendering is not gated by it.
 void D3D_SetPlayerCarDraw(bool on);
 // The triangles (three indices each) a manual mirror replaces. They are zero-area only in a private
-// copy of the index buffer used while the player's own car draws; the shared model is untouched, so
-// opponents keep their glass. `generation` rebuilds the copy when the edits change.
+// copy of that marked model's index buffer, and that copy is used only for the player's car.
+// `generation` rebuilds the copy when the edits change.
 void D3D_SetManualMirrorTriangles(void* indexBuffer, const uint16_t* triangles, int triangleCount,
                                   int generation);
 void D3D_SetRearViewTarget(void* surface, float resolutionScale);
