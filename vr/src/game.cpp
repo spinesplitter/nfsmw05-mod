@@ -317,11 +317,12 @@ template <typename T> T& At(void* base, int offset) { return *(T*)((char*)base +
 bool IsPrologueBustedNis() {
     void* nis = *(void**)kNisInstance;
     if (!nis) return false;
-    // NISActivity's INIS sub-object is at +0x4C. Its fields: mNISType +0x310, mSceneHash +0x3A8,
-    // mDDayNIS +0x408 (from the class layout in NISActivity.cpp).
-    int type = At<int>(nis, 0x310 - 0x4C);
-    unsigned scene = At<unsigned>(nis, 0x3A8 - 0x4C);
-    bool dday = At<uint8_t>(nis, 0x408 - 0x4C) != 0;
+    // NISActivity's INIS sub-object is at +0x48 (the constructor stores &this->0x48 in the
+    // singleton). Its fields: mNISType +0x310, mSceneHash +0x3A8, mDDayNIS +0x408.
+    uint8_t* activity = (uint8_t*)nis - 0x48;
+    int type = At<int>(activity, 0x310);
+    unsigned scene = At<unsigned>(activity, 0x3A8);
+    bool dday = At<uint8_t>(activity, 0x408) != 0;
     static const unsigned introDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisDD");
     static const unsigned flyInDD = ((uint32_t(__cdecl*)(const char*))kBStringHash)("IntroNisFlyInDD");
     static void* loggedNis;
