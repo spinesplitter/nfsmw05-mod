@@ -611,7 +611,18 @@ M4 s_eyeView, s_seatView;
 
 void* __stdcall hkWorldViewMultiply(void* out, const void* local, const void* view) {
     // Sticky: parts of one car can be drawn back to back without another car's matrix between them.
-    D3D_SetPlayerCarDraw(local && Cockpit_IsPlayerCarMatrix(local));
+    // The player-car test is a scan of the eye's queued matrices (up to 64) on every draw; repeat
+    // results for the same matrix pointer while that set is unchanged (it only grows during an eye).
+    static const void* lastMatrix;
+    static int lastCount = -1;
+    static bool lastPlayer;
+    int count = Cockpit_PlayerCarMatrices();
+    if (local != lastMatrix || count != lastCount) {
+        lastMatrix = local;
+        lastCount = count;
+        lastPlayer = local && Cockpit_IsPlayerCarMatrix(local);
+    }
+    D3D_SetPlayerCarDraw(lastPlayer);
     if (s_stableView && view && !memcmp(view, &s_eyeView, sizeof(s_eyeView))) view = &s_seatView;
     return ((MatrixMultiply_t)kMatrixMultiply)(out, local, view);
 }

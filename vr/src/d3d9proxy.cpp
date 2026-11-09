@@ -781,12 +781,21 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         ++s_mirrorSnapshotFallbacks;
         s_driverStreams.Invalidate(vb);
     }
-    const auto* source = s_driverStreams.Get(vb, 0, 1, desc.Size, desc.Size,
+    // Copy only the stream range this mirror draw maps (the whole buffer only where a part spans
+    // several split draws), never the body's entire vertex buffer.
+    const auto* source = s_driverStreams.Get(vb, range.begin, 1, range.bytes, range.bytes,
         [&](std::vector<unsigned char>& bytes) {
             void* locked = nullptr;
-            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY))) return false;
-            if (locked) bytes.assign((unsigned char*)locked, (unsigned char*)locked + desc.Size);
-            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
+            if (SUCCEEDED(vb->Lock(range.begin, range.bytes, &locked, D3DLOCK_READONLY)) && locked) {
+                bytes.assign((unsigned char*)locked, (unsigned char*)locked + range.bytes);
+                return SUCCEEDED(vb->Unlock()) != 0;
+            }
+            locked = nullptr;
+            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY)) || !locked) return false;
+            if ((size_t)range.begin + range.bytes <= desc.Size)
+                bytes.assign((unsigned char*)locked + range.begin, (unsigned char*)locked + range.begin + range.bytes);
+            const bool ok = SUCCEEDED(vb->Unlock()) != 0;
+            return ok && bytes.size() == range.bytes;
         });
     if (!source) {
         vb->Release();
@@ -807,7 +816,7 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         vb->Release();
         return;
     }
-    memcpy(upload, source->data() + range.begin, range.bytes);
+    memcpy(upload, source->data(), range.bytes);
     uint8_t* buffer = (uint8_t*)upload;
     size_t mappedVerts = 0;
     for (MirrorGlassPart& part : j.parts) {
@@ -861,9 +870,12 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
 // on sampler 1) is the rear view for this draw.
 static bool DrawMirrorGlassNative(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, INT base, UINT minIndex, UINT verts,
                                   UINT start, UINT count, HRESULT* hr) {
-    if (s_glassJobs.empty() || !s_mirrorTex || s_suppressedMirrorGlass.count(s_curIndices)) return false;
+    // The per-IB map is the cheap miss for the city's draws; the suppressed-glass set is only
+    // consulted when this IB actually has a job.
+    if (s_glassJobs.empty() || !s_mirrorTex) return false;
     auto jobs = s_glassJobsByIb.find(s_curIndices);
     if (jobs == s_glassJobsByIb.end()) return false;
+    if (s_suppressedMirrorGlass.count(s_curIndices)) return false;
     for (size_t i : jobs->second) {
         MirrorGlassJob& j = s_glassJobs[i];
         if (j.first != start) continue;
@@ -3052,15 +3064,17 @@ public:
         bool mirrorJobs = s_mirrorEye && (!s_pendingMirrors.empty() || (!s_glassJobs.empty() && s_mirrorTex));
         // Reject city/world IBs before querying RT/depth/backbuffer state. The
         // view query performs COM calls and AddRef/Release on every invocation;
-        // only a registered driver's skin can need the override below.
-        DriverSkinState<IDirect3DDevice9> skinState(real, type == D3DPT_TRIANGLELIST &&
-            Cockpit_IsSkinDraw(s_curIndices,start,count) && DrawingPlayerView());
+        // only a registered driver's skin can need the override below. One map probe and one
+        // view query for both the skin state and the private stream copy.
+        bool driverListed = type == D3DPT_TRIANGLELIST && DrawingPlayerView() &&
+            Cockpit_IsRegisteredDriverDraw(s_curIndices);
+        DriverSkinState<IDirect3DDevice9> skinState(real,
+            driverListed && Cockpit_IsSkinDraw(s_curIndices,start,count));
         bool wheelJobs = s_wheelEye.active && !s_wheelDraws.empty();
         bool dashJobs = (s_colorEye && !s_colorTris.empty()) || (s_dashEye.on && s_dashEye.added && !s_dashEye.drawn);
         // Private stream copy: keep the game's textured/shaded draw, and never mutate its VB.
         std::vector<uint16_t> remapped;
-        if (type == D3DPT_TRIANGLELIST && Cockpit_IsRegisteredDriverDraw(s_curIndices) && DrawingPlayerView() &&
-            Cockpit_DriverDrawWork(s_curIndices,start,count,base,remapped)) {
+        if (driverListed && Cockpit_DriverDrawWork(s_curIndices,start,count,base,remapped)) {
             TraceDetailScope driverTiming(TRACE_DRIVER_DRAW);
             IDirect3DVertexBuffer9* vb = nullptr;
             UINT offset = 0, stride = 0;

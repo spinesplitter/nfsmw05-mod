@@ -288,6 +288,7 @@ struct SolidInfo : SolidIdentity {
     std::vector<int> glassFirsts[2];
     uint32_t indexHash = 0;                         // of the game's index copy, after reordering
     int hashSeen = -1;                              // eye the index hash above was last checked on
+    const EditSet* edits = nullptr;                 // EditsFor(name), kept while the name is unchanged
     // Triangle editor: the solid's triangles (built when needed, again after its indices changed),
     // the hidden ones as applied to the index buffer (id -> winding), and what is drawn black.
     std::vector<TriRef> tris;
@@ -2031,7 +2032,13 @@ void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, con
         if (edits.mirror.count(tri.id))
             replacing.insert(replacing.end(), {tri.v[0], tri.v[1], tri.v[2]});
     // The index copy changes with hides/black marks and model reloads too, not just edit generation.
-    int version = (int)(CurrentHash(info) ^ (uint32_t)s_editsGen);
+    // This runs once per solid per eye; hash the indices once a frame and reuse that for the
+    // second eye (GetSolid may already have filled it in for this frame).
+    if (info.hashSeen != s_hashSerial) {
+        info.indexHash = CurrentHash(info);
+        info.hashSeen = s_hashSerial;
+    }
+    int version = (int)(info.indexHash ^ (uint32_t)s_editsGen);
     D3D_SetManualMirrorTriangles(ib, replacing.data(), (int)(replacing.size() / 3), version);
     bool added = false;
     for (int side = 0; side < 2; side++) {
@@ -2348,6 +2355,13 @@ std::string SolidName(const SolidInfo& info) {
     return name;
 }
 
+// The solid's edits without rebuilding its name string and re-hashing it on every driver draw; the
+// cached pointer stays valid while the solid's name is unchanged (GetSolid rebuilds the info then).
+const EditSet& EditsOf(SolidInfo& info) {
+    if (!info.edits) info.edits = &EditsFor(SolidName(info));
+    return *info.edits;
+}
+
 // The solid's triangles, the hidden ones included (where they were), for picking.
 void BuildTris(uint8_t* solid, SolidInfo& info) {
     info.tris.clear();
@@ -2446,7 +2460,7 @@ bool WriteIndices(const SolidMesh& s, int at, const uint16_t v[3]) {
 // gauge layer doesn't keep to the depth test); applied by difference (newly hidden made (a, b, b),
 // others put back). A model prepared again gets them back first (GetSolid, RestoreAll).
 void ApplyHides(uint8_t* solid, SolidInfo& info) {
-    EditSet& e = EditsFor(SolidName(info));
+    const EditSet& e = EditsOf(info);
     std::set<uint64_t> want;
     for (auto& h : e.hide) want.insert(h.first);
     want.insert(e.black.begin(), e.black.end());
@@ -2493,7 +2507,7 @@ void UpdateBlack(uint8_t* solid, SolidInfo& info) {
     if (!info.blackDirty) return;
     info.blackDirty = false;
     info.black.clear();
-    const EditSet& e = EditsFor(SolidName(info));
+    const EditSet& e = EditsOf(info);
     const std::set<uint64_t>& ids = e.black;
     if (ids.empty()) return;
     SolidMesh s;
@@ -2988,22 +3002,46 @@ bool AutomaticDriverFinger(const Driver& driver, int i) {
     int arms=driver.arms[i], total=driver.body[i]+arms+driver.heads[i];
     return arms>0 && arms*4>=total*3;
 }
+// The same entries are asked for every triangle of every driver draw (three to five passes an eye).
+// The entries' index ranges are fixed for a given driver/mesh, so build them once and scan those.
+struct DriverIndexRange { int begin, end; };
+static std::vector<DriverIndexRange> s_fingerRanges, s_armRanges;
+static const Driver *s_fingerDriver, *s_armDriver;
+static uint8_t *s_fingerEntries, *s_armEntries;
+static int s_fingerN = -1, s_armN = -1;
+
 bool AutomaticDriverFingerIndex(const Driver& driver, uint8_t* entries, int n, int index) {
-    for (int i=1; i<n; ++i) {
-        if (!AutomaticDriverFinger(driver,i)) continue;
-        int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
-        if (index>=begin && index-begin<driver.arms[i]*3) return true;
+    if (&driver != s_fingerDriver || entries != s_fingerEntries || n != s_fingerN) {
+        s_fingerDriver = &driver;
+        s_fingerEntries = entries;
+        s_fingerN = n;
+        s_fingerRanges.clear();
+        for (int i=1; i<n; ++i) {
+            if (!AutomaticDriverFinger(driver,i)) continue;
+            int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
+            s_fingerRanges.push_back({begin, begin + driver.arms[i]*3});
+        }
     }
+    for (const DriverIndexRange& r : s_fingerRanges)
+        if (index>=r.begin && index<r.end) return true;
     return false;
 }
 // Full arm membership is independent of skin-material repair: jacket triangles
 // must retain their original material. Only enable it for a fitted native rig.
 bool AutomaticDriverArmIndex(const Driver& driver, uint8_t* entries, int n, int index) {
     if(!driver.rig.ok) return false;
-    for(int i=0;i<n && i<(int)driver.arms.size() && i<(int)driver.body.size();++i) {
-        int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
-        if(index>=begin && index-begin<driver.arms[i]*3) return true;
+    if (&driver != s_armDriver || entries != s_armEntries || n != s_armN) {
+        s_armDriver = &driver;
+        s_armEntries = entries;
+        s_armN = n;
+        s_armRanges.clear();
+        for(int i=0;i<n && i<(int)driver.arms.size() && i<(int)driver.body.size();++i) {
+            int begin=At<int>(entries+i*kEntrySize,kEntryFirstIndex)+driver.body[i]*3;
+            s_armRanges.push_back({begin, begin + driver.arms[i]*3});
+        }
     }
+    for(const DriverIndexRange& r : s_armRanges)
+        if(index>=r.begin && index<r.end) return true;
     return false;
 }
 
@@ -3014,7 +3052,7 @@ void UpdateShownRuns(uint8_t* solid, SolidInfo& info, Driver* d, bool hideArms, 
     if (d->runsKey == key && d->shownRuns.size() == d->body.size()) return;
     d->runsKey = key;
     d->shownRuns.assign(d->body.size(), {});
-    const EditSet& e = EditsFor(SolidName(info));
+    const EditSet& e = EditsOf(info);
     uint8_t* plat = At<uint8_t*>(solid, kSolidPlat);
     uint8_t* entries = plat ? At<uint8_t*>(plat, kPlatEntries) : nullptr;
     const uint16_t* indices = plat ? At<uint16_t*>(plat, kPlatIndices) : nullptr;
@@ -3186,7 +3224,7 @@ CustomDriver::Controls DriverControls(uint8_t* solid, SolidInfo& info, const flo
     const ControlMarks& picked=ControlMarksFor(solid,info);
     out.hasShifter=picked.shift; out.hasHandbrake=picked.handbrake;
     out.shift=DriverShiftAmount(); out.brake=std::max(0.0f,std::min(1.0f,g_cockpitHandbrake));
-    const EditSet& edits=EditsFor(SolidName(info));
+    const EditSet& edits=EditsOf(info);
     CustomDriver::GateUnselectedControls(out,!edits.shifter.empty(),!edits.handbrake.empty());
     if(picked.shift) out.shifter=local(picked.shifter+V3{DriverShiftTravel(),0,0},matrix);
     if(picked.handbrake) {
@@ -3405,7 +3443,7 @@ bool SubmitControls(uint8_t* entry, uint8_t* solid, const float* matrix,
     if (!solid || !matrix || !DrawingPlayerCar()) return false;
     auto found = s_solids.find(solid);
     if (found == s_solids.end()) return false;
-    const EditSet& edits = EditsFor(SolidName(found->second));
+    const EditSet& edits = EditsOf(found->second);
     if (edits.shifter.empty()) return false;
     SolidMesh mesh;
     if (!ReadMesh(solid, mesh)) return false;
@@ -3446,7 +3484,7 @@ bool SkinParts(uint8_t* entry, uint8_t* solid, std::vector<std::array<uint8_t, k
                std::vector<bool>* skinRuns = nullptr) {
     auto found = s_solids.find(solid);
     if (found == s_solids.end() || !found->second.driver) return false;
-    const auto& edits = EditsFor(SolidName(found->second));
+    const auto& edits = EditsOf(found->second);
     const auto& skin = edits.skin;
     SolidMesh mesh;
     if (!ReadMesh(solid, mesh) || mesh.n < 1) return false;
@@ -3644,7 +3682,7 @@ bool Cockpit_IsSkinDraw(void* ib, unsigned first, unsigned triangles) {
     if (info == s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
         first % 3 || first > (unsigned)mesh.numIndices ||
         triangles > ((unsigned)mesh.numIndices-first)/3) return false;
-    const auto& edits = EditsFor(SolidName(info->second));
+    const auto& edits = EditsOf(info->second);
     for (unsigned t=0; t<triangles; ++t) {
         const uint16_t* v = mesh.indices+first+t*3;
         uint64_t id = TriId(v[0],v[1],v[2]);
@@ -3664,7 +3702,7 @@ bool Cockpit_DriverDrawWork(void* ib, unsigned first, unsigned triangles, int ba
     SolidMesh mesh;
     if (info==s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
         first>(unsigned)mesh.numIndices || triangles>((unsigned)mesh.numIndices-first)/3) return false;
-    const auto& edits=EditsFor(SolidName(info->second));
+    const auto& edits=EditsOf(info->second);
     bool pose=Cockpit_HasMarkedArmDraw(ib), needed=false;
     for (unsigned t=0;t<triangles;++t) {
         const uint16_t* v=mesh.indices+first+t*3;
@@ -3691,7 +3729,7 @@ bool Cockpit_RepairSkinUV(void* ib, unsigned first, unsigned triangles, int base
     SolidMesh mesh;
     if (info==s_solids.end() || !info->second.driver || !ReadMesh(draw->second.solid,mesh) ||
         first>(unsigned)mesh.numIndices || triangles>((unsigned)mesh.numIndices-first)/3) return false;
-    const auto& edits=EditsFor(SolidName(info->second));
+    const auto& edits=EditsOf(info->second);
     std::vector<unsigned char> visited(bytes/stride,0);
     std::vector<unsigned> selected;
     for (unsigned t=0;t<triangles;++t) {
@@ -3787,7 +3825,7 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         triangles > ((unsigned)mesh.numIndices - first) / 3) return false;
     auto info = s_solids.find(draw->second.solid);
     if (info == s_solids.end()) return false;
-    const auto& edits = EditsFor(SolidName(info->second));
+    const auto& edits = EditsOf(info->second);
     const auto& marks = edits.arms;
     auto point = [](const float* p) { return CustomDriver::Point{p[0], p[1], p[2]}; };
     int candidates[2][4];
@@ -4135,7 +4173,16 @@ void Cockpit_Keys() {
     double now = Now();
     float dt = (float)std::min(now - last, 0.1);
     last = now;
-    if (!g_cfg.seat || s_offsetCar.empty() || !GameFocused()) return;
+    if (!g_cfg.seat || s_offsetCar.empty()) return;
+    // GetForegroundWindow + GetWindowThreadProcessId every frame for keys that are mostly idle:
+    // 250 ms of staleness is invisible for a held seat key.
+    static bool focused;
+    static double focusAt;
+    if (now - focusAt > 0.25) {
+        focusAt = now;
+        focused = GameFocused();
+    }
+    if (!focused) return;
     bool reset = Held(g_cfg.keySeatReset) || g_seatInput[3] > 0.5f;
     if (reset) {
         s_offset[0] = s_offset[1] = s_offset[2] = 0;

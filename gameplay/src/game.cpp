@@ -189,7 +189,6 @@ struct {
     bool inputSynced = false;
     uint32_t blows = 0, repairs = 0, hits = 0;
     float heat = 0.0f;          // 0..1, the player engine blows at 1
-    int heatStep = 0;           // last logged quarter of heat
     bool blown = false;         // last seen blown state (log changes)
     bool autoShift = true;      // the game's automatic gearbox drives the player's car
     double simSeen = -1e9;      // last OnTaskSimulate of the player's engine
@@ -199,8 +198,6 @@ struct {
     bool totaled = false;       // the player's car is destroyed (health 0)
     bool totaledBlocked = false;// ... in free roam, and we blocked its controls
     double totaledMsg = 0;      // when the free roam "totaled" message was last shown
-    bool wearLogged = false;    // last logged WearApplies
-    int inputBlocked = -1;      // last logged state of the player's input block (-1 = none yet)
     uint32_t pops = 0;          // DebugPopTires presses seen
     bool popPending = false;    // the menu asked to pop the tires
 } s;
@@ -375,9 +372,7 @@ bool __fastcall Hook_DoShifting(void* ip, void*, int delta) {
         s.lastGear = -100;
         s.forcing = false;
         s.heat = 0.0f;
-        s.heatStep = 0;
         s.menuBlocked = false;
-        s.inputBlocked = -1;
         s.blown = eng && IsBlown(eng);
         if (eng) Log("player engine at %p%s", eng, s.blown ? " (blown)" : "");
         if (eng) Physics_SetCar(VehicleName(eng));
@@ -509,11 +504,20 @@ bool InSpeedBreaker(uint8_t* eng) {
 }
 
 void* PlayerDamageable(uint8_t* eng) {
+    // Called every engine step and every HUD frame; the same engine's interface is the same object.
+    static uint8_t* cachedEng;
+    static void* cached;
+    if (eng != cachedEng) {
+        cachedEng = eng;
+        cached = nullptr;
+    }
+    if (cached) return cached;
     uint8_t* owner = Field<uint8_t*>(eng, kER_Owner);
     void* list = owner ? Field<void*>(owner, 4) : nullptr;
     void* damage = list ? ((IListFind_t)kIListFind)(list, (void*)kIDamageableHandle) : nullptr;
     // Only the racer damage model we know (DamageRacer / DamageVehicle).
-    return damage && Vtbl(damage)[7] == (void*)kDestroy && Vtbl(damage)[4] == (void*)kResetDamageRacer ? damage : nullptr;
+    if (damage && Vtbl(damage)[7] == (void*)kDestroy && Vtbl(damage)[4] == (void*)kResetDamageRacer) cached = damage;
+    return cached;
 }
 
 // The game's handling of a destroyed racer (a GRaceStatus method at 0x5FDE80) reads the race's
@@ -616,7 +620,6 @@ void PlayerEngineStep(uint8_t* eng) {
         else ((Void_t)kRepair)(eng + kER_EngineDamage);
         BlockPlayerInput(eng, false);
         s.heat = 0.0f;
-        s.heatStep = 0;
     }
     if (in.hits != s.hits) {
         s.hits = in.hits;
@@ -633,7 +636,6 @@ void PlayerEngineStep(uint8_t* eng) {
         BlowEngine(eng);
     }
     UpdateTotaled(eng);
-    s.inputBlocked = PlayerInputBlocked(eng) ? 1 : 0;
     bool blown = IsBlown(eng);
     if (blown != s.blown) {
         s.blown = blown;
@@ -690,8 +692,6 @@ void UpdateWear(uint8_t* eng, float dT) {
         loggedNos = nos;
     }
     s.heat = Clamp(s.heat + rate * dT, 0.0f, 1.0f);
-    int step = (int)(s.heat * 4.0f);
-    s.heatStep = step;
     if (s.heat >= 1.0f) BlowEngine(eng);
 }
 
@@ -722,7 +722,6 @@ void __fastcall Hook_Repair(uint8_t* damage) {
         Log("engine: repaired by game (caller %p, was %s, heat %.2f)", __builtin_return_address(0),
             IsBlown(eng) ? "blown" : "ok", s.heat);
         s.heat = 0.0f;
-        s.heatStep = 0;
         s_wearGraceUntil = Now() + kWearGraceAfterReset;
     }
     ((Void_t)kRepair)(damage);

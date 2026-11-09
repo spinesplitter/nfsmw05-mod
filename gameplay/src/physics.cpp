@@ -451,10 +451,17 @@ void __fastcall Hook_SuspSimulate(uint8_t* susp, void*, float dT) {
     uint8_t* iface = (uint8_t*)Game_PlayerInterface((void*)kISuspensionHandle);
     bool player = Owns(susp, iface);
     s_playerSusp = player;
-    if (player) s_suspDT = dT, s_diag.suspSteps++, StartSample(iface);
+    // The telemetry sample is only read by the panel; skip its virtual calls and field reads
+    // while the panel is hidden (the default).
+    bool sample = player && Telemetry_Shown();
+    if (player) {
+        s_suspDT = dT;
+        s_diag.suspSteps++;
+        if (sample) StartSample(iface);
+    }
     if (!player || !g.ok || !g_cfg.physics || Stock()) {
         s_origSusp(susp, dT);
-        if (player) EndSample(iface, dT);
+        if (sample) EndSample(iface, dT);
         s_playerSusp = false;
         return;
     }
@@ -498,7 +505,7 @@ void __fastcall Hook_SuspSimulate(uint8_t* susp, void*, float dT) {
     s_origSusp(susp, dT);
     for (uint8_t*& t : s_latTires) t = nullptr;
     Restore(sv);
-    EndSample(iface, dT);
+    if (sample) EndSample(iface, dT);
     s_playerSusp = false;
 }
 
@@ -834,7 +841,9 @@ void __fastcall Hook_DoAerodynamics(uint8_t* chassis, void*, const uint8_t* stat
     const float* m = (const float*)state;   // rows: right, up, forward, position (4 floats each)
     uint8_t* layout = Field<uint8_t*>(chassis, kCh_Layout);
     if (!Plausible((uintptr_t)layout)) return;
-    SampleBody(state, layout, GameDownforce(state, layout, aero, tunings));
+    // One evaluation for both the telemetry sample and the force below (it has a powf).
+    float gameDown = GameDownforce(state, layout, aero, tunings);
+    if (Telemetry_Shown()) SampleBody(state, layout, gameDown);
     if (!g_cfg.physics) return;
     s_diag.aeroSteps++;
     float mass = *(const float*)(state + kSt_Mass), speed = *(const float*)(state + kSt_Speed);
@@ -861,13 +870,12 @@ void __fastcall Hook_DoAerodynamics(uint8_t* chassis, void*, const uint8_t* stat
     s_diag.gameForce = s_diag.extraForce = 0.0f;
     if (aero <= 0.0f || mass <= 1.0f || speed < 1.0f) return;
     float ground = *(const float*)(state + kSt_Ground);
-    float game = GameDownforce(state, layout, aero, tunings);
-    if (game <= 0.0f) return;
-    s_diag.gameForce = game;
+    if (gameDown <= 0.0f) return;
+    s_diag.gameForce = gameDown;
     float downforce = g_cfg.downforce;
     if (downforce == 1.0f && !g_cfg.downforceSquared) return;
     float shape = g_cfg.downforceSquared ? speed / (g_cfg.downforceMatch / 3.6f) : 1.0f;
-    float f = (downforce * shape - 1.0f) * game;   // + more down, - less (below 0 Downforce: lift)
+    float f = (downforce * shape - 1.0f) * gameDown;   // + more down, - less (below 0 Downforce: lift)
     s_diag.extraForce = f;
     // At the game's aero point: the car's centre of gravity, moved along it by AERO_CG between the
     // axles while a wheel is down.
@@ -1115,20 +1123,23 @@ void __fastcall Hook_DoDrifting(uint8_t* susp, void*, void* state) {
     if (!s_playerSusp) return;
     // The game's throttle, for the diagnostics.
     if (state) s_gas = Clamp(*(const float*)((const uint8_t*)state + kState_Gas), 0.0f, 1.0f);
-    if (uint8_t* aidIface = (uint8_t*)Game_PlayerInterface((void*)kISuspensionHandle)) Aids(susp, aidIface, s_suspDT);
+    // One interface lookup for both the aids and the grip scaling (it is the same list walk).
+    uint8_t* iface = (uint8_t*)Game_PlayerInterface((void*)kISuspensionHandle);
+    if (iface) Aids(susp, iface, s_suspDT);
     if (!g_cfg.physics) return;
     float balance = Clamp(g_cfg.gripBalance + s_char.gripBalance, -0.5f, 0.5f);
     float front = 1.0f + balance, rear = 1.0f - balance, off = g_cfg.offroadGrip;
     // Full RainGrip from a light rain on (intensity 0.3).
     float wet = 1.0f - (1.0f - g_cfg.rainGrip) * std::min(RainIntensity() / 0.3f, 1.0f);
     if (front == 1.0f && rear == 1.0f && off == 1.0f && wet == 1.0f) return;
-    uint8_t* iface = (uint8_t*)Game_PlayerInterface((void*)kISuspensionHandle);
     if (!iface) return;
     for (int i = 0; i < 4; i++) {
         uint8_t* tire = *(uint8_t**)(iface + kSuspIface_Tires + i * 4);
         if (!Plausible((uintptr_t)tire)) continue;
         float k = (i >= 2 ? rear : front) * wet;
-        if (off != 1.0f && OffroadTire(tire)) k *= off;
+        // LooseSurface caches OffroadTire's string scan by the tyre's surface pointer, and the
+        // tyre curve already uses it this step: no second IsBadStringPtrA + word search per wheel.
+        if (off != 1.0f && LooseSurface(i, tire)) k *= off;
         Field<float>(tire, kTire_Traction) *= k;
     }
 }
@@ -1182,7 +1193,16 @@ void Diagnostics(uint8_t* rb) {
 }
 
 void __fastcall Hook_RBBeginFrame(uint8_t* rb, void*, float dT) {
-    bool player = Owns(rb, Game_PlayerInterface((void*)kIRigidBodyHandle));
+    // This runs for every rigid body (traffic, cops, props...). The player's interface list walk
+    // is the same for the whole frame, so resolve it once per owner instead of per body.
+    static void* ownerKey;
+    static uint8_t* ownerIface;
+    void* owner = Game_PlayerInterface(nullptr);
+    if (owner != ownerKey) {
+        ownerKey = owner;
+        ownerIface = owner ? (uint8_t*)Game_PlayerInterface((void*)kIRigidBodyHandle) : nullptr;
+    }
+    bool player = Owns(rb, ownerIface);
     uint8_t* data = player ? RBData(rb) : nullptr;
     if (data) {
         DropIfAsked(data);
@@ -1193,7 +1213,7 @@ void __fastcall Hook_RBBeginFrame(uint8_t* rb, void*, float dT) {
     }
     float k = g_cfg.gravity;
     uint8_t* specs = Field<uint8_t*>(rb, kRB_Specs);
-    if (!g_cfg.physics || k == 1.0f || !specs || !(g_cfg.gravityAll ? Game_PlayerInterface(nullptr) != nullptr : player)) {
+    if (!g_cfg.physics || k == 1.0f || !specs || !(g_cfg.gravityAll ? owner != nullptr : player)) {
         s_origRB(rb, dT);
     } else {
         float& gravity = Field<float>(specs, 0xF0);

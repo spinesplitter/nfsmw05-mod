@@ -217,7 +217,10 @@ void* __fastcall Hook_BuildCostToState(uint8_t* elem, void* edx, void* a, void* 
 }
 
 void __fastcall Hook_RenderObject(void* fe, void* edx, uint8_t* obj) {
-    if (obj && (s_hiddenInfractions.count(obj) || s_hiddenCts.count(obj))) return;
+    // Both hidden sets are usually empty; skip the tree lookups then (frontend draws call this
+    // for every object).
+    if (obj && ((!s_hiddenInfractions.empty() && s_hiddenInfractions.count(obj)) ||
+                (!s_hiddenCts.empty() && s_hiddenCts.count(obj)))) return;
     if (obj && *(int*)(obj + kObjType) == 2) {
         const wchar_t* text = *(const wchar_t**)(obj + kStringText);
         if (text && text[0] == L'E' && wcscmp(text, L"EVENT HANDLER") == 0) return;
@@ -381,10 +384,14 @@ void HandBackToPlayer(void* ai, const char* who) {
 void FreeRoamHandBack(void* ai, bool on, float now) {
     uint8_t* race = *(uint8_t**)kRaceStatus;
     bool roaming = race && *(int*)(race + 0x1960) == 0;
+    // The input snapshot takes the input thread's lock: take it only once the cheap gates passed.
+    if (!(on && roaming && s_start.goAt < 0 && now - s_start.aiSince > kFreeAiGrace)) {
+        s_start.stuckSince = -1;
+        return;
+    }
     InputSnapshot in = Input_Get();
     bool throttle = in.pedalBound[0] && in.pedal[0] > 0.5f;
-    bool stuck = on && roaming && s_start.goAt < 0 && now - s_start.aiSince > kFreeAiGrace && throttle &&
-                 Physics_PlayerSpeed() < kFreeStuckSpeed;
+    bool stuck = throttle && Physics_PlayerSpeed() < kFreeStuckSpeed;
     if (!stuck) {
         s_start.stuckSince = -1;
         return;

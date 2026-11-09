@@ -594,13 +594,15 @@ bool Paused() {
 }
 
 void HideForPause() {
+    // Nothing of the mod's in the HUD: skip the package lookup (called every frame).
+    if (!s.applied || !s.pkg) return;
+    if (!Paused()) return;
     // Only while the meter's HUD package is still loaded (the frontend unloads it; its objects are
     // gone then).
     uint8_t* feng = *(uint8_t**)kFEngInstance;
-    bool alive = s.applied && s.pkg && feng && ((FindPackage_t)kFindPackage)(feng, s.pkgName.c_str()) == s.pkg &&
+    bool alive = feng && ((FindPackage_t)kFindPackage)(feng, s.pkgName.c_str()) == s.pkg &&
                  s.bar && *(uintptr_t*)s.bar == kVtblMultiImage;
-    bool paused = Paused() && alive;
-    if (!paused) return;
+    if (!alive) return;
     if (s.bar) SetColor(s.bar, 0);
     if (s.clone && InList(s.list, s.clone)) SetColor(s.clone, 0);
     for (auto& i : s.icon) SetColor(i.img, 0);
