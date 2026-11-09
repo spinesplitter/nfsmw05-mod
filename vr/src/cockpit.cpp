@@ -2046,13 +2046,28 @@ void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, con
     for (int side = 0; side < 2; side++) {
         std::vector<float> vertices;
         if (!BuildMarkedMirrorVertices(info, edits, matrix, side, vertices)) continue;
-        D3D_AddMirrorOnce(ib, vertices.data(), (int)(vertices.size() / 5), nullptr, 0);
+        // Drawn after every draw entry of this model, not only the first: the marked glass can be a
+        // later entry of it (the Punto's side mirrors), which would otherwise cover the picture with
+        // its own surface at the same depth and z-fight with it.
+        D3D_AddMirror(ib, vertices.data(), (int)(vertices.size() / 5), nullptr, 0);
         added = true;
     }
     if (!info.manualMirrorLogged) {
         info.manualMirrorLogged = true;
-        Log("mirrors: %s: marked triangles %s the lightweight mirror overlay", SolidName(info).c_str(),
-            added ? "are using" : "could not build");
+        // The draw entry the marked glass belongs to: on some cars (the Punto's side mirrors) it is
+        // a later entry of the solid, so the picture must be drawn after every entry, not just the
+        // first, or that entry's surface fights with it at the same depth.
+        std::set<int> glassEntries;
+        for (const TriRef& tri : info.tris)
+            if (edits.mirror.count(tri.id)) glassEntries.insert(tri.entry);
+        std::string entries;
+        for (int e : glassEntries) {
+            char entry[16];
+            snprintf(entry, sizeof(entry), "%s%d", entries.empty() ? "" : ",", e);
+            entries += entry;
+        }
+        Log("mirrors: %s: marked triangles %s the lightweight mirror overlay (draw entries %s)",
+            SolidName(info).c_str(), added ? "are using" : "could not build", entries.c_str());
     }
 }
 

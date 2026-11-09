@@ -80,14 +80,12 @@ void D3D_SetRearViewTarget(void* surface, float resolutionScale);
 
 // Mirrors drawn with the game's models: for the eye about to render, the view and projection it
 // uses and the mirrors' glass (triangles: x, y, z, u, v per vertex, world space), each drawn right
-// after the game's first draw from that index buffer, so the scene's depth hides it where the car
-// does. Set as the cars are submitted, before the queue is drawn.
+// after every draw from that index buffer, so the scene's depth hides it where the car does and a
+// later draw entry of the same model (the glass of some cars) is always drawn under it. Set as the
+// cars are submitted, before the queue is drawn.
 void D3D_BeginMirrorEye(const float* view, const float* proj);
 // `frame` (optional): drawn plain black first, under the image (the housing's rim).
 void D3D_AddMirror(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount);
-// A manual mirror whose original triangles are hidden for the player's car: draw it once per eye
-// instead of after every draw entry of the same index buffer.
-void D3D_AddMirrorOnce(void* indexBuffer, const float* verts, int vertexCount, const float* frame, int frameCount);
 // After the eye: mirrors whose model never came through are drawn now (over the scene), and the
 // rear view surface is copied for the next eye's mirrors.
 void D3D_EndMirrorEye(void* rearViewSurface);
