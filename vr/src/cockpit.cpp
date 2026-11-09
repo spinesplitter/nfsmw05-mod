@@ -1918,6 +1918,29 @@ void GlassOutline(const MirrorGlass& g, std::vector<std::pair<float, float>>& hu
     hull.swap(h);
 }
 
+// A real interior rear view mirror is angled toward the driver. Turn the overlay about
+// its own vertical axis; the stock glass used for hiding stays on its original plane.
+// Model space: +x forward, +y car-left, +z up. 25 degrees is the usual cabin angle.
+constexpr float kRearViewMirrorYaw = 25.0f;
+
+MirrorGlass RearViewMirrorAim(const MirrorGlass& glass, const float head[3], float degrees) {
+    // Turn toward the side the driver sits on (head y is car-left positive).
+    float side = head[1] >= glass.centre.y ? -1.0f : 1.0f;
+    float a = side * degrees * 0.01745329252f;
+    float c = cosf(a), s = sinf(a);
+    auto turn = [&](V3 p) {
+        V3 cross = mirror::Cross(glass.v, p);
+        float d = mirror::Dot(glass.v, p);
+        return V3{p.x * c + cross.x * s + glass.v.x * d * (1 - c),
+                  p.y * c + cross.y * s + glass.v.y * d * (1 - c),
+                  p.z * c + cross.z * s + glass.v.z * d * (1 - c)};
+    };
+    MirrorGlass out = glass;
+    out.normal = mirror::Norm(turn(glass.normal));
+    out.u = mirror::Norm(turn(glass.u));
+    return out;
+}
+
 // The glass's triangles in world space, `lift` metres toward the driver and shrunk by `scale`
 // about the glass's centre, with their place in the glass (0..1 across, 0..1 down) as texture
 // coordinates: x, y, z, u, v per vertex.
@@ -2002,7 +2025,10 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
     // per solid and eye.
     if (info.glass[2].ok && std::find(s_mirrorSolids.begin(), s_mirrorSolids.end(), solid) == s_mirrorSolids.end()) {
         s_mirrorSolids.push_back(solid);
-        const MirrorGlass& glass = info.glass[2];
+        const MirrorGlass& stock = info.glass[2];
+        MirrorGlass glass = stock;
+        if (const HeadPos* head = CarHead(info.name))
+            glass = RearViewMirrorAim(stock, head->v, kRearViewMirrorYaw);
         M4 mat;
         memcpy(&mat, m, sizeof(mat));
         // To be drawn with the model: a dark rim the shape of the glass, and the rear view on the
@@ -2031,7 +2057,7 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
                 for (int t = 0; t < tris; t++) {
                     const uint16_t* tri = mesh.indices + first + t * 3;
                     if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
-                    if (OnGlass(mesh, glass, tri)) hiding.insert(hiding.end(), {tri[0], tri[1], tri[2]});
+                    if (OnGlass(mesh, stock, tri)) hiding.insert(hiding.end(), {tri[0], tri[1], tri[2]});
                 }
             }
             uint32_t version = CurrentHash(info);

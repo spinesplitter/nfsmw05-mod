@@ -829,6 +829,27 @@ static void TestEditsText() {
     Check(!strcmp(kEditKeys[9], "Mirror"), "manual mirror marks have a persisted edit key");
 }
 
+static void TestRearViewMirrorAim() {
+    MirrorGlass stock;
+    stock.centre = {0, 0, 0};
+    stock.normal = {-1, 0, 0};
+    stock.u = {0, -1, 0};
+    stock.v = {0, 0, 1};
+    const float rad = 3.14159265f / 180.0f;
+    float left[3] = {0, .35f, 0};
+    auto l = RearViewMirrorAim(stock, left, 25.0f);
+    Near(l.normal.x, -cosf(25 * rad), "rear mirror keeps its 25 degree tilt");
+    Near(l.normal.y, sinf(25 * rad), "rear mirror faces a left-hand driver");
+    Near(Dot(l.normal, l.v), 0.0f, "rear mirror stays upright");
+    Near(Dot(l.u, l.v), 0.0f, "rear mirror texture basis stays in plane");
+    Near(l.centre.y, stock.centre.y, "rear mirror turns about its own centre");
+    float right[3] = {0, -.35f, 0};
+    auto r = RearViewMirrorAim(stock, right, 25.0f);
+    Near(r.normal.y, -sinf(25 * rad), "rear mirror faces a right-hand driver");
+    auto none = RearViewMirrorAim(stock, left, 0.0f);
+    Near(none.normal.y, 0.0f, "zero angle leaves the mirror straight back");
+}
+
 static void TestMarkedMirrorGeometry() {
     SolidInfo info;
     TriRef left{};
@@ -917,6 +938,7 @@ int main() {
     TestWheelPositionSave();
     TestDash();
     TestEditsText();
+    TestRearViewMirrorAim();
     TestMarkedMirrorGeometry();
     TestLevelUpsideDown();
     TestMirrorGlass();
