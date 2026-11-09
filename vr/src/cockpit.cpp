@@ -2497,9 +2497,11 @@ bool BuildMarkedMirrorVertices(const SolidInfo& info, const EditSet& edits, cons
     out.reserve(triangles.size() * 15);
     for (const TriRef* tri : triangles)
         for (const V3& p : tri->p) {
-            // In the surface being replaced: the opaque, depth-biased picture covers the original
-            // texture from the same vertices instead of floating 8 mm ahead of the housing.
-            V3 world = ToWorld(p, matrix);
+            // Just over the surface being replaced: the original triangles are hidden in the
+            // player's draw copy, and this small stand-off keeps the picture's edge from meeting
+            // the housing's border (its inner wall slopes forward from the glass edge) in depth.
+            V3 q = {p.x + normal.x * 0.002f, p.y + normal.y * 0.002f, p.z + normal.z * 0.002f};
+            V3 world = ToWorld(q, matrix);
             float across = (mirror::Dot(p, u) - minU) / (maxU - minU);
             float down = (maxV - mirror::Dot(p, v)) / (maxV - minV);
             out.insert(out.end(), {world.x, world.y, world.z, rearU0 + (rearU1 - rearU0) * across, down});

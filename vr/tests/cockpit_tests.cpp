@@ -840,7 +840,7 @@ static void TestMarkedMirrorGeometry() {
     float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     Check(BuildMarkedMirrorVertices(info, edits, identity, 0, vertices), "marked side glass builds");
     Check(vertices.size() == 15, "manual mirror preserves selected triangle geometry");
-    Near(vertices[0], 0.0f, "mirror sits on the replaced triangles");
+    Near(vertices[0], -0.002f, "mirror sits just over the replaced triangles");
     Near(vertices[3], 1.0f, "left mirror maps the outer glass edge to rear-view high-u");
     Near(vertices[8], 0.4f, "left mirror maps the inner glass edge to its crop");
     Near(vertices[14], 0.0f, "top edge maps to rear-view top");
