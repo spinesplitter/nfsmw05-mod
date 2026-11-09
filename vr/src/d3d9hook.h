@@ -112,6 +112,9 @@ void D3D_AddCustomDriver(void* indexBuffer, const float* world, const CustomDriv
 // depth (black triangles of the triangle editor, the car's own gauges), translucent ones don't
 // (the editor's highlight). One batch per index buffer and colour per eye.
 void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32_t argb);
+// Triangles (xyz per vertex, world) with one UV pair per vertex, drawn with the glass rain droplet
+// texture blended over the game's draw (same timing and depth bias as D3D_AddColorTris).
+void D3D_AddTexturedTris(void* indexBuffer, const float* xyz, const float* uv, int triangles, uint32_t argb);
 // Triangles (world) drawn over the finished eye right away, without depth test, in one colour.
 void D3D_DrawOverlay(const float* xyz, int triangles, uint32_t argb);
 // Camera-facing thick lines (6 floats per line: start xyz, end xyz) and dots (3 floats each), drawn

@@ -50,6 +50,7 @@
 float g_steeringWheelAngle = 0.0f;
 float g_seatInput[4] = {};
 float g_cockpitHandbrake = 0, g_cockpitShiftUp = 0, g_cockpitShiftDown = 0;
+float GameRainIntensity();
 
 namespace {
 
@@ -2046,13 +2047,12 @@ void NoteMirrors(uint8_t* solid, SolidInfo& info, const float* m) {
 V3 ToWorld(const V3& p, const float* m);
 
 void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
-    if (g_cfg.glassOpacity <= 0.001f) return;
     if (!s_windowOverlaySolids.insert(solid).second) return;
     SolidMesh mesh;
     if (!ReadMesh(solid, mesh)) return;
     void* ib = At<void*>(At<uint8_t*>(solid, kSolidPlat), kPlatIndexBuffer);
     if (!ib) return;
-    std::vector<float> xyz;
+    std::vector<float> xyz, uv;
     for (int i = 0; i < mesh.n; i++) {
         uint8_t* e = mesh.entries + i * kEntrySize;
         int tris = At<int>(e, kEntryTris), first = At<int>(e, kEntryFirstIndex);
@@ -2061,17 +2061,43 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
             const uint16_t* tri = mesh.indices + first + t * 3;
             if (tri[0] >= mesh.numVerts || tri[1] >= mesh.numVerts || tri[2] >= mesh.numVerts) continue;
             if (info.hidden.count(TriId(tri[0], tri[1], tri[2]))) continue;
+            V3 p0 = mesh.at(tri[0]), p1 = mesh.at(tri[1]), p2 = mesh.at(tri[2]);
+            V3 n = Cross(Sub(p1, p0), Sub(p2, p0));
+            float ax = fabsf(n.x), ay = fabsf(n.y), az = fabsf(n.z);
             for (int k = 0; k < 3; k++) {
-                V3 w = ToWorld(mesh.at(tri[k]), m);
+                V3 p = mesh.at(tri[k]);
+                V3 w = ToWorld(p, m);
                 xyz.push_back(w.x);
                 xyz.push_back(w.y);
                 xyz.push_back(w.z);
+                // Model space keeps the droplet pattern stuck to the glass; the largest normal
+                // axis picks the two coordinates that lie across the pane.
+                float u, v;
+                if (ax >= ay && ax >= az) {
+                    u = p.z; v = -p.y;
+                } else if (ay >= az) {
+                    u = p.x; v = -p.z;
+                } else {
+                    u = p.x; v = -p.y;
+                }
+                uv.push_back(u * 0.8f);
+                uv.push_back(v * 0.8f);
             }
         }
     }
     if (xyz.empty()) return;
-    const int alpha = (int)(g_cfg.glassOpacity * 255.0f + 0.5f);
-    D3D_AddColorTris(ib, xyz.data(), (int)(xyz.size() / 9), D3DCOLOR_ARGB(alpha, 18, 20, 24));
+    const int tris = (int)(xyz.size() / 9);
+    if (g_cfg.glassOpacity > 0.001f) {
+        const int alpha = (int)(g_cfg.glassOpacity * 255.0f + 0.5f);
+        D3D_AddColorTris(ib, xyz.data(), tris, D3DCOLOR_ARGB(alpha, 18, 20, 24));
+    }
+    float rain = GameRainIntensity();
+    if (rain > 1.0f) rain = 1.0f;
+    if (rain > 0.02f && g_cfg.glassRain > 0.001f && !uv.empty()) {
+        int alpha = (int)(g_cfg.glassRain * rain * 220.0f + 0.5f);
+        if (alpha > 255) alpha = 255;
+        D3D_AddTexturedTris(ib, xyz.data(), uv.data(), tris, D3DCOLOR_ARGB(alpha, 255, 255, 255));
+    }
 }
 
 void NoteMarkedMirrors(uint8_t* solid, SolidInfo& info, const float* matrix, const EditSet& edits) {

@@ -222,6 +222,20 @@ static void ReleaseSavedState() {
     s_savedStateTried = false;
 }
 
+// The player car's glass materials: the generic environment cube (instead of the ugly world
+// reflection) and the rain droplet overlay texture.
+static IDirect3DCubeTexture9* s_genericEnv;
+static IDirect3DTexture9* s_genericEnv2D;
+static IDirect3DTexture9* s_dropletTex;
+static void ReleaseGlassMaterials() {
+    if (s_genericEnv) s_genericEnv->Release();
+    s_genericEnv = nullptr;
+    if (s_genericEnv2D) s_genericEnv2D->Release();
+    s_genericEnv2D = nullptr;
+    if (s_dropletTex) s_dropletTex->Release();
+    s_dropletTex = nullptr;
+}
+
 static void ReleaseEyeTargets() {
     if (s_glassStream) s_glassStream->Release();
     s_glassStream = nullptr;
@@ -244,6 +258,7 @@ static void ReleaseEyeTargets() {
     s_mirrorTex = s_mirrorRaw = nullptr;
     s_mirrorW = s_mirrorH = 0;
     ReleaseDash();
+    ReleaseGlassMaterials();
     ReleaseSavedState();
     ReleaseCustomDriver();
     s_eyeW = s_eyeH = 0;
@@ -365,6 +380,191 @@ static IDirect3DPixelShader9* Shader(LazyShader& sh) {
     if (code) code->Release();
     if (errors) errors->Release();
     return sh.ps;
+}
+
+static float Sat(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
+
+// A generic environment cube for the player car's glass: a soft sky/horizon/sun gradient instead of
+// the game's real-time world reflection (which is low resolution and warps badly on the windows).
+// The car shader still samples it with its own reflection vector, so it moves with the car and head.
+static IDirect3DCubeTexture9* GenericGlassEnv() {
+    static ULONGLONG updated;
+    static float intensity = -1.0f;
+    ULONGLONG now = GetTickCount64();
+    if (s_genericEnv && now - updated < 500 && fabsf(intensity - g_cfg.glassReflection) < 0.01f)
+        return s_genericEnv;
+    if (!s_dev) return nullptr;
+    if (!s_genericEnv &&
+        FAILED(s_dev->CreateCubeTexture(128, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
+                                        &s_genericEnv, nullptr))) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: generic glass reflection cube could not be created");
+        }
+        s_genericEnv = nullptr;
+        return nullptr;
+    }
+    const int n = 128;
+    float phase = (float)(now * 0.00005);
+    float k = Sat(g_cfg.glassReflection);
+    for (int face = 0; face < 6; face++) {
+        D3DLOCKED_RECT lr;
+        if (FAILED(s_genericEnv->LockRect((D3DCUBEMAP_FACES)face, 0, &lr, nullptr, D3DLOCK_DISCARD))) continue;
+        for (int y = 0; y < n; y++) {
+            for (int x = 0; x < n; x++) {
+                float u = (x + 0.5f) / n * 2.0f - 1.0f, v = (y + 0.5f) / n * 2.0f - 1.0f;
+                float d[3];
+                switch (face) {
+                    case D3DCUBEMAP_FACE_POSITIVE_X: d[0] = 1; d[1] = -v; d[2] = -u; break;
+                    case D3DCUBEMAP_FACE_NEGATIVE_X: d[0] = -1; d[1] = -v; d[2] = u; break;
+                    case D3DCUBEMAP_FACE_POSITIVE_Y: d[0] = u; d[1] = 1; d[2] = v; break;
+                    case D3DCUBEMAP_FACE_NEGATIVE_Y: d[0] = u; d[1] = -1; d[2] = -v; break;
+                    case D3DCUBEMAP_FACE_POSITIVE_Z: d[0] = u; d[1] = -v; d[2] = 1; break;
+                    default: d[0] = -u; d[1] = -v; d[2] = -1; break;
+                }
+                float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (len < 1e-5f) len = 1.0f;
+                d[0] /= len; d[1] /= len; d[2] /= len;
+                float up = Sat(d[1] * 0.5f + 0.5f);
+                float horizon = expf(-fabsf(d[1]) * 7.0f);
+                float sky = powf(up, 0.7f);
+                float r = 0.07f + 0.35f * sky + 0.18f * horizon;
+                float g = 0.09f + 0.45f * sky + 0.16f * horizon;
+                float b = 0.13f + 0.62f * sky + 0.12f * horizon;
+                float sun = powf(Sat(d[0] * 0.35f + d[1] * 0.5f - d[2] * 0.79f), 18.0f);
+                r += sun * 0.65f; g += sun * 0.55f; b += sun * 0.35f;
+                float cloud = sinf(d[0] * 7.0f + phase) * sinf(d[2] * 6.5f - phase * 0.7f) * 0.06f * up;
+                r = Sat((r + cloud) * k);
+                g = Sat((g + cloud) * k);
+                b = Sat((b + cloud * 1.1f) * k);
+                ((DWORD*)lr.pBits)[y * (lr.Pitch / 4) + x] =
+                    D3DCOLOR_ARGB(255, (int)(r * 255.0f + 0.5f), (int)(g * 255.0f + 0.5f), (int)(b * 255.0f + 0.5f));
+            }
+        }
+        s_genericEnv->UnlockRect((D3DCUBEMAP_FACES)face, 0);
+    }
+    updated = now;
+    intensity = g_cfg.glassReflection;
+    return s_genericEnv;
+}
+
+// The same generic reflection as a 2D texture, in case a car shader's environment slot is a plain
+// texture rather than a cube.
+static IDirect3DTexture9* GenericGlassEnv2D() {
+    static float intensity = -1.0f;
+    if (s_genericEnv2D && fabsf(intensity - g_cfg.glassReflection) < 0.01f) return s_genericEnv2D;
+    if (!s_dev) return nullptr;
+    const int n = 256;
+    if (!s_genericEnv2D &&
+        FAILED(s_dev->CreateTexture(n, n, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &s_genericEnv2D,
+                                    nullptr))) {
+        s_genericEnv2D = nullptr;
+        return nullptr;
+    }
+    D3DLOCKED_RECT lr;
+    if (FAILED(s_genericEnv2D->LockRect(0, &lr, nullptr, D3DLOCK_DISCARD))) {
+        s_genericEnv2D->Release();
+        s_genericEnv2D = nullptr;
+        return nullptr;
+    }
+    float k = Sat(g_cfg.glassReflection);
+    for (int y = 0; y < n; y++) {
+        float v = (y + 0.5f) / n;
+        for (int x = 0; x < n; x++) {
+            float u = (x + 0.5f) / n;
+            float up = 1.0f - v;
+            float horizon = expf(-fabsf(v - 0.55f) * 12.0f);
+            float sky = powf(Sat(up), 0.7f);
+            float r = 0.07f + 0.35f * sky + 0.18f * horizon;
+            float g = 0.09f + 0.45f * sky + 0.16f * horizon;
+            float b = 0.13f + 0.62f * sky + 0.12f * horizon;
+            float du = u - 0.62f, dv = v - 0.24f;
+            float sun = expf(-(du * du * 90.0f + dv * dv * 140.0f));
+            r += sun * 0.7f; g += sun * 0.6f; b += sun * 0.4f;
+            float cloud = sinf(u * 22.0f) * sinf(v * 17.0f) * 0.05f * sky;
+            r = Sat((r + cloud) * k);
+            g = Sat((g + cloud) * k);
+            b = Sat((b + cloud * 1.1f) * k);
+            ((DWORD*)((unsigned char*)lr.pBits + y * lr.Pitch))[x] =
+                D3DCOLOR_ARGB(255, (int)(r * 255.0f + 0.5f), (int)(g * 255.0f + 0.5f), (int)(b * 255.0f + 0.5f));
+        }
+    }
+    s_genericEnv2D->UnlockRect(0);
+    intensity = g_cfg.glassReflection;
+    return s_genericEnv2D;
+}
+
+// Rain droplets for the car's glass: a small tileable texture of soft, bright drops. It is drawn
+// over the window triangles by D3D_AddTexturedTris, not over the camera.
+static IDirect3DTexture9* GlassDroplets() {
+    if (s_dropletTex) return s_dropletTex;
+    if (!s_dev) return nullptr;
+    const int n = 256;
+    if (FAILED(s_dev->CreateTexture(n, n, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &s_dropletTex,
+                                    nullptr))) {
+        static bool logged;
+        if (!logged) {
+            logged = true;
+            Log("d3d9: glass rain droplet texture could not be created");
+        }
+        s_dropletTex = nullptr;
+        return nullptr;
+    }
+    D3DLOCKED_RECT lr;
+    if (FAILED(s_dropletTex->LockRect(0, &lr, nullptr, D3DLOCK_DISCARD))) {
+        s_dropletTex->Release();
+        s_dropletTex = nullptr;
+        return nullptr;
+    }
+    for (int y = 0; y < n; y++)
+        memset((unsigned char*)lr.pBits + y * lr.Pitch, 0, (size_t)n * 4);
+    unsigned seed = 0x9E3779B9u;
+    auto rnd = [&]() {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        return seed;
+    };
+    for (int i = 0; i < 240; i++) {
+        float cx = (rnd() & 0xFFFF) / 65535.0f * n;
+        float cy = (rnd() & 0xFFFF) / 65535.0f * n;
+        float radius = 1.2f + (rnd() & 0xFF) / 255.0f * 3.6f;
+        for (int oy = -1; oy <= 1; oy++) {
+            for (int ox = -1; ox <= 1; ox++) {
+                float bx = cx + ox * n, by = cy + oy * n;
+                int x0 = (int)floorf(bx - radius), x1 = (int)ceilf(bx + radius);
+                int y0 = (int)floorf(by - radius), y1 = (int)ceilf(by + radius);
+                for (int py = y0; py <= y1; py++) {
+                    if (py < 0 || py >= n) continue;
+                    for (int px = x0; px <= x1; px++) {
+                        if (px < 0 || px >= n) continue;
+                        float dx = px + 0.5f - bx, dy = py + 0.5f - by;
+                        float dist = sqrtf(dx * dx + dy * dy);
+                        if (dist > radius) continue;
+                        float edge = 1.0f - dist / radius;
+                        float highlight = expf(-((dx + radius * 0.35f) * (dx + radius * 0.35f) +
+                                                 (dy + radius * 0.35f) * (dy + radius * 0.35f)) /
+                                               (radius * radius * 0.18f));
+                        int a = (int)(edge * edge * 185.0f + highlight * 55.0f);
+                        if (a > 230) a = 230;
+                        if (a <= 0) continue;
+                        DWORD* dst = (DWORD*)((unsigned char*)lr.pBits + py * lr.Pitch) + px;
+                        int r = 165 + (int)(highlight * 80.0f);
+                        int g = 185 + (int)(highlight * 65.0f);
+                        int b = 210 + (int)(highlight * 45.0f);
+                        int oldA = (int)((*dst >> 24) & 0xFF);
+                        if (a > oldA) *dst = D3DCOLOR_ARGB(a, r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b);
+                    }
+                }
+            }
+        }
+    }
+    s_dropletTex->UnlockRect(0);
+    static bool logged;
+    if (!logged) {
+        logged = true;
+        Log("d3d9: glass rain droplets ready (overlay on the player car's windows)");
+    }
+    return s_dropletTex;
 }
 
 // The mirror picture's brightness and contrast (c0.x contrast, c0.y brightness).
@@ -1568,6 +1768,7 @@ static bool s_dashThisFrame;                   // a panel was drawn in an eye th
 struct ColorTris {
     void* ib;
     std::vector<float> xyz;
+    std::vector<float> uv;      // empty: solid colour; else one (u, v) per vertex
     D3DCOLOR color;
     bool drawn;
 };
@@ -1644,6 +1845,21 @@ void D3D_AddColorTris(void* indexBuffer, const float* xyz, int triangles, uint32
     ColorTris c;
     c.ib = indexBuffer;
     c.xyz.assign(xyz, xyz + triangles * 9);
+    c.color = argb;
+    c.drawn = false;
+    s_colorTris.push_back(std::move(c));
+    matching.push_back(s_colorTris.size() - 1);
+}
+
+void D3D_AddTexturedTris(void* indexBuffer, const float* xyz, const float* uv, int triangles, uint32_t argb) {
+    if (!s_colorEye || !indexBuffer || !xyz || !uv || triangles <= 0) return;
+    auto& matching = s_colorTrisByIb[indexBuffer];
+    for (size_t i : matching)
+        if (!s_colorTris[i].uv.empty() && s_colorTris[i].color == argb) return;
+    ColorTris c;
+    c.ib = indexBuffer;
+    c.xyz.assign(xyz, xyz + triangles * 9);
+    c.uv.assign(uv, uv + triangles * 6);
     c.color = argb;
     c.drawn = false;
     s_colorTris.push_back(std::move(c));
@@ -2090,19 +2306,54 @@ static void ResetCustomDriverEye() {
     s_customDriverDrawn = false;
 }
 
+static void SetDropletOverlay(D3DCOLOR argb, IDirect3DTexture9* tex) {
+    s_dev->SetTexture(0, tex);
+    s_dev->SetRenderState(D3DRS_TEXTUREFACTOR, argb);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    s_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    s_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+    s_dev->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+}
+
 static void DrawColorTris(ColorTris& c) {
     IDirect3DStateBlock9* saved = SavedStateBlock();
     if (!saved) return;
     saved->Capture();
     SetPanelState(s_dashEye.view, s_dashEye.proj);
-    SetColor(c.color);
+    IDirect3DTexture9* droplets = c.uv.empty() ? nullptr : GlassDroplets();
+    if (droplets)
+        SetDropletOverlay(c.color, droplets);
+    else
+        SetColor(c.color);
     // Drawn over the game's own triangles: pulled toward the eye in depth too (decal bias), so the
     // two never fight.
     float bias = -0.00005f, slope = -1.0f;
     s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
     s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, *(DWORD*)&slope);
-    s_dev->SetFVF(D3DFVF_XYZ);
-    s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(c.xyz.size() / 9), c.xyz.data(), 3 * sizeof(float));
+    if (droplets) {
+        std::vector<float> verts;
+        verts.reserve(c.xyz.size() / 3 * 5);
+        for (size_t i = 0, n = c.xyz.size() / 3; i < n; i++) {
+            verts.push_back(c.xyz[i * 3 + 0]);
+            verts.push_back(c.xyz[i * 3 + 1]);
+            verts.push_back(c.xyz[i * 3 + 2]);
+            verts.push_back(c.uv[i * 2 + 0]);
+            verts.push_back(c.uv[i * 2 + 1]);
+        }
+        s_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
+        s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(verts.size() / 15), verts.data(), 5 * sizeof(float));
+    } else {
+        s_dev->SetFVF(D3DFVF_XYZ);
+        s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(c.xyz.size() / 9), c.xyz.data(), 3 * sizeof(float));
+    }
     saved->Apply();
 }
 
@@ -3138,6 +3389,48 @@ public:
             DWORD mode;
             ~RestoreCull() { if (dev) dev->SetRenderState(D3DRS_CULLMODE, mode); }
         } restoreCull{twoSidedGlass ? real : nullptr, oldCull};
+        // The car shader's environment cube (sampler 1, stage 1) is the real-time world reflection,
+        // which is ugly on the windows. Bind the generic sky cube for the window draws instead; the
+        // shader still samples it with its own reflection vector, so it moves with the car and head.
+        IDirect3DBaseTexture9* oldGlassEnv[4] = {};
+        bool glassEnvReplaced = false;
+        if (twoSidedGlass) {
+            IDirect3DCubeTexture9* generic = GenericGlassEnv();
+            IDirect3DTexture9* generic2D = GenericGlassEnv2D();
+            for (DWORD st = 0; st < 4; st++) {
+                real->GetTexture(st, &oldGlassEnv[st]);
+                if (oldGlassEnv[st] && oldGlassEnv[st]->GetType() == D3DRTYPE_CUBETEXTURE && generic) {
+                    real->SetTexture(st, generic);
+                    glassEnvReplaced = true;
+                } else if (st == 1 && oldGlassEnv[st] && oldGlassEnv[st]->GetType() == D3DRTYPE_TEXTURE && generic2D) {
+                    real->SetTexture(st, generic2D);
+                    glassEnvReplaced = true;
+                }
+            }
+            {
+                static bool logged;
+                if (!logged) {
+                    logged = true;
+                    for (DWORD st = 0; st < 4; st++)
+                        if (oldGlassEnv[st])
+                            Log("d3d9: car glass stage %lu texture %s", st,
+                                oldGlassEnv[st]->GetType() == D3DRTYPE_CUBETEXTURE ? "cube (world reflection)" : "2D");
+                    if (glassEnvReplaced) Log("d3d9: car glass world reflection replaced with the generic sky");
+                }
+            }
+        }
+        struct RestoreGlassEnv {
+            IDirect3DDevice9Ex* dev;
+            IDirect3DBaseTexture9** textures;
+            bool restore;
+            ~RestoreGlassEnv() {
+                if (restore && dev)
+                    for (DWORD st = 0; st < 4; st++)
+                        if (textures[st]) dev->SetTexture(st, textures[st]);
+                for (DWORD st = 0; st < 4; st++)
+                    if (textures[st]) textures[st]->Release();
+            }
+        } restoreGlassEnv{real, oldGlassEnv, glassEnvReplaced};
         // A manual mirror's original triangles are hidden in a private copy of that model's index
         // buffer. Models without manual mirror marks have no copy and are untouched.
         IDirect3DIndexBuffer9* mirrorPatched = nullptr;
@@ -3533,6 +3826,8 @@ float* __cdecl Proxy_NfsmwVr_Setting(const char* name) {
     if (!strcmp(name, "CockpitShiftDown")) return &g_cockpitShiftDown;
     if (!strcmp(name, "HideArms")) return &g_cfg.hideArms;
     if (!strcmp(name, "GlassOpacity")) return &g_cfg.glassOpacity;
+    if (!strcmp(name, "GlassRain")) return &g_cfg.glassRain;
+    if (!strcmp(name, "GlassReflection")) return &g_cfg.glassReflection;
     if (!strcmp(name, "WiperSweep")) return &g_wiperSweep;
     if (!strcmp(name, "WiperStrike")) return &g_wiperStrikes;
     if (!strcmp(name, "ShowCustomDriverModel")) return &g_cfg.showCustomDriverModel;

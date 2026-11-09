@@ -170,6 +170,8 @@ constexpr struct {
     {MOD_VR, "MirrorDistance", 0.0f},
     {MOD_VR, "ResolutionScale", 1.0f},
     {MOD_VR, "GlassOpacity", 0.15f},
+    {MOD_VR, "GlassRain", 0.8f},
+    {MOD_VR, "GlassReflection", 1.0f},
     {MOD_VR, "WiperStrike", 0.0f},
 };
 enum {
@@ -213,6 +215,8 @@ enum {
     VR_MIRRORDISTANCE,
     VR_RENDERSCALE,
     VR_GLASSOPACITY,
+    VR_GLASSRAIN,
+    VR_GLASSREFLECTION,
     VR_WIPERSTRIKE,
     EXT_COUNT
 };
@@ -225,6 +229,8 @@ static_assert(KeyIs(kExt[VR_MIRRORRESOLUTION].key, "MirrorResolution"), "kExt ou
 static_assert(KeyIs(kExt[VR_MIRRORDISTANCE].key, "MirrorDistance"), "kExt out of order at VR_MIRRORDISTANCE");
 static_assert(KeyIs(kExt[VR_RENDERSCALE].key, "ResolutionScale"), "kExt out of order at VR_RENDERSCALE");
 static_assert(KeyIs(kExt[VR_GLASSOPACITY].key, "GlassOpacity"), "kExt out of order at VR_GLASSOPACITY");
+static_assert(KeyIs(kExt[VR_GLASSRAIN].key, "GlassRain"), "kExt out of order at VR_GLASSRAIN");
+static_assert(KeyIs(kExt[VR_GLASSREFLECTION].key, "GlassReflection"), "kExt out of order at VR_GLASSREFLECTION");
 static_assert(KeyIs(kExt[VR_WIPERSTRIKE].key, "WiperStrike"), "kExt out of order at VR_WIPERSTRIKE");
 static_assert(KeyIs(kExt[VR_DASH].key, "Dash"), "kExt out of order at VR_DASH");
 static_assert(KeyIs(kExt[FFB_INVERT].key, "Reverse"), "kExt out of order at FFB_INVERT");
@@ -828,6 +834,8 @@ const Item kItems[] = {
     {NUMBER, "Disable mirrors", "VR", "DisableMirrors", &s_ext[VR_DISABLEMIRRORS], 0.0f, 1.0f, 1.0f, 1, "%.0f", BF_ONOFF},
     {NUMBER, "Mirror render resolution", "VR", "MirrorResolution", &s_ext[VR_MIRRORRESOLUTION], 0.25f, 1.0f, 0.05f, 100, "%.0f%%", 0},
     {NUMBER, "Interior glass opacity", "VR", "GlassOpacity", &s_ext[VR_GLASSOPACITY], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
+    {NUMBER, "Glass rain droplets", "VR", "GlassRain", &s_ext[VR_GLASSRAIN], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
+    {NUMBER, "Glass reflection strength", "VR", "GlassReflection", &s_ext[VR_GLASSREFLECTION], 0.0f, 1.0f, 0.01f, 100, "%.0f%%", 0},
     {NUMBER, "Mirror distance (0 = stock)", "VR", "MirrorDistance", &s_ext[VR_MIRRORDISTANCE], 0.0f, 3000.0f, 100.0f, 1, "%.0f m", 0},
     BINDING("Pop tires key", "Tires", "DebugPopTires", debugPopTires, 0),
     {ACTION, "Pop all four tires now", nullptr, "PopTires", nullptr, 0, 0, 0, 0, nullptr, 0},
