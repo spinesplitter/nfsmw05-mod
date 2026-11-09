@@ -51,6 +51,7 @@ float g_steeringWheelAngle = 0.0f;
 float g_seatInput[4] = {};
 float g_cockpitHandbrake = 0, g_cockpitShiftUp = 0, g_cockpitShiftDown = 0;
 float GameRainIntensity();
+int GameRainDropletCount();
 
 namespace {
 
@@ -2090,7 +2091,9 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
     if (xyz.empty()) return;
     const int tris = (int)(xyz.size() / 9);
     if (g_cfg.glassOpacity > 0.001f) {
-        const int alpha = (int)(g_cfg.glassOpacity * 255.0f + 0.5f);
+        // The slider is 0 = no tint, 1 = the vanilla tint (not an opaque black overlay).
+        constexpr float kVanillaTint = 0.20f;
+        const int alpha = (int)(g_cfg.glassOpacity * kVanillaTint * 255.0f + 0.5f);
         D3D_AddColorTris(ib, xyz.data(), tris, D3DCOLOR_ARGB(alpha, 18, 20, 24));
     }
     // Car damage (not engine heat): from 75% the windows are cracked, a little more visibly as
@@ -2104,7 +2107,9 @@ void NoteWindowOverlay(uint8_t* solid, SolidInfo& info, const float* m) {
     }
     float rain = GameRainIntensity();
     if (rain > 1.0f) rain = 1.0f;
-    if (rain > 0.02f && g_cfg.glassRain > 0.001f && !uv.empty()) {
+    // The game's own rain droplet layer is used (not a generated pattern), and only while that
+    // layer actually has droplets: under an underpass, or after the rain stops, it goes to zero.
+    if (rain > 0.02f && GameRainDropletCount() > 0 && g_cfg.glassRain > 0.001f && !uv.empty()) {
         int alpha = (int)(g_cfg.glassRain * rain * 220.0f + 0.5f);
         if (alpha > 255) alpha = 255;
         D3D_AddTexturedTris(ib, xyz.data(), uv.data(), tris, D3DCOLOR_ARGB(alpha, 255, 255, 255));
@@ -4424,6 +4429,16 @@ float GameRainIntensity() {
     if (rain < 0x10000 || rain >= 0x7FFF0000) return 0.0f;
     float v = *(float*)(rain + kRainIntensity);
     return v >= 0.0f && v <= 10.0f ? v : 0.0f;
+}
+
+// The game's own raindrop count for the player view (the first field of the Rain object). It is
+// zero under an underpass or when the rain stops, so the glass overlay follows the game's filter.
+int GameRainDropletCount() {
+    constexpr uintptr_t kPlayerRain = 0x9196B8;
+    uintptr_t rain = *(uintptr_t*)kPlayerRain;
+    if (rain < 0x10000 || rain >= 0x7FFF0000) return 0;
+    int n = *(int*)rain;
+    return n > 0 && n < 100000 ? n : 0;
 }
 
 bool Cockpit_WiperDraw(void* ib, unsigned first, unsigned count, std::vector<uint16_t>& indices,

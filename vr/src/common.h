@@ -72,7 +72,7 @@ struct Config {
     float animatedDriverHandFix = 0.0f; // neutral grip arc degrees: positive up, saved per car
     float animatedDriverSmoothing = 0.25f; // 0 = raw wheel tracking, 1 = maximum animation inertia (global [VR])
     float hideArms = 0.0f;           // 1 = leave out the seated driver's arms and hands (a 0/1 float: live from F4)
-    float glassOpacity = 0.15f;      // interior tint over the car's glass (0 = the game's glass only)
+    float glassOpacity = 1.0f;       // glass tint amount: 0 = no tint, 1 = vanilla tint
     float glassRain = 0.8f;          // rain droplets over the car's glass (0 = none)
     float glassReflection = 1.0f;    // generic reflection over the car's glass (0 = no reflection)
     float hudPerCar = 0.0f;          // 1 = each car remembers its HUD size, distance and height ([Hud] per car; live from F4)

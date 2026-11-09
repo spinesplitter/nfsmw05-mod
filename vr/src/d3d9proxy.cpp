@@ -228,6 +228,15 @@ static IDirect3DCubeTexture9* s_genericEnv;
 static IDirect3DTexture9* s_genericEnv2D;
 static IDirect3DTexture9* s_dropletTex;
 static IDirect3DTexture9* s_crackTex;
+// The game's own rain droplet layer, rendered into a texture instead of the camera.
+static IDirect3DTexture9* s_rainTex;
+static IDirect3DSurface9* s_rainSurf;
+static UINT s_rainW, s_rainH;
+static unsigned s_rainFrame;
+static IDirect3DSurface9* s_rainEyeTarget;
+static bool s_rainHasContent;
+static DWORD s_rainSrcBlend = D3DBLEND_SRCALPHA, s_rainDestBlend = D3DBLEND_INVSRCALPHA;
+static bool s_rainBlendOn = true;
 static void ReleaseGlassMaterials() {
     if (s_genericEnv) s_genericEnv->Release();
     s_genericEnv = nullptr;
@@ -237,6 +246,14 @@ static void ReleaseGlassMaterials() {
     s_dropletTex = nullptr;
     if (s_crackTex) s_crackTex->Release();
     s_crackTex = nullptr;
+    if (s_rainSurf) s_rainSurf->Release();
+    s_rainSurf = nullptr;
+    if (s_rainTex) s_rainTex->Release();
+    s_rainTex = nullptr;
+    s_rainW = s_rainH = 0;
+    s_rainFrame = 0;
+    s_rainEyeTarget = nullptr;
+    s_rainHasContent = false;
 }
 
 static void ReleaseEyeTargets() {
@@ -387,6 +404,10 @@ static IDirect3DPixelShader9* Shader(LazyShader& sh) {
 
 static float Sat(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 
+// The eye view's yaw, so the generic glass reflection turns with the camera/car instead of
+// sitting still (it is generated as a sky, but the world reflection it replaces moved with you).
+static float s_genericEnvYaw;
+
 // A generic environment cube for the player car's glass: a soft sky/horizon/sun gradient instead of
 // the game's real-time world reflection (which is low resolution and warps badly on the windows).
 // The car shader still samples it with its own reflection vector, so it moves with the car and head.
@@ -394,7 +415,7 @@ static IDirect3DCubeTexture9* GenericGlassEnv() {
     static ULONGLONG updated;
     static float intensity = -1.0f;
     ULONGLONG now = GetTickCount64();
-    if (s_genericEnv && now - updated < 500 && fabsf(intensity - g_cfg.glassReflection) < 0.01f)
+    if (s_genericEnv && now - updated < 50 && fabsf(intensity - g_cfg.glassReflection) < 0.01f)
         return s_genericEnv;
     if (!s_dev) return nullptr;
     if (!s_genericEnv &&
@@ -408,7 +429,7 @@ static IDirect3DCubeTexture9* GenericGlassEnv() {
         s_genericEnv = nullptr;
         return nullptr;
     }
-    const int n = 128;
+    const int n = 64;
     float phase = (float)(now * 0.00005);
     float k = Sat(g_cfg.glassReflection);
     for (int face = 0; face < 6; face++) {
@@ -429,6 +450,11 @@ static IDirect3DCubeTexture9* GenericGlassEnv() {
                 float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
                 if (len < 1e-5f) len = 1.0f;
                 d[0] /= len; d[1] /= len; d[2] /= len;
+                // Turn the whole sky with the view, so the reflection visibly moves.
+                float cy = cosf(-s_genericEnvYaw), sy = sinf(-s_genericEnvYaw);
+                float rx = d[0] * cy + d[2] * sy;
+                float rz = -d[0] * sy + d[2] * cy;
+                d[0] = rx; d[2] = rz;
                 float up = Sat(d[1] * 0.5f + 0.5f);
                 float horizon = expf(-fabsf(d[1]) * 7.0f);
                 float sky = powf(up, 0.7f);
@@ -437,7 +463,8 @@ static IDirect3DCubeTexture9* GenericGlassEnv() {
                 float b = 0.13f + 0.62f * sky + 0.12f * horizon;
                 float sun = powf(Sat(d[0] * 0.35f + d[1] * 0.5f - d[2] * 0.79f), 18.0f);
                 r += sun * 0.65f; g += sun * 0.55f; b += sun * 0.35f;
-                float cloud = sinf(d[0] * 7.0f + phase) * sinf(d[2] * 6.5f - phase * 0.7f) * 0.06f * up;
+                float cloud = (sinf(d[0] * 8.0f + phase) * sinf(d[2] * 7.0f - phase * 0.7f) +
+                               0.5f * sinf(d[1] * 11.0f + phase * 0.3f)) * 0.12f * up;
                 r = Sat((r + cloud) * k);
                 g = Sat((g + cloud) * k);
                 b = Sat((b + cloud * 1.1f) * k);
@@ -685,6 +712,15 @@ static LazyShader s_gradeShader = {"mirror",
 static LazyShader s_glassShader = {"mirror glass",
     "sampler s : register(s0);"
     "float4 main(float2 uv : TEXCOORD1) : COLOR { return float4(tex2D(s, uv).rgb, 1); }"};
+
+// The game's rain droplet layer: RGB from the redirected rain texture, alpha from its alpha or, if
+// the game's blend left the alpha at zero, from the droplet's brightness.
+static LazyShader s_rainOverlayShader = {"glass rain",
+    "sampler s : register(s0); float k : register(c0);"
+    "float4 main(float2 uv : TEXCOORD0) : COLOR {"
+    "  float4 c = tex2D(s, uv);"
+    "  float a = max(c.a, max(c.r, max(c.g, c.b)));"
+    "  return float4(c.rgb * k.x, a * k.x); }"};
 
 // The glass as a mirror: its own coordinates (0..1 across and down) turned into the rear view's
 // by the corners' coordinates (c0: top left, top right; c1: bottom left, bottom right).
@@ -1928,6 +1964,7 @@ void D3D_BeginDashEye(bool on, const float* view, const float* proj) {
     s_dashEye.ds = nullptr;
     memcpy(&s_dashEye.view, view, sizeof(s_dashEye.view));
     memcpy(&s_dashEye.proj, proj, sizeof(s_dashEye.proj));
+    s_genericEnvYaw = atan2f(s_dashEye.view.m[2][0], s_dashEye.view.m[2][2]);
     s_colorTris.clear();
     s_colorTrisByIb.clear();
     s_colorEye = true;
@@ -2447,38 +2484,94 @@ static void SetGlassOverlay(D3DCOLOR argb, IDirect3DTexture9* tex, D3DTEXTUREADD
     s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, address);
 }
 
+static void SetRainOverlay() {
+    s_dev->SetPixelShader(Shader(s_rainOverlayShader));
+    float k[4] = {g_cfg.glassRain, 0, 0, 0};
+    s_dev->SetPixelShaderConstantF(0, k, 1);
+    s_dev->SetTexture(0, s_rainTex);
+    s_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    s_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    // The rain texture already has the game's blend applied against a transparent target, so its
+    // colour is premultiplied: add it, fading the glass by the droplet coverage. Additive rain
+    // (the usual case) just adds the premultiplied colour.
+    if (s_rainBlendOn && s_rainSrcBlend == D3DBLEND_ONE && s_rainDestBlend == D3DBLEND_ONE) {
+        s_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+        s_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+    } else {
+        s_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+        s_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    }
+    s_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    s_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    s_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    s_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+}
+
+// The glass pixel's screen position, so the redirected rain layer is sampled where the game drew
+// it. The rain texture is from the previous frame (the overlay is drawn before this frame's rain
+// pass), which is invisible at frame rate.
+static void ScreenUvForRain(const ColorTris& c, std::vector<float>& uv) {
+    D3DMATRIX vp{};
+    const D3DMATRIX &v = s_dashEye.view, &p = s_dashEye.proj;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            vp.m[i][j] = v.m[i][0] * p.m[0][j] + v.m[i][1] * p.m[1][j] + v.m[i][2] * p.m[2][j] +
+                         v.m[i][3] * p.m[3][j];
+    for (size_t i = 0, n = c.xyz.size() / 3; i < n; i++) {
+        float x = c.xyz[i * 3 + 0], y = c.xyz[i * 3 + 1], z = c.xyz[i * 3 + 2];
+        float cx = x * vp.m[0][0] + y * vp.m[1][0] + z * vp.m[2][0] + vp.m[3][0];
+        float cy = x * vp.m[0][1] + y * vp.m[1][1] + z * vp.m[2][1] + vp.m[3][1];
+        float cw = x * vp.m[0][3] + y * vp.m[1][3] + z * vp.m[2][3] + vp.m[3][3];
+        if (fabsf(cw) < 1e-5f) cw = 1.0f;
+        uv.push_back((cx / cw) * 0.5f + 0.5f);
+        uv.push_back(0.5f - (cy / cw) * 0.5f);
+    }
+}
+
 static void DrawColorTris(ColorTris& c) {
     IDirect3DStateBlock9* saved = SavedStateBlock();
     if (!saved) return;
     saved->Capture();
     SetPanelState(s_dashEye.view, s_dashEye.proj);
     IDirect3DTexture9* overlayTex = nullptr;
-    if (c.overlay == 1)
-        overlayTex = GlassDroplets();
-    else if (c.overlay == 2)
+    if (c.overlay == 1) {
+        if (s_rainHasContent && s_rainTex) overlayTex = s_rainTex;
+    } else if (c.overlay == 2) {
         overlayTex = GlassCracks();
+    }
     if (!overlayTex && c.overlay != 0) {
         saved->Apply();
         return;
     }
-    if (overlayTex)
-        SetGlassOverlay(c.color, overlayTex, c.overlay == 2 ? D3DTADDRESS_MIRROR : D3DTADDRESS_WRAP);
-    else
+    if (overlayTex) {
+        if (c.overlay == 1)
+            SetRainOverlay();
+        else
+            SetGlassOverlay(c.color, overlayTex, D3DTADDRESS_MIRROR);
+    } else {
         SetColor(c.color);
+    }
     // Drawn over the game's own triangles: pulled toward the eye in depth too (decal bias), so the
     // two never fight.
     float bias = -0.00005f, slope = -1.0f;
     s_dev->SetRenderState(D3DRS_DEPTHBIAS, *(DWORD*)&bias);
     s_dev->SetRenderState(D3DRS_SLOPESCALEDEPTHBIAS, *(DWORD*)&slope);
     if (overlayTex) {
+        std::vector<float> uv;
+        if (c.overlay == 1)
+            ScreenUvForRain(c, uv);
+        else
+            uv = c.uv;
         std::vector<float> verts;
         verts.reserve(c.xyz.size() / 3 * 5);
         for (size_t i = 0, n = c.xyz.size() / 3; i < n; i++) {
             verts.push_back(c.xyz[i * 3 + 0]);
             verts.push_back(c.xyz[i * 3 + 1]);
             verts.push_back(c.xyz[i * 3 + 2]);
-            verts.push_back(c.uv[i * 2 + 0]);
-            verts.push_back(c.uv[i * 2 + 1]);
+            verts.push_back(uv[i * 2 + 0]);
+            verts.push_back(uv[i * 2 + 1]);
         }
         s_dev->SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
         s_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, (UINT)(verts.size() / 15), verts.data(), 5 * sizeof(float));
@@ -3350,6 +3443,102 @@ static void ConvertPool(D3DPOOL& pool, DWORD& usage, bool texture) {
 }
 
 // ---------------------------------------------------------------------------
+// The game's rain droplet layer: its screen-space droplet quads are redirected from the camera
+// into a texture. The glass overlay samples that texture at each glass pixel's screen position, so
+// the real in-game rain appears on the windows (with its own drip/despawn and weather gating).
+static HRESULT DrawGameRain(IDirect3DDevice9Ex* real, D3DPRIMITIVETYPE type, UINT count, const void* data,
+                            UINT stride) {
+    IDirect3DSurface9* rt = nullptr;
+    if (FAILED(real->GetRenderTarget(0, &rt)) || !rt) return real->DrawPrimitiveUP(type, count, data, stride);
+    D3DSURFACE_DESC desc{};
+    if (FAILED(rt->GetDesc(&desc)) || !desc.Width || !desc.Height) {
+        rt->Release();
+        return real->DrawPrimitiveUP(type, count, data, stride);
+    }
+    // Capture one eye's rain pass; the second eye would just double every droplet.
+    if (s_rainFrame == s_frameSerial && s_rainEyeTarget && s_rainEyeTarget != rt) {
+        rt->Release();
+        return D3D_OK;
+    }
+    if (!s_rainTex || s_rainW != desc.Width || s_rainH != desc.Height) {
+        if (s_rainSurf) { s_rainSurf->Release(); s_rainSurf = nullptr; }
+        if (s_rainTex) { s_rainTex->Release(); s_rainTex = nullptr; }
+        if (FAILED(real->CreateTexture(desc.Width, desc.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8,
+                                        D3DPOOL_DEFAULT, &s_rainTex, nullptr)) ||
+            FAILED(s_rainTex->GetSurfaceLevel(0, &s_rainSurf))) {
+            if (s_rainSurf) { s_rainSurf->Release(); s_rainSurf = nullptr; }
+            if (s_rainTex) { s_rainTex->Release(); s_rainTex = nullptr; }
+            rt->Release();
+            return real->DrawPrimitiveUP(type, count, data, stride);
+        }
+        s_rainW = desc.Width;
+        s_rainH = desc.Height;
+        s_rainHasContent = false;
+    }
+    bool first = s_rainFrame != s_frameSerial || s_rainEyeTarget != rt;
+    if (first) {
+        s_rainFrame = s_frameSerial;
+        s_rainEyeTarget = rt;
+    }
+    IDirect3DSurface9* oldDS = nullptr;
+    real->GetDepthStencilSurface(&oldDS);
+    D3DVIEWPORT9 vp{};
+    real->GetViewport(&vp);
+    DWORD blend = 0, src = 0, dst = 0, colorWrite = 0, separateAlpha = 0, srcAlpha = 0, dstAlpha = 0;
+    DWORD zEnable = 0, zWrite = 0, cull = 0, scissor = 0, stencil = 0;
+    real->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+    real->GetRenderState(D3DRS_SRCBLEND, &src);
+    real->GetRenderState(D3DRS_DESTBLEND, &dst);
+    real->GetRenderState(D3DRS_COLORWRITEENABLE, &colorWrite);
+    real->GetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, &separateAlpha);
+    real->GetRenderState(D3DRS_SRCBLENDALPHA, &srcAlpha);
+    real->GetRenderState(D3DRS_DESTBLENDALPHA, &dstAlpha);
+    real->GetRenderState(D3DRS_ZENABLE, &zEnable);
+    real->GetRenderState(D3DRS_ZWRITEENABLE, &zWrite);
+    real->GetRenderState(D3DRS_CULLMODE, &cull);
+    real->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissor);
+    real->GetRenderState(D3DRS_STENCILENABLE, &stencil);
+    s_rainBlendOn = blend != 0;
+    s_rainSrcBlend = src;
+    s_rainDestBlend = dst;
+    real->SetRenderTarget(0, s_rainSurf);
+    real->SetDepthStencilSurface(nullptr);
+    real->SetViewport(&vp);
+    // The target's RGB keeps the game's rain blend; its alpha is forced to accumulate coverage.
+    real->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, TRUE);
+    real->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_SRCALPHA);
+    real->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
+    real->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+    real->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    real->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    real->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    real->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    real->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+    if (first) real->Clear(0, nullptr, D3DCLEAR_TARGET, 0, 1.0f, 0);
+    HRESULT hr = real->DrawPrimitiveUP(type, count, data, stride);
+    if (SUCCEEDED(hr)) s_rainHasContent = true;
+    static bool logged;
+    if (SUCCEEDED(hr) && !logged) {
+        logged = true;
+        Log("d3d9: game rain droplets redirected to the car glass (%ux%u)", s_rainW, s_rainH);
+    }
+    real->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE, separateAlpha);
+    real->SetRenderState(D3DRS_SRCBLENDALPHA, srcAlpha);
+    real->SetRenderState(D3DRS_DESTBLENDALPHA, dstAlpha);
+    real->SetRenderState(D3DRS_COLORWRITEENABLE, colorWrite);
+    real->SetRenderState(D3DRS_ZENABLE, zEnable);
+    real->SetRenderState(D3DRS_ZWRITEENABLE, zWrite);
+    real->SetRenderState(D3DRS_CULLMODE, cull);
+    real->SetRenderState(D3DRS_SCISSORTESTENABLE, scissor);
+    real->SetRenderState(D3DRS_STENCILENABLE, stencil);
+    real->SetRenderTarget(0, rt);
+    real->SetDepthStencilSurface(oldDS);
+    real->SetViewport(&vp);
+    if (oldDS) oldDS->Release();
+    rt->Release();
+    return hr;
+}
+
 // Device wrapper. d3d9 rewrites its per-device vtable (e.g. around Reset), so
 // in-place vtable patches don't stick; the game gets this forwarding object instead.
 // ---------------------------------------------------------------------------
@@ -3531,10 +3720,13 @@ public:
             IDirect3DTexture9* generic2D = GenericGlassEnv2D();
             for (DWORD st = 0; st < 4; st++) {
                 real->GetTexture(st, &oldGlassEnv[st]);
+                // Only the environment slot (stage 1) is replaced: stage 0 is the glass texture
+                // and the transparent decals, and clobbering it broke them.
+                if (st != 1) continue;
                 if (oldGlassEnv[st] && oldGlassEnv[st]->GetType() == D3DRTYPE_CUBETEXTURE && generic) {
                     real->SetTexture(st, generic);
                     glassEnvReplaced = true;
-                } else if (st == 1 && oldGlassEnv[st] && oldGlassEnv[st]->GetType() == D3DRTYPE_TEXTURE && generic2D) {
+                } else if (oldGlassEnv[st] && oldGlassEnv[st]->GetType() == D3DRTYPE_TEXTURE && generic2D) {
                     real->SetTexture(st, generic2D);
                     glassEnvReplaced = true;
                 }
@@ -3706,6 +3898,10 @@ public:
     HRESULT STDMETHODCALLTYPE DrawPrimitiveUP(D3DPRIMITIVETYPE type, UINT count, CONST void* data, UINT stride) override {
         if (s_dropDraws || s_skipPostPass || s_texHidden) return D3D_OK;
         CountEyeDrawCall();
+        // speed.exe 0x6D48EE: the rain droplet layer's DrawPrimitiveUP. Redirect it into the glass
+        // rain texture instead of the camera.
+        if ((uintptr_t)_ReturnAddress() == 0x6D48EE && type == D3DPT_TRIANGLESTRIP && count == 2 && stride == 24)
+            return DrawGameRain(real, type, count, data, stride);
         return real->DrawPrimitiveUP(type, count, data, stride);
     }
     HRESULT STDMETHODCALLTYPE DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE type, UINT minIndex, UINT verts, UINT count,
