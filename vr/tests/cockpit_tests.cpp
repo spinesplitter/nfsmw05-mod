@@ -66,6 +66,7 @@ static void TestWheelPositionSave() {
     g_cfg.animatedDriverHandFix=-25;
     UpdateAnimatedDriverCar("DRIVER_A");
     UpdateAnimatedDriverCar("DRIVER_B");
+    FlushCarSaves();
     Near(g_cfg.animatedDriverSpread,1,"unsaved driver fit never leaks to another car");
     Near(g_cfg.animatedDriverHandFix,0,"unsaved hand fix never leaks to another car");
     UpdateAnimatedDriverCar("DRIVER_A");
@@ -76,11 +77,13 @@ static void TestWheelPositionSave() {
     UpdateAnimatedDriverCar("DRIVER_A");
     Near(g_cfg.animatedDriverSave,0,"driver save consumed once");
     UpdateAnimatedDriverCar("DRIVER_B");
+    FlushCarSaves();
     Near(g_cfg.animatedDriverSpread,1,"saved fit does not leak");
     Near(g_cfg.animatedDriverHandFix,0,"saved hand fix does not leak");
     UpdateAnimatedDriverCar("DRIVER_A");
     Near(g_cfg.animatedDriverSpread,1.23f,"saved driver fit reloads for its car");
     Near(g_cfg.animatedDriverHandFix,-25,"saved hand fix reloads for its car");
+    FlushCarSaves();
     Check(WritePrivateProfileStringA("AnimatedDriver","DRIVER_LEGACY","1.15",driverPath)!=0,
         "legacy one-value driver fit written");
     UpdateAnimatedDriverCar("DRIVER_LEGACY");
@@ -90,6 +93,7 @@ static void TestWheelPositionSave() {
         "invalid driver fit written");
     UpdateAnimatedDriverCar("DRIVER_INVALID");
     Near(g_cfg.animatedDriverHandFix,0,"invalid hand fix rejected");
+    FlushCarSaves();
     s_animatedDriverCar=oldDriver; g_cfg.animatedDriverSpread=1; g_cfg.animatedDriverHandFix=0;
     strcpy(driverFile->path,oldDriverPath);
     Check(DeleteFileA(driverPath)!=0,"driver temporary ini removed");
@@ -108,6 +112,7 @@ static void TestWheelPositionSave() {
     g_cfg.wheelPosition[0] = 0.023f;
     g_cfg.wheelPosition[1] = -0.041f;
     SavePerCar(position);
+    FlushCarSaves();
     g_cfg.wheelPosition[0] = g_cfg.wheelPosition[1] = 0;
     position.car.clear();
     UpdatePerCar(position, "SAVED_WHEEL_A");
@@ -116,6 +121,7 @@ static void TestWheelPositionSave() {
     UpdatePerCar(position, "UNSAVED_WHEEL_B");
     Near(g_cfg.wheelPosition[0], 0, "another car does not inherit saved wheel right");
     Near(g_cfg.wheelPosition[1], 0, "another car does not inherit saved wheel up");
+    FlushCarSaves();
     strcpy(file->path, savedPath);
     Check(DeleteFileA(temporary) != 0, "temporary wheel ini removed");
 }
@@ -800,6 +806,7 @@ static void TestPerCarDefaults() {
     Near(g_cfg.dashEl[0][1], -0.22f, "dashboard element vertical position is shared between cars");
     Near(g_cfg.dashEl[0][2], 1.7f, "dashboard element size is shared between cars");
     UpdateHudCar("");
+    FlushCarSaves();
     g_cfg.hudPerCar = 0.0f;
 }
 

@@ -36,6 +36,9 @@
 #include <unordered_map>
 #include <vector>
 #include <deque>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 #include "cockpit_controls.h"
 #include "driver_ik.h"
 #include "driver_hover.h"
@@ -471,14 +474,72 @@ PerCar s_animatedDriverCar = {"AnimatedDriver", "animated driver hand fit", 2,
                             {&g_cfg.animatedDriverSpread, &g_cfg.animatedDriverHandFix},
                             {0.5f, -60}, {1.5f, 60}, 1, false, true};
 
+// WritePrivateProfileStringA rewrites the whole file and can take milliseconds on the game thread:
+// an auto-save landing mid-frame was a visible hitch. One worker thread writes the queued lines in
+// order; saving keeps the menu and per-car auto-save off the render thread.
+struct PendingCarSave {
+    std::string path, section, car, value, what;
+};
+// Never destroyed: the detached writer may still be waiting when the DLL is unloaded.
+struct CarSaveQueue {
+    std::deque<PendingCarSave> pending;
+    std::mutex lock;
+    std::condition_variable wake, idle;
+    bool started = false, writing = false;
+};
+static CarSaveQueue* s_carSaves = new CarSaveQueue();
+
+static void CarSaveWorker() {
+    for (;;) {
+        PendingCarSave w;
+        {
+            std::unique_lock<std::mutex> lock(s_carSaves->lock);
+            s_carSaves->wake.wait(lock, [] { return !s_carSaves->pending.empty(); });
+            w = std::move(s_carSaves->pending.front());
+            s_carSaves->pending.pop_front();
+            s_carSaves->writing = true;
+        }
+        WritePrivateProfileStringA(w.section.c_str(), w.car.c_str(), w.value.c_str(), w.path.c_str());
+        Log("cockpit: %s for %s saved: %s", w.what.c_str(), w.car.c_str(), w.value.c_str());
+        {
+            std::lock_guard<std::mutex> lock(s_carSaves->lock);
+            s_carSaves->writing = false;
+        }
+        s_carSaves->idle.notify_all();
+    }
+}
+
+// Tests only: wait until every queued line has been written.
+static void FlushCarSaves() {
+    std::unique_lock<std::mutex> lock(s_carSaves->lock);
+    s_carSaves->idle.wait(lock, [] { return s_carSaves->pending.empty() && !s_carSaves->writing; });
+}
+
+static void QueueCarSave(PendingCarSave&& w) {
+    {
+        std::lock_guard<std::mutex> lock(s_carSaves->lock);
+        if (!s_carSaves->started) {
+            s_carSaves->started = true;
+            std::thread(CarSaveWorker).detach();   // lives for the process; writes are serialized
+        }
+        s_carSaves->pending.push_back(std::move(w));
+    }
+    s_carSaves->wake.notify_one();
+}
+
 void SavePerCar(PerCar& p) {
     char buf[512];
     int len = 0;
     for (int i = 0; i < p.n && len < (int)sizeof(buf) - 16; i++)
         len += snprintf(buf + len, sizeof(buf) - len, i ? ",%.4f" : "%.4f", *p.v[i]);
-    WritePrivateProfileStringA(p.section, p.car.c_str(), buf, CarIni(p.section));
+    PendingCarSave w;
+    w.path = CarIni(p.section);
+    w.section = p.section;
+    w.car = p.car;
+    w.value = buf;
+    w.what = p.what;
+    QueueCarSave(std::move(w));
     p.dirty = false;
-    Log("cockpit: %s for %s saved: %s", p.what, p.car.c_str(), buf);
 }
 
 void UpdatePerCar(PerCar& p, const std::string& car) {

@@ -126,7 +126,7 @@ struct Config {
     float disableMirrors = 0.0f;    // live F4 diagnostic: stop rear view and all VR mirror work
     float sharedShadows = 1.0f;      // the sun shadow map drawn for the first eye only; the second eye reuses it (0/1, live)
     float anisotropic = 4.0f;        // anisotropic filtering: 0 off, 1 2x, 2 4x, 3 8x, 4 16x (live from F4)
-    float simRateFromHeadset = 1.0f; // the widescreen fix's SimRate set to the headset's rate (next start)
+    float simRateFromHeadset = 1.0f; // the widescreen fix's SimRate set to a multiple of the headset's rate (next start)
     float shadowRes = 2.0f;          // the widescreen fix's ShadowsRes over the game's 1024 (F4; next start)
     float shadowArea = 0.75f;        // the sun shadow map's coverage around you (1 = the game's ~350 m square)
     bool  asyncSubmit = true;        // hand the finished frame to the XR bridge without waiting for it
