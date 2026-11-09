@@ -781,21 +781,15 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         ++s_mirrorSnapshotFallbacks;
         s_driverStreams.Invalidate(vb);
     }
-    // Copy only the stream range this mirror draw maps (the whole buffer only where a part spans
-    // several split draws), never the body's entire vertex buffer.
-    const auto* source = s_driverStreams.Get(vb, range.begin, 1, range.bytes, range.bytes,
+    // One whole-buffer snapshot per stream and frame, shared by every mirror job (and by the
+    // driver path), so a skipped/re-drawn mirror never locks the GPU again. The upload below
+    // still copies only this draw's range.
+    const auto* source = s_driverStreams.Get(vb, 0, 1, desc.Size, desc.Size,
         [&](std::vector<unsigned char>& bytes) {
             void* locked = nullptr;
-            if (SUCCEEDED(vb->Lock(range.begin, range.bytes, &locked, D3DLOCK_READONLY)) && locked) {
-                bytes.assign((unsigned char*)locked, (unsigned char*)locked + range.bytes);
-                return SUCCEEDED(vb->Unlock()) != 0;
-            }
-            locked = nullptr;
-            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY)) || !locked) return false;
-            if ((size_t)range.begin + range.bytes <= desc.Size)
-                bytes.assign((unsigned char*)locked + range.begin, (unsigned char*)locked + range.begin + range.bytes);
-            const bool ok = SUCCEEDED(vb->Unlock()) != 0;
-            return ok && bytes.size() == range.bytes;
+            if (FAILED(vb->Lock(0, 0, &locked, D3DLOCK_READONLY))) return false;
+            if (locked) bytes.assign((unsigned char*)locked, (unsigned char*)locked + desc.Size);
+            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
         });
     if (!source) {
         vb->Release();
@@ -816,7 +810,7 @@ static void MapGlassVertices(MirrorGlassJob& j, INT base, UINT minIndex, UINT ve
         vb->Release();
         return;
     }
-    memcpy(upload, source->data(), range.bytes);
+    memcpy(upload, source->data() + range.begin, range.bytes);
     uint8_t* buffer = (uint8_t*)upload;
     size_t mappedVerts = 0;
     for (MirrorGlassPart& part : j.parts) {
@@ -3123,26 +3117,21 @@ public:
                     }
                     // Unobservable resources retain the conservative per-draw fallback.
                     if (!ObserveDriverBuffer(vb)) s_driverStreams.Invalidate(vb);
-                    const auto* source=required ? s_driverStreams.Get(vb,offset,stride,required,required,
+                    // Keep the snapshot whole-buffer keyed: split/growing driver draws must all be
+                    // served from ONE GPU readback a frame. A prefix key (offset/required) made each
+                    // entry re-lock the stream, and every lock waits on the GPU, which multiplied
+                    // the frame into a vsync-locked stall.
+                    const auto* source=required ? s_driverStreams.Get(vb,0,1,desc.Size,desc.Size,
                         [&](std::vector<unsigned char>& bytes) {
                             TraceDetailScope readbackTiming(TRACE_DRIVER_READBACK);
                             void* locked=nullptr;
-                            // Read only the prefix this draw can address. Some default-pool streams
-                            // reject a partial lock; fall back to the whole buffer there.
-                            if (SUCCEEDED(vb->Lock(offset,(UINT)required,&locked,D3DLOCK_READONLY)) && locked) {
-                                bytes.assign((unsigned char*)locked,(unsigned char*)locked+required);
-                                return SUCCEEDED(vb->Unlock()) != 0;
-                            }
-                            locked = nullptr;
-                            if (FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY)) || !locked) return false;
-                            const size_t available = desc.Size;
-                            if (offset + required <= available)
-                                bytes.assign((unsigned char*)locked+offset,(unsigned char*)locked+offset+required);
-                            const bool ok = SUCCEEDED(vb->Unlock()) != 0;
-                            return ok && bytes.size()==required;
+                            if(FAILED(vb->Lock(0,0,&locked,D3DLOCK_READONLY))) return false;
+                            if (locked) bytes.assign((unsigned char*)locked,(unsigned char*)locked+desc.Size);
+                            return SUCCEEDED(vb->Unlock()) && locked != nullptr;
                         }) : nullptr;
                     if(required && source) {
-                        std::vector<unsigned char> copy(source->begin(),source->begin()+required);
+                        // Only the prefix this draw can address is copied/posed on the CPU.
+                        std::vector<unsigned char> copy(source->begin()+offset,source->begin()+offset+required);
                         bool repaired=uv>=0 && Cockpit_RepairSkinUV(s_curIndices,start,count,base,stride,uv,copy.data(),copy.size());
                         bool posed=Cockpit_HasMarkedArmDraw(s_curIndices) &&
                             Cockpit_PoseMarkedArms(s_curIndices,start,count,base,stride,position,normal,copy.data(),copy.size());
