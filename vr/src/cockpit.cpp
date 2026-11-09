@@ -36,6 +36,7 @@
 #include <unordered_map>
 #include <vector>
 #include <deque>
+#include <memory>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -3871,7 +3872,44 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
     };
     static DriverBindingCache bindings;
     bindings.Prepare(*rig);
-    DriverPoseSelection selection((unsigned)std::max(0,mesh.numVerts));
+    // The triangle classification depends only on the mesh, edits, rig and draw range, not on the
+    // per-frame steering pose. It used to be rebuilt every frame, walking every triangle of the
+    // driver's draws with two set lookups each; keep it until one of those inputs changes.
+    struct PoseSelectionEntry {
+        void* ib = nullptr;
+        unsigned first = 0, count = 0;
+        int base = 0, editsGen = -1;
+        unsigned worldId = 0;                  // the car connection (guards pointer/address reuse)
+        size_t armsSize = 0, nativeSize = 0;   // direct edits that predate a generation bump
+        const Driver* driver = nullptr;
+        const uint8_t* entries = nullptr;
+        const uint16_t* indices = nullptr;
+        int numVerts = 0, numIndices = 0;
+        const DriverIK::Rig* rig = nullptr;
+        bool rigOk = false;
+        std::unique_ptr<DriverPoseSelection> selection;
+    };
+    static std::vector<PoseSelectionEntry> s_poseSelections;
+    const Driver* poseDriver = info->second.driver;
+    const bool poseRigOk = poseDriver && poseDriver->rig.ok;
+    DriverPoseSelection* poseSelection = nullptr;
+    for (const PoseSelectionEntry& e : s_poseSelections)
+        if (e.ib == ib && e.first == first && e.count == triangles && e.base == base &&
+            e.editsGen == s_editsGen && e.worldId == s_head.worldId &&
+            e.armsSize == marks.size() && e.nativeSize == edits.native.size() &&
+            e.driver == poseDriver && e.entries == mesh.entries &&
+            e.indices == mesh.indices && e.numVerts == mesh.numVerts && e.numIndices == mesh.numIndices &&
+            e.rig == rig && e.rigOk == poseRigOk) {
+            poseSelection = e.selection.get();
+            break;
+        }
+    if (!poseSelection) {
+        if (s_poseSelections.size() >= 4) s_poseSelections.erase(s_poseSelections.begin());
+        s_poseSelections.push_back(PoseSelectionEntry{ib, first, triangles, base, s_editsGen, s_head.worldId,
+            marks.size(), edits.native.size(), poseDriver,
+            mesh.entries, mesh.indices, mesh.numVerts, mesh.numIndices, rig, poseRigOk,
+            std::make_unique<DriverPoseSelection>((unsigned)std::max(0, mesh.numVerts))});
+        DriverPoseSelection& selection = *s_poseSelections.back().selection;
     for (unsigned t = 0; t < triangles; ++t) {
         const uint16_t* v = mesh.indices + first + t * 3;
         bool manual=marks.count(TriId(v[0], v[1], v[2]))!=0;
@@ -3948,6 +3986,10 @@ bool Cockpit_PoseMarkedArms(void* ib, unsigned first, unsigned triangles, int ba
         for(unsigned local:selection.Ordered())
             if(local<excluded.size() && excluded[local]) selection.ExcludeAutomatic(local);
     }
+        selection.Ordered();
+        poseSelection = &selection;
+    }
+    DriverPoseSelection& selection = *poseSelection;
     std::vector<V3> head, tail;
     DriverArmPose(draw->second.world, head, tail);
     if (head.empty()) return false;
